@@ -66,13 +66,13 @@ jobs:
           echo "kernel: $key"
           curl -fsSL -o vmlinux "https://s3.amazonaws.com/spec.ccfc.min/${key}"
 
-          # Minimal initramfs: static busybox, prints a marker, powers off.
+          # Minimal initramfs: static busybox, prints a marker, reboots (reboot=k makes Firecracker exit).
           sudo apt-get install -y -qq busybox-static >/dev/null
           mkdir -p initrd/bin; cp /bin/busybox initrd/bin/busybox
           cat > initrd/init <<'INIT'
           #!/bin/busybox sh
           /bin/busybox echo "PROBE_GUEST_OK $(/bin/busybox uname -r)"
-          /bin/busybox poweroff -f
+          /bin/busybox reboot -f
           INIT
           chmod +x initrd/init
           (cd initrd && find . | cpio -o -H newc --quiet) | gzip > initrd.gz
@@ -110,6 +110,6 @@ jobs:
         run: |
           {
             echo "### ${{ matrix.runner }}"
-            echo "- Firecracker boot: \`${{ steps.boot.outputs.result }}\` (wall ${{ steps.boot.outputs.wall_ms }} ms, includes VMM start and guest poweroff)"
+            echo "- Firecracker boot: \`${{ steps.boot.outputs.result }}\` (wall ${{ steps.boot.outputs.wall_ms }} ms, VMM start to VMM exit, guest reboots right after its marker)"
             echo '```'; cat after.txt 2>/dev/null || cat before.txt; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
