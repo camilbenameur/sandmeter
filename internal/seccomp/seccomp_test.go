@@ -92,6 +92,9 @@ func TestVerdicts(t *testing.T) {
 		{"ptrace", nr("ptrace"), nativeArch, 0, retEPERM},
 		{"io_uring_setup", nr("io_uring_setup"), nativeArch, 0, retEPERM},
 		{"bpf", nr("bpf"), nativeArch, 0, retEPERM},
+		{"pidfd_getfd", nr("pidfd_getfd"), nativeArch, 0, retEPERM},
+		{"process_madvise", nr("process_madvise"), nativeArch, 0, retEPERM},
+		{"kcmp", nr("kcmp"), nativeArch, 0, retEPERM},
 		{"quotactl_fd", nr("quotactl_fd"), nativeArch, 0, retEPERM},
 		{"clone newuser", unix.SYS_CLONE, nativeArch, unix.CLONE_NEWUSER | sigchld, retEPERM},
 		{"clone newns", unix.SYS_CLONE, nativeArch, unix.CLONE_NEWNS, retEPERM},
@@ -238,5 +241,14 @@ func TestDefaultDoesNotAliasPackageList(t *testing.T) {
 func TestInstallEmpty(t *testing.T) {
 	if err := Install(nil); err == nil {
 		t.Error("Install(nil) succeeded")
+	}
+}
+
+func TestInstallTooLong(t *testing.T) {
+	// 65537 would wrap to length 1 in the uint16 field if unchecked.
+	for _, n := range []int{maxInsns + 1, 65537} {
+		if err := Install(make([]unix.SockFilter, n)); err == nil {
+			t.Errorf("Install with %d instructions succeeded", n)
+		}
 	}
 }

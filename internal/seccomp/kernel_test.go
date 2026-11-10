@@ -41,8 +41,9 @@ func probes() []probe {
 			_, _, e := unix.Syscall6(unix.SYS_PTRACE, unix.PTRACE_PEEKDATA, pid, 0, 0, 0, 0)
 			return errnoOrNil(e)
 		}, true},
-		// Unprivileged mount is refused regardless; this only shows that the
-		// filter does not change the errno to something surprising.
+		// Unprivileged mount is refused regardless, so this cannot detect a
+		// missing deny entry; TestVerdicts is the real check for mount. This
+		// only shows the filter does not change the errno.
 		{"mount", func() error { return unix.Mount("none", "/", "tmpfs", 0, "") }, false},
 		// Result without the filter depends on the keyring state: not a
 		// reliable discriminator.
@@ -147,6 +148,7 @@ func TestFilterInRealKernel(t *testing.T) {
 
 	eperm := fmt.Sprint(int(unix.EPERM))
 	seen := map[string]bool{}
+	var inconclusive []string
 	for _, line := range strings.Split(string(out), "\n") {
 		f := strings.Fields(line)
 		if len(f) == 0 {
@@ -171,12 +173,17 @@ func TestFilterInRealKernel(t *testing.T) {
 		// If the host already refused the call with EPERM (for example a
 		// container with its own seccomp profile), the probe proves nothing.
 		if kv["distinguishes"] == "true" && kv["before"] == eperm {
-			t.Logf("%s: already EPERM before the filter, probe not conclusive here", f[1])
+			inconclusive = append(inconclusive, f[1])
 		}
 	}
 	for _, name := range []string{"unshare", "ptrace", "mount", "keyctl", "getpid", "fork", "clone_newuser"} {
 		if !seen[name] {
 			t.Errorf("helper did not report %s", name)
 		}
+	}
+	// Reported as a skip, after the other assertions, so a host that already
+	// refuses these calls does not look like a pass.
+	if len(inconclusive) > 0 {
+		t.Skipf("already EPERM before the filter, not conclusive here: %v", inconclusive)
 	}
 }

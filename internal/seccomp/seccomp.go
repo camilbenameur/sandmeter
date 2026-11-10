@@ -64,6 +64,9 @@ const cloneNSMask = unix.CLONE_NEWNS | unix.CLONE_NEWUTS | unix.CLONE_NEWIPC |
 	unix.CLONE_NEWUSER | unix.CLONE_NEWPID | unix.CLONE_NEWNET |
 	unix.CLONE_NEWCGROUP | unix.CLONE_NEWTIME
 
+// maxInsns is the kernel's BPF_MAXINSNS, the longest classic BPF program.
+const maxInsns = 4096
+
 // archOptional names syscalls that exist only on some architectures or
 // kernels. A profile may list them everywhere; they are skipped where the
 // per-arch table has no number. Any other unknown name is an error, so a typo
@@ -123,9 +126,13 @@ var defaultDenied = []string{
 	// Kernel keyrings are not namespaced and have had several bugs.
 	"keyctl", "add_key", "request_key",
 
-	// Inspecting or modifying other processes' memory. Yama may already limit
-	// ptrace; this removes it from the picture.
+	// Inspecting or modifying other processes. Yama may already limit ptrace;
+	// denying it is belt and braces. pidfd_getfd copies a file descriptor out
+	// of another process under the same ptrace access check, process_madvise
+	// acts on another process's memory, and kcmp leaks kernel pointers and
+	// object identity. Other cross-process calls remain allowed.
 	"ptrace", "process_vm_readv", "process_vm_writev",
+	"pidfd_getfd", "process_madvise", "kcmp",
 
 	// Host-wide information and clocks.
 	"syslog", "acct", "settimeofday", "clock_settime", "clock_adjtime", "adjtimex",
@@ -200,8 +207,8 @@ func (p Profile) Build() ([]unix.SockFilter, error) {
 		prog = append(prog, cloneChecks()...)
 	}
 	prog = append(prog, stmt(opRet, retAllow))
-	if len(prog) > 4096 {
-		return nil, fmt.Errorf("seccomp: program has %d instructions, kernel limit is 4096", len(prog))
+	if len(prog) > maxInsns {
+		return nil, fmt.Errorf("seccomp: program has %d instructions, kernel limit is %d", len(prog), maxInsns)
 	}
 	return prog, nil
 }
@@ -252,6 +259,11 @@ func (p Profile) numbers() ([]uint32, error) {
 func Install(prog []unix.SockFilter) error {
 	if len(prog) == 0 {
 		return errors.New("seccomp: empty program")
+	}
+	// sock_fprog.len is a uint16: without this check a long program would wrap
+	// around and a truncated filter would be installed instead of an error.
+	if len(prog) > maxInsns {
+		return fmt.Errorf("seccomp: program has %d instructions, kernel limit is %d", len(prog), maxInsns)
 	}
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		return fmt.Errorf("seccomp: set no_new_privs: %w", err)
