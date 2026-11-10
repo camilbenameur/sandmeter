@@ -84,6 +84,7 @@ jobs:
               "initrd_path": "$work/initrd.gz",
               "boot_args": "console=ttyS0 reboot=k panic=1 pci=off rdinit=/init"
             },
+            "drives": [],
             "machine-config": { "vcpu_count": 1, "mem_size_mib": 128 }
           }
           JSON
@@ -95,12 +96,14 @@ jobs:
           set -e
           ms=$(( ($(date +%s%N) - start) / 1000000 ))
           tail -n 20 console.log
+          echo "wall_ms=$ms" >> "$GITHUB_OUTPUT"
           if grep -q PROBE_GUEST_OK console.log; then
             echo "result=booted" >> "$GITHUB_OUTPUT"
           else
+            # KVM is there but the guest did not boot: that is a probe bug, fail loudly.
             echo "result=failed(rc=$rc)" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
-          echo "wall_ms=$ms" >> "$GITHUB_OUTPUT"
 
       - name: Summary
         if: always()

@@ -43,9 +43,5 @@ jobs:
       - name: Host report
         run: scripts/probe/host.sh
       - name: Tests as root
-        run: |
-          go test -c -race -tags integration -o /tmp/ ./...
-          for t in /tmp/*.test; do
-            echo "== $t"
-            sudo "$t" -test.v -test.count=1
-          done
+        # -exec runs each compiled test binary through sudo, from its package directory.
+        run: go test -exec sudo -race -tags integration -count=1 -v ./...
