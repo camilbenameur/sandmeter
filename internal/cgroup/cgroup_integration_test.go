@@ -31,15 +31,16 @@ func testParent(t *testing.T) string {
 		t.Skipf("cgroup v2 not mounted at /sys/fs/cgroup: %v", err)
 	}
 	parent := fmt.Sprintf("/sys/fs/cgroup/ringfence-test-%d", os.Getpid())
-	if err := EnsureParent(parent); err != nil {
-		t.Skipf("cannot prepare cgroup parent: %v", err)
-	}
+	// Registered first: EnsureParent may create the directory and still fail.
 	t.Cleanup(func() {
 		// The groups are removed by their own tests; this only drops the parent.
 		if err := unix.Rmdir(parent); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			t.Logf("remove parent: %v", err)
 		}
 	})
+	if err := EnsureParent(parent); err != nil {
+		t.Skipf("cannot prepare cgroup parent: %v", err)
+	}
 	return parent
 }
 

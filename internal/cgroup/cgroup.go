@@ -31,6 +31,8 @@ const (
 	cpuPeriod = 100000
 	// The kernel rejects a cpu.max quota under 1ms.
 	minQuota = 1000
+	// maxQuota mirrors the kernel's MAX_BW (2^44 - 1 microseconds).
+	maxQuota = 1<<44 - 1
 
 	pollInterval = 5 * time.Millisecond
 	rmdirRetries = 20
@@ -54,9 +56,18 @@ type Group struct {
 // EnsureParent creates path if needed and enables the cpu, memory and pids
 // controllers for the groups below it. path becomes a pure parent: the
 // "no internal processes" rule means it must hold no process itself.
-func EnsureParent(path string) error {
-	if err := os.Mkdir(path, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
-		return fmt.Errorf("create cgroup parent: %w", err)
+func EnsureParent(path string) (err error) {
+	merr := os.Mkdir(path, 0o755)
+	if merr != nil && !errors.Is(merr, fs.ErrExist) {
+		return fmt.Errorf("create cgroup parent: %w", merr)
+	}
+	if merr == nil {
+		// Do not leave an empty cgroup behind when a later check fails.
+		defer func() {
+			if err != nil {
+				_ = unix.Rmdir(path)
+			}
+		}()
 	}
 	// The controllers must be delegated by path's own parent first, otherwise
 	// path has no cgroup.controllers to hand down.
@@ -166,6 +177,9 @@ func cpuMax(cpu float64) (string, error) {
 		return fmt.Sprintf("max %d", cpuPeriod), nil
 	}
 	// Rounding first keeps 0.07 cores from becoming 7001 because of float error.
+	if cpu*cpuPeriod > maxQuota {
+		return "", fmt.Errorf("cpu limit %v is too large (kernel maximum is %d microseconds of quota per period)", cpu, int64(maxQuota))
+	}
 	quota := int64(math.Ceil(math.Round(cpu*cpuPeriod*1e3) / 1e3))
 	if quota < minQuota {
 		return "", fmt.Errorf("cpu limit %v is below the kernel minimum of %v cores", cpu, float64(minQuota)/cpuPeriod)
@@ -315,7 +329,8 @@ func killProcs(dir string) {
 		return
 	}
 	for _, f := range strings.Fields(s) {
-		if pid, err := strconv.Atoi(f); err == nil {
+		// pid 0 and negatives would signal our own process group.
+		if pid, err := strconv.Atoi(f); err == nil && pid > 0 {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 	}

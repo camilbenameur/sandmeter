@@ -90,6 +90,8 @@ func TestCPUMax(t *testing.T) {
 		{0.07, "7000 100000", false},
 		{1.5, "150000 100000", false},
 		{0.001, "", true},
+		{1e30, "", true},
+		{1e15, "", true},
 	}
 	for _, tc := range tests {
 		got, err := cpuMax(tc.cpu)
@@ -403,6 +405,9 @@ func TestEnsureParentMissingController(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "pids") {
 		t.Errorf("err = %v, want one naming pids", err)
 	}
+	if _, err := os.Stat(filepath.Join(root, "p")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("parent directory left behind: stat err = %v", err)
+	}
 }
 
 func TestEnsureParentHasProcesses(t *testing.T) {
@@ -416,5 +421,29 @@ func TestEnsureParentHasProcesses(t *testing.T) {
 	err := EnsureParent(path)
 	if err == nil || !strings.Contains(err.Error(), "processes") {
 		t.Errorf("err = %v, want a processes error", err)
+	}
+}
+
+// An absurd pid keeps the manual path harmless: kill(2) just returns ESRCH.
+const ghostPID = "4194999\n"
+
+func TestKillWithoutCgroupKill(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"cgroup.events": "populated 0\n", "cgroup.procs": ghostPID + "0\nx\n"})
+	if err := (&Group{Path: dir}).Kill(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "cgroup.kill")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("cgroup.kill must not be created: %v", err)
+	}
+}
+
+func TestKillWithoutCgroupKillContext(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"cgroup.events": "populated 1\n", "cgroup.procs": ghostPID})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := (&Group{Path: dir}).Kill(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want DeadlineExceeded", err)
 	}
 }
