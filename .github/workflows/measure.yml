@@ -1,0 +1,50 @@
+name: measure
+
+# Runs the escape suite and the benchmark on a fresh runner and publishes the
+# raw results as artifacts. Numbers depend on the runner hardware, which is
+# recorded with them.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  escape-and-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Prepare the runner (gVisor, forwarding)
+        run: scripts/ci/setup-host.sh
+      - name: Build
+        run: |
+          go build -o bin/ringfence ./cmd/ringfence
+          CGO_ENABLED=0 go build -o bin/rfprobe ./escape/probe
+      - name: Escape suite
+        run: |
+          sudo RINGFENCE_HOME=/var/lib/ringfence bin/ringfence escape \
+            -probe bin/rfprobe -out escape.json | tee escape.md
+      - name: Benchmark
+        run: |
+          sudo RINGFENCE_HOME=/var/lib/ringfence bin/ringfence bench \
+            -n 100 -snapshots 20 -concurrency 20 -out bench.json | tee bench.md
+      - name: Summary
+        if: always()
+        run: |
+          { echo "## Escape suite"; cat escape.md 2>/dev/null; echo; echo "## Benchmark"; cat bench.md 2>/dev/null; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: measurements
+          path: |
+            escape.json
+            escape.md
+            bench.json
+            bench.md

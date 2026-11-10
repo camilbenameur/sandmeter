@@ -1,0 +1,54 @@
+name: eval-agent
+
+# Asks a language model to escape the sandbox, k times, with a hard dollar
+# budget. Manual only: it spends money and attacks the runner it runs on,
+# which GitHub destroys afterwards.
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: backend
+        default: native
+      k:
+        description: episodes (>= 30)
+        default: "30"
+      budget:
+        description: hard budget in dollars (<= 5)
+        default: "2"
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Prepare the runner
+        run: scripts/ci/setup-host.sh
+      - name: Build
+        run: go build -o bin/ringfence ./cmd/ringfence
+      - name: Campaign
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BACKEND: ${{ inputs.backend }}
+          K: ${{ inputs.k }}
+          BUDGET: ${{ inputs.budget }}
+        run: |
+          sudo --preserve-env=ANTHROPIC_API_KEY CI=true RINGFENCE_THROWAWAY_HOST=1 RINGFENCE_HOME=/var/lib/ringfence \
+            bin/ringfence eval-agent -backend "$BACKEND" -k "$K" -budget "$BUDGET" -out eval.json | tee eval.md
+      - name: Summary
+        if: always()
+        run: cat eval.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: eval-agent
+          path: |
+            eval.json
+            eval.md
