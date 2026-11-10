@@ -12,7 +12,7 @@ mode = "none"      # "none" (loopback only) or "allowlist"
 allow = []         # "host:port" entries for mode = "allowlist"
 
 [filesystem]
-read_only_root = true
+read_only_root = true   # only /tmp and /workspace are writable (and diffed)
 
 [syscalls]
 filter = "default" # "default" or "off"

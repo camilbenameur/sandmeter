@@ -1,0 +1,7 @@
+# Outbound TCP to the listed destinations only. Names are resolved once on
+# the host when the sandbox starts and written to the sandbox's /etc/hosts;
+# there is no DNS inside the sandbox.
+
+[network]
+mode = "allowlist"
+allow = ["example.com:80", "example.com:443"]
