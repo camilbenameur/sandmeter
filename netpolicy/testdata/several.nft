@@ -1,0 +1,42 @@
+table inet ringfence_b2 {
+	set allow4 {
+		type ipv4_addr . inet_proto . inet_service
+		elements = { 1.1.1.1 . tcp . 53, 1.1.1.1 . udp . 53, 140.82.112.3 . tcp . 443 }
+	}
+	set seen_ok {
+		type ipv4_addr . inet_proto . inet_service
+		flags dynamic
+		size 4096
+	}
+	set seen_denied {
+		type ipv4_addr . inet_proto . inet_service
+		flags dynamic
+		size 4096
+	}
+	set seen_denied_other {
+		type ipv4_addr . inet_proto
+		flags dynamic
+		size 4096
+	}
+	chain egress {
+		type filter hook forward priority filter - 1; policy accept;
+		iifname "rfh-7" meta nfproto ipv6 drop
+		iifname "rfh-7" ct state new meta l4proto { tcp, udp } ip daddr . meta l4proto . th dport @allow4 update @seen_ok { ip daddr . meta l4proto . th dport }
+		iifname "rfh-7" meta l4proto { tcp, udp } ip daddr . meta l4proto . th dport @allow4 accept
+		iifname "rfh-7" ct state new meta l4proto { tcp, udp } update @seen_denied { ip daddr . meta l4proto . th dport }
+		iifname "rfh-7" ct state new meta l4proto != { tcp, udp } update @seen_denied_other { ip daddr . meta l4proto }
+		iifname "rfh-7" counter drop
+		oifname "rfh-7" ct state established,related accept
+		oifname "rfh-7" counter drop
+	}
+	chain host_in {
+		type filter hook input priority filter - 1; policy accept;
+		iifname "rfh-7" ct state new meta l4proto { tcp, udp } update @seen_denied { ip daddr . meta l4proto . th dport }
+		iifname "rfh-7" ct state new meta l4proto != { tcp, udp } update @seen_denied_other { ip daddr . meta l4proto }
+		iifname "rfh-7" counter drop
+	}
+	chain nat_out {
+		type nat hook postrouting priority srcnat; policy accept;
+		ip saddr 10.213.4.178 oifname != "rfh-7" masquerade
+	}
+}
