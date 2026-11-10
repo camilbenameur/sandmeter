@@ -11,6 +11,10 @@
 # "none" mode gives only loopback, so this connection attempt must fail at
 # the kernel (no route, no veth) rather than be allowed and merely logged.
 
+command -v rfprobe >/dev/null 2>&1 || { echo "rfprobe missing from the sandbox rootfs" >&2; exit 2; }
+[ -n "${RF_EGRESS_IP:-}" ] || { echo "RF_EGRESS_IP not set by the harness" >&2; exit 2; }
+[ -n "${RF_EGRESS_PORT:-}" ] || { echo "RF_EGRESS_PORT not set by the harness" >&2; exit 2; }
+
 out=$(rfprobe egress "$RF_EGRESS_IP" "$RF_EGRESS_PORT" 2>&1)
 rc=$?
 

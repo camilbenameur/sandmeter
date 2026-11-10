@@ -3,38 +3,74 @@ package main
 import (
 	"fmt"
 	"os"
-	"strconv"
+	"os/exec"
+	"strings"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
 
-// runUsernsMount creates a nested user namespace and mount namespace,
-// writes identity uid/gid maps (mapping its own uid/gid to 0 inside), and
-// tries to mount a tmpfs under that fake root. It imitates a process
-// regaining "root" through CLONE_NEWUSER and then using that root to do
-// something privileged, rather than anything that touches the outer
-// sandbox's own mounts.
+// Hidden subcommands the re-exec'd child runs inside the new namespaces.
+const (
+	usernsChildArg = "__userns-child"
+	noopArg        = "__noop"
+)
+
+// usernsCommand re-execs self in a new user and mount namespace, mapping
+// uid/gid 0 inside to our own ids outside. The namespace must come from
+// clone flags: unshare(CLONE_NEWUSER) returns EINVAL once a process has
+// more than one thread, and the Go runtime always starts several.
+func usernsCommand(arg string) (*exec.Cmd, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("find own path: %w", err)
+	}
+	cmd := exec.Command(self, arg)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags:                 syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
+		UidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
+		GidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
+		GidMappingsEnableSetgroups: false,
+	}
+	return cmd, nil
+}
+
+// startErrno extracts the errno from a failed cmd.Run, which wraps it in
+// an *exec.Error or *os.PathError, or returns EIO.
+func startErrno(err error) unix.Errno {
+	for err != nil {
+		if errno, ok := err.(unix.Errno); ok {
+			return errno
+		}
+		u, ok := err.(interface{ Unwrap() error })
+		if !ok {
+			break
+		}
+		err = u.Unwrap()
+	}
+	return unix.EIO
+}
+
+// runUsernsMount starts a child in a nested user and mount namespace and
+// has it mount a tmpfs. It imitates a process regaining "root" through
+// CLONE_NEWUSER and then using that root for something privileged, without
+// touching the outer sandbox's own mounts.
 func runUsernsMount() error {
-	uid := os.Getuid()
-	gid := os.Getgid()
+	cmd, err := usernsCommand(usernsChildArg)
+	if err != nil {
+		return fmt.Errorf("rfprobe: userns-mount: %w", err)
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("start or run child in new user namespace: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	fmt.Print(string(out))
+	return nil
+}
 
-	if err := unix.Unshare(unix.CLONE_NEWUSER | unix.CLONE_NEWNS); err != nil {
-		return fmt.Errorf("unshare(CLONE_NEWUSER|CLONE_NEWNS): %w", err)
-	}
-
-	if err := writeIDMap("/proc/self/uid_map", uid); err != nil {
-		return fmt.Errorf("write uid_map: %w", err)
-	}
-	// An unprivileged process must give up CAP_SETGID in the new
-	// namespace (by denying setgroups) before the kernel allows it to
-	// write gid_map at all.
-	if err := os.WriteFile("/proc/self/setgroups", []byte("deny"), 0); err != nil {
-		return fmt.Errorf("write setgroups=deny: %w", err)
-	}
-	if err := writeIDMap("/proc/self/gid_map", gid); err != nil {
-		return fmt.Errorf("write gid_map: %w", err)
-	}
-
+// runUsernsChild runs inside the new namespaces, where it holds a full
+// capability set by kernel definition.
+func runUsernsChild() error {
 	dir, err := os.MkdirTemp("", "rfprobe-userns-*")
 	if err != nil {
 		return fmt.Errorf("make mount point: %w", err)
@@ -46,13 +82,6 @@ func runUsernsMount() error {
 	}
 	unix.Unmount(dir, 0)
 
-	fmt.Println("mounted tmpfs after unshare(CLONE_NEWUSER|CLONE_NEWNS)")
+	fmt.Println("mounted tmpfs inside a new user and mount namespace")
 	return nil
-}
-
-// writeIDMap maps a single id to itself: "0 <id> 1" inside the file means
-// uid/gid 0 inside the namespace is id outside it.
-func writeIDMap(path string, id int) error {
-	line := "0 " + strconv.Itoa(id) + " 1\n"
-	return os.WriteFile(path, []byte(line), 0)
 }

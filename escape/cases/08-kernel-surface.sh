@@ -12,7 +12,9 @@
 # EXPOSED, not ESCAPED: reaching the syscall is a wider attack surface
 # than a minimal filter would leave, not a host compromise by itself.
 
-out=$(rfprobe syscalls 2>&1)
+command -v rfprobe >/dev/null 2>&1 || { echo "rfprobe missing from the sandbox rootfs" >&2; exit 2; }
+
+out=$(rfprobe syscalls 2>&1) || { echo "rfprobe syscalls failed: $out" >&2; exit 2; }
 reachable=$(echo "$out" | grep -c ' reachable')
 
 result="BLOCKED no probed syscall was reachable"

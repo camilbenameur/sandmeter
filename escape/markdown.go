@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // Markdown renders a result table: one row per case, one column per
@@ -25,7 +26,7 @@ func Markdown(verdicts []Verdict) string {
 	var b strings.Builder
 	b.WriteString("| Case |")
 	for _, be := range backends {
-		fmt.Fprintf(&b, " %s |", be)
+		fmt.Fprintf(&b, " %s |", cellText(be))
 	}
 	b.WriteString("\n|---|")
 	for range backends {
@@ -34,7 +35,7 @@ func Markdown(verdicts []Verdict) string {
 	b.WriteString("\n")
 
 	for _, c := range cases {
-		fmt.Fprintf(&b, "| %s |", c)
+		fmt.Fprintf(&b, "| %s |", cellText(c))
 		for _, be := range backends {
 			v, ok := cell[[2]string{c, be}]
 			if !ok {
@@ -45,7 +46,7 @@ func Markdown(verdicts []Verdict) string {
 			if v.Reason != "" {
 				text += ": " + v.Reason
 			}
-			fmt.Fprintf(&b, " %s |", text)
+			fmt.Fprintf(&b, " %s |", cellText(text))
 		}
 		b.WriteString("\n")
 	}
@@ -63,9 +64,33 @@ func Markdown(verdicts []Verdict) string {
 				blocked++
 			}
 		}
-		fmt.Fprintf(&b, "%s: blocked %d / %d\n", be, blocked, total)
+		fmt.Fprintf(&b, "%s: blocked %d / %d\n", cellText(be), blocked, total)
 	}
 	return b.String()
+}
+
+// maxCellRunes caps one cell so a verbose reason cannot swamp the table.
+const maxCellRunes = 120
+
+var cellEscaper = strings.NewReplacer(
+	"\\", "\\\\", "|", "\\|", "<", "&lt;", ">", "&gt;", "&", "&amp;", "`", "\\`",
+)
+
+// cellText makes sandbox-controlled text safe to publish in a table cell:
+// control characters (newlines included) become spaces, the text is
+// truncated, and the characters that would open a column, an HTML tag or a
+// code span are escaped.
+func cellText(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+	if r := []rune(s); len(r) > maxCellRunes {
+		s = string(r[:maxCellRunes]) + "..."
+	}
+	return cellEscaper.Replace(s)
 }
 
 func sortedKeys(set map[string]bool) []string {

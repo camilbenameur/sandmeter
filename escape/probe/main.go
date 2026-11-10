@@ -7,13 +7,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: rfprobe <syscalls|shocker|userns-mount|egress|maps> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: rfprobe <syscalls|shocker|userns-mount|egress|dns|icmp|maps> [args...]")
 		os.Exit(2)
 	}
 
@@ -27,8 +28,17 @@ func main() {
 		err = runUsernsMount()
 	case "egress":
 		err = runEgress(os.Args[2:])
+	case "dns":
+		err = runDNS(os.Args[2:])
+	case "icmp":
+		err = runICMP(os.Args[2:])
 	case "maps":
 		err = runMaps()
+	case usernsChildArg:
+		err = runUsernsChild()
+	case noopArg:
+		// Internal: the child of checkUnshareNewuser; being started at all
+		// is the whole result.
 	case syscallCheckArg:
 		// Internal: one probe re-execs itself with this hidden subcommand
 		// so a syscall that gets SIGSYS-killed by seccomp only takes down
@@ -40,6 +50,10 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		var ue *untestableError
+		if errors.As(err, &ue) {
+			os.Exit(exitUntestable)
+		}
 		os.Exit(1)
 	}
 }

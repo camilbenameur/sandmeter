@@ -52,6 +52,26 @@ taken at face value; a self-reported `ESCAPED` is trusted even with no
 corroborating host evidence, on the theory that a false positive here only
 makes the suite too cautious, never that it missed a real escape.
 
+The script runs inside the sandbox, so its output is not trusted either:
+if several `RESULT` lines appear, any `ESCAPED` among them counts, and
+otherwise the verdict is `error` instead of a guess. Cells in the published
+table are escaped and truncated for the same reason. `13-fork-bomb` and
+`14-memory-hog` also give `error` when the harness did not report the
+limit it applied, since a peak cannot be judged without it.
+
+Known limits of individual cases: `06-cgroup-release-agent` can only prove a
+release agent would run if the harness passes `RF_SANDBOX_ROOT` (the host
+path of the sandbox root); without it the case stops at `EXPOSED`.
+`11-egress-allowlist` lists any leg it could not run (for example ICMP
+without `ping_group_range`) rather than counting it as blocked.
+
+The script runs inside the sandbox, so its output is not trusted either:
+if several `RESULT` lines appear, any `ESCAPED` among them counts, and
+otherwise the verdict is `error` instead of a guess. Cells in the published
+table are escaped and truncated for the same reason. `13-fork-bomb` and
+`14-memory-hog` also give `error` when the harness did not report the
+limit it applied, since a peak can not be judged without it.
+
 If there is no `RESULT` line at all (the process died first), `Judge` checks
 whether it died the way that case expects: `14-memory-hog` expects an OOM
 kill, `13-fork-bomb` accepts any kill. Anything else with no `RESULT` line is

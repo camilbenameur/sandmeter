@@ -12,6 +12,10 @@
 # to the host-side veth address, since that address exists only for the
 # harness's own bookkeeping.
 
+command -v rfprobe >/dev/null 2>&1 || { echo "rfprobe missing from the sandbox rootfs" >&2; exit 2; }
+[ -n "${RF_GATEWAY_IP:-}" ] || { echo "RF_GATEWAY_IP not set by the harness" >&2; exit 2; }
+[ -n "${RF_GATEWAY_PORT:-}" ] || { echo "RF_GATEWAY_PORT not set by the harness" >&2; exit 2; }
+
 out=$(rfprobe egress "$RF_GATEWAY_IP" "$RF_GATEWAY_PORT" 2>&1)
 rc=$?
 

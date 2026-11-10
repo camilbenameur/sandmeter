@@ -47,8 +47,14 @@ func runSyscalls() error {
 // line. It never returns an error: an unreachable syscall is a normal,
 // expected result, not a failure of rfprobe itself.
 func runOneSyscallCheck(self, name string) string {
-	cmd := exec.Command(self, syscallCheckArg, name)
-	out, err := cmd.Output()
+	out, err := exec.Command(self, syscallCheckArg, name).Output()
+	return formatCheckResult(name, out, err)
+}
+
+// formatCheckResult builds the report line from a child's stdout and exit
+// status. The child prints "blocked <errno>" itself before exiting 1, so
+// that text, not the bare exit code, is what the report must carry.
+func formatCheckResult(name string, out []byte, err error) string {
 	if err == nil {
 		return fmt.Sprintf("%s %s", name, trimNL(out))
 	}
@@ -59,6 +65,9 @@ func runOneSyscallCheck(self, name string) string {
 	}
 	if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 		return fmt.Sprintf("%s blocked killed-by-signal:%s", name, ws.Signal())
+	}
+	if text := trimNL(out); text != "" {
+		return fmt.Sprintf("%s %s", name, text)
 	}
 	return fmt.Sprintf("%s blocked exit:%d stderr:%s", name, exitErr.ExitCode(), trimNL(exitErr.Stderr))
 }
@@ -116,9 +125,18 @@ func reportErrno(errno unix.Errno, ok bool) error {
 		fmt.Println("reachable")
 		return nil
 	}
-	fmt.Println("blocked", errno)
+	fmt.Println(blockedLine(errno))
 	os.Exit(1)
 	return nil
+}
+
+// blockedLine is "blocked <ERRNAME>", falling back to the message for
+// errnos x/sys has no name for.
+func blockedLine(errno unix.Errno) string {
+	if n := unix.ErrnoName(errno); n != "" {
+		return "blocked " + n
+	}
+	return "blocked " + errno.Error()
 }
 
 // checkBPF tries bpf(BPF_MAP_CREATE) with a 1-entry array map. Reachable
@@ -145,18 +163,27 @@ func checkBPF() (unix.Errno, bool) {
 	return 0, true
 }
 
-// checkKeyctl tries keyctl(KEYCTL_GET_KEYRING_ID) on the calling thread's
-// own keyring, which exists even for an unprivileged process; it is a
-// read-only lookup, not a key creation.
+// checkKeyctl tries keyctl(KEYCTL_GET_KEYRING_ID) on the thread keyring
+// without creating it. That keyring usually does not exist, so the kernel
+// answers ENOKEY: an answer from the keyctl handler itself, which proves
+// the syscall was reachable. Only an errno that means "refused" counts as
+// blocked (see keyctlReachable).
 func checkKeyctl() (unix.Errno, bool) {
 	_, err := unix.KeyctlGetKeyringID(unix.KEY_SPEC_THREAD_KEYRING, false)
-	if err != nil {
-		if errno, ok := err.(unix.Errno); ok {
-			return errno, false
-		}
+	if err == nil {
+		return 0, true
+	}
+	errno, ok := err.(unix.Errno)
+	if !ok {
 		return unix.EIO, false
 	}
-	return 0, true
+	return errno, keyctlReachable(errno)
+}
+
+// keyctlReachable reports whether errno came from the keyctl handler (the
+// key just does not exist) rather than from a filter in front of it.
+func keyctlReachable(errno unix.Errno) bool {
+	return errno == unix.ENOKEY
 }
 
 // ioUringParams mirrors struct io_uring_params from <linux/io_uring.h>
@@ -229,17 +256,17 @@ func checkUserfaultfd() (unix.Errno, bool) {
 	return 0, true
 }
 
-// checkUnshareNewuser tries unshare(CLONE_NEWUSER) alone, with no
-// following mount or map write: just whether the namespace itself can be
-// created. Safe to run in-process here because this check runs in its own
-// re-exec'd child (see runSyscalls), so the namespace change dies with it.
+// checkUnshareNewuser tries to create a user namespace, and only that.
+// unshare(CLONE_NEWUSER) fails with EINVAL in a multithreaded process and a
+// Go program always is one, so the namespace is created at clone time in a
+// re-exec'd child instead, which is also how real tools do it.
 func checkUnshareNewuser() (unix.Errno, bool) {
-	err := unix.Unshare(unix.CLONE_NEWUSER)
+	cmd, err := usernsCommand(noopArg)
 	if err != nil {
-		if errno, ok := err.(unix.Errno); ok {
-			return errno, false
-		}
 		return unix.EIO, false
+	}
+	if err := cmd.Run(); err != nil {
+		return startErrno(err), false
 	}
 	return 0, true
 }

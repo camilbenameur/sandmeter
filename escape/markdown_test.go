@@ -1,6 +1,9 @@
 package escape
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMarkdownGolden(t *testing.T) {
 	// Deliberately out of order and with one missing cell (gvisor has no
@@ -32,5 +35,23 @@ func TestMarkdownEmpty(t *testing.T) {
 	want := "| Case |\n|---|\n\n"
 	if got != want {
 		t.Errorf("Markdown(nil) = %q, want %q", got, want)
+	}
+}
+
+func TestMarkdownEscapesCells(t *testing.T) {
+	long := ""
+	for i := 0; i < 200; i++ {
+		long += "x"
+	}
+	got := Markdown([]Verdict{
+		{CaseID: "01-a", Backend: "native", Outcome: "exposed", Reason: "a | b\n<script>`c`</script>"},
+		{CaseID: "02-b", Backend: "native", Outcome: "blocked", Reason: long},
+	})
+	want := "| 01-a | exposed: a \\| b &lt;script&gt;\\`c\\`&lt;/script&gt; |\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("escaped row missing:\n%s", got)
+	}
+	if strings.Contains(got, long) || !strings.Contains(got, "...") {
+		t.Errorf("long reason not truncated:\n%s", got)
 	}
 }

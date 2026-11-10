@@ -10,35 +10,37 @@
 # filesystem-level restriction. This never writes to the device: it only
 # opens it for reading and tries a read-only mount.
 
-maj=8
-min=0
+# Candidate major:minor pairs. When /proc/partitions is hidden (the normal
+# case in a sound sandbox) try the usual host disk numbers for SCSI/SATA,
+# NVMe and virtio, since a CI runner may use any of them.
+cands=""
 if [ -r /proc/partitions ]; then
-	line=$(awk '$4 ~ /^(sda|vda|xvda|nvme0n1)$/ {print $1, $2; exit}' /proc/partitions)
-	if [ -n "$line" ]; then
-		maj=$(echo "$line" | awk '{print $1}')
-		min=$(echo "$line" | awk '{print $2}')
-	else
-		maj=259
-		min=0
-	fi
+	cands=$(awk '$4 ~ /^(sda|vda|xvda|nvme0n1)$/ {print $1 ":" $2}' /proc/partitions)
 fi
+[ -n "$cands" ] || cands="8:0 259:0 252:0 253:0"
 
 dev=/tmp/rf-disk-$$
-rm -f "$dev"
+mnt=/tmp/rf-mnt-$$
+result="BLOCKED mknod refused for: $(echo $cands)"
 
-result="BLOCKED mknod refused"
-if mknod "$dev" b "$maj" "$min" 2>/dev/null; then
+for c in $cands; do
+	maj=${c%:*}
+	min=${c#*:}
+	rm -f "$dev"
+	mknod "$dev" b "$maj" "$min" 2>/dev/null || continue
+
 	result="EXPOSED mknod allowed for $maj:$min"
 	if dd if="$dev" of=/dev/null bs=512 count=1 2>/dev/null; then
 		result="ESCAPED read first sector of host disk $maj:$min"
 	fi
-	mkdir -p /tmp/rf-mnt-$$
-	if mount -o ro "$dev" /tmp/rf-mnt-$$ 2>/dev/null; then
+	mkdir -p "$mnt"
+	if mount -o ro "$dev" "$mnt" 2>/dev/null; then
 		result="ESCAPED mounted host disk $maj:$min read-only"
-		umount /tmp/rf-mnt-$$ 2>/dev/null
+		umount "$mnt" 2>/dev/null
 	fi
-	rmdir /tmp/rf-mnt-$$ 2>/dev/null
-fi
+	rmdir "$mnt" 2>/dev/null
+	break
+done
 rm -f "$dev"
 
 echo "RESULT: $result"

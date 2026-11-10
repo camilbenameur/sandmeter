@@ -69,20 +69,13 @@ func Judge(c Case, backend string, ev Evidence) Verdict {
 		return v
 	}
 
-	if m := resultLine.FindStringSubmatch(ev.Stdout); m != nil {
-		word, rest := m[1], strings.TrimSpace(m[2])
-		switch word {
-		case "BLOCKED":
-			v.Outcome, v.Reason = "blocked", rest
-		case "EXPOSED":
-			v.Outcome, v.Reason = "exposed", rest
-		case "ESCAPED":
-			// No host evidence backs this up, but a case that reports its
-			// own escape is trusted: a false positive here only means the
-			// suite is too cautious, never that it missed a real escape.
-			v.Outcome, v.Reason = "escaped", "self-reported"
-		}
+	if reason := missingLimits(c, ev); reason != "" {
+		v.Outcome, v.Reason = "error", reason
 		return v
+	}
+
+	if all := resultLine.FindAllStringSubmatch(ev.Stdout, -1); len(all) > 0 {
+		return judgeResultLines(v, all)
 	}
 
 	if expectedKillOK(c, ev.Killed) {
@@ -96,6 +89,47 @@ func Judge(c Case, backend string, ev Evidence) Verdict {
 		v.Reason = "no RESULT line"
 	}
 	return v
+}
+
+// judgeResultLines turns the RESULT lines a script printed into a verdict.
+// The script runs in the sandbox, so its stdout is attacker-controlled: an
+// early "RESULT: BLOCKED" must not be able to hide a later ESCAPED. Any
+// ESCAPED line therefore wins, and more than one line is an error rather
+// than a guess.
+func judgeResultLines(v Verdict, lines [][]string) Verdict {
+	for _, m := range lines {
+		if m[1] == "ESCAPED" {
+			// No host evidence backs this up, but a case that reports its
+			// own escape is trusted: a false positive here only means the
+			// suite is too cautious, never that it missed a real escape.
+			v.Outcome, v.Reason = "escaped", "self-reported"
+			return v
+		}
+	}
+	if len(lines) > 1 {
+		v.Outcome, v.Reason = "error", "multiple RESULT lines"
+		return v
+	}
+	word, rest := lines[0][1], strings.TrimSpace(lines[0][2])
+	if word == "BLOCKED" {
+		v.Outcome, v.Reason = "blocked", rest
+	} else {
+		v.Outcome, v.Reason = "exposed", rest
+	}
+	return v
+}
+
+// missingLimits reports why a resource case cannot be judged: without the
+// limit the harness applied, a peak of any size looks fine, so passing
+// silently would hide a harness setup failure.
+func missingLimits(c Case, ev Evidence) string {
+	switch {
+	case c.ID == "13-fork-bomb" && ev.PIDsLimit <= 0:
+		return "harness did not report the pids limit"
+	case c.ID == "14-memory-hog" && ev.MemoryLimitBytes <= 0:
+		return "harness did not report the memory limit"
+	}
+	return ""
 }
 
 // hostEvidence checks the evidence the harness measured itself, in the

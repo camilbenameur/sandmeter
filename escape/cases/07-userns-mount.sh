@@ -12,6 +12,8 @@
 # such as mounting a filesystem. The real risk is a kernel or sandbox that
 # treats capabilities-in-a-userns as equivalent to capabilities on the host.
 
+command -v rfprobe >/dev/null 2>&1 || { echo "rfprobe missing from the sandbox rootfs" >&2; exit 2; }
+
 out=$(rfprobe userns-mount 2>&1)
 rc=$?
 

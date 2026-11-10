@@ -95,3 +95,34 @@ func TestNewCanary(t *testing.T) {
 		t.Errorf("second NewCanary reused the first path/token")
 	}
 }
+
+// A silent client must not keep Close waiting, nor leave its connection
+// open after Close.
+func TestListenerCloseCutsSilentClient(t *testing.T) {
+	l, err := NewListener("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewListener: %v", err)
+	}
+	conn, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer conn.Close()
+
+	for i := 0; i < 100 && l.Hits() == 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	done := make(chan struct{})
+	go func() { l.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked on a silent client")
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Error("client connection still open after Close")
+	}
+}
