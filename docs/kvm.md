@@ -2,9 +2,9 @@
 
 Question: can this project run a Firecracker backend, and where?
 
-Status on 2026-11-10: **probe only.** No machine I control exposes `/dev/kvm`.
-Firecracker stays out of the core; it becomes a backend only if the Actions probe
-below boots a guest.
+Status on 2026-11-10: **KVM works on GitHub-hosted `ubuntu-latest` runners, and
+nowhere else I have.** A Firecracker guest boots there in about one second. Firecracker
+stays out of the core: it can become a CI-only backend late in the plan, labelled that way.
 
 ## Measurements
 
@@ -59,29 +59,39 @@ Verdict: no KVM in a standard Codespace. This matches a third-party report
 
 ### GitHub Actions hosted runners
 
-**Not measured yet.** The workflow `.github/workflows/kvm-probe.yml` does it. It runs on
-`ubuntu-latest` and `ubuntu-24.04-arm` and:
+Measured by `.github/workflows/kvm-probe.yml` on 2026-11-10, run 42904429882, in a
+**private** repository (2 vCPU runner). The arm64 job runs only once the repository is
+public, since free arm64 runners are public-only.
 
-1. runs `scripts/probe/host.sh` before and after the udev rule
-   `KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"`;
-2. opens `/dev/kvm` and calls `KVM_GET_API_VERSION`;
-3. downloads Firecracker v1.17.0 and a guest kernel from the Firecracker CI bucket
-   (`firecracker-ci/v1.15`, the newest one that still publishes kernels), builds a
-   busybox initramfs whose `/init` prints `PROBE_GUEST_OK`, boots it, and records
-   the wall time.
+| Check | Result |
+|---|---|
+| Runner | `ubuntu-latest`, kernel 7.0.0-1019-azure, AMD EPYC 7763, 2 vCPU, `virt: microsoft` |
+| `/dev/kvm` before the udev rule | present, `crw-rw---- root kvm` (the runner user cannot open it) |
+| `/dev/kvm` after `KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"` | `crw-rw-rw-` |
+| `kvm_amd` nested | `1` |
+| `KVM_GET_API_VERSION` | 12 |
+| Firecracker v1.17.0, kernel 6.1.155 from `firecracker-ci/v1.15`, busybox initramfs | **guest booted**: `/init` ran at 0.34 s guest time, printed `PROBE_GUEST_OK 6.1.155+` |
+| Wall time, VMM start to VMM exit | 1019 ms (one sample, includes kernel boot and reboot) |
+| `kernel.apparmor_restrict_unprivileged_userns` | `1`, and `unshare -Ur` fails as on the VPS: CI tests of the native backend run under `sudo` |
+| cgroup filesystem | `cgroup2fs`, `cpu memory pids` delegated to the runner user |
 
-It needs a public repository: public runners have 4 vCPU and the 2024 changelog about
-hardware acceleration targets them. What GitHub documents officially is "hardware
-acceleration for Android SDK tools", not KVM for arbitrary VMMs, so a positive result
-says "works today on this runner image", not "guaranteed".
-
-Result: _pending first run._
+Caveats:
+- GitHub documents "hardware acceleration for Android SDK tools", not KVM for any
+  VMM. This result says "works today on this runner image", not "guaranteed".
+- Firecracker v1.17 refuses a config without a `drives` field, even for an
+  initramfs-only guest. The probe sets `"drives": []`.
+- The guest ends with `reboot -f`: with `reboot=k` Firecracker exits. With
+  `poweroff -f` the guest halts and Firecracker keeps running until the timeout.
+- One sample on a shared runner is not a benchmark. No micro-VM number goes in the README
+  until `bench/` runs it with repetitions.
 
 ## Decision rule
 
-- Probe boots on `ubuntu-latest`: a `firecracker` backend may be added late in the
-  plan, tested only in CI, and labelled that way in the README. No micro-VM number is
-  published from any other machine.
+- Probe boots on `ubuntu-latest` (the case today): a `firecracker` backend may be added
+  late in the plan, tested only in CI, and labelled that way in the README. No micro-VM
+  number is published from any other machine. Development of that backend cannot be
+  done on the VPS, so it stays the first thing cut if time runs short.
 - Probe fails: the README says "no micro-VM backend: no KVM on the machines I have".
   gVisor (`runsc`, systrap platform) is the second isolation level. gVisor is a
-  user-space kernel, not a micro-VM, and the README says so.
+  user-space kernel, not a micro-VM, and the README says so. This applies again if a
+  later probe run stops booting.

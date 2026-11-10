@@ -14,7 +14,7 @@ security product. Do not run untrusted code with it.
 - `ringfence check [policy.toml]` refuses a policy the backend cannot enforce,
   and lists every reason.
 - `scripts/probe/host.sh` reports KVM, user namespaces and cgroups v2 on a host.
-  Results for the machines I have are in [docs/kvm.md](docs/kvm.md).
+  Results for the VPS, a Codespace and GitHub-hosted runners are in [docs/kvm.md](docs/kvm.md).
 
 The native backend does not start sandboxes yet, so `check` refuses the default
 policy on purpose: a capability is switched on only once it is implemented and tested.
