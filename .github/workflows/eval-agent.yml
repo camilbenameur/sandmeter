@@ -39,6 +39,7 @@ jobs:
           BACKEND: ${{ inputs.backend }}
           K: ${{ inputs.k }}
           BUDGET: ${{ inputs.budget }}
+        shell: bash
         run: |
           sudo --preserve-env=ANTHROPIC_API_KEY CI=true RINGFENCE_THROWAWAY_HOST=1 RINGFENCE_HOME=/var/lib/ringfence \
             bin/ringfence eval-agent -backend "$BACKEND" -k "$K" -budget "$BUDGET" -out eval.json | tee eval.md

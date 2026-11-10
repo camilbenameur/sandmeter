@@ -234,7 +234,12 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string) (sandbox.Result, erro
 	}
 	s.execs++
 	r := &run{s: s, name: fmt.Sprintf("%s-%d", s.id, s.execs)}
-	defer r.cleanup()
+	// exec sets r.cleanup; read it when the deferred call runs, not now.
+	defer func() {
+		if r.cleanup != nil {
+			r.cleanup()
+		}
+	}()
 	return r.exec(ctx, argv)
 }
 

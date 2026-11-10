@@ -33,8 +33,22 @@ jobs:
 
   # The backends need root. These tests create namespaces, cgroups, overlay
   # mounts and network devices, so they only run on throwaway CI machines.
+  # One job per group: if a test takes the runner down, the others still report.
   integration:
+    name: integration (${{ matrix.name }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: cgroup, pkg: ./internal/cgroup, run: "." }
+          - { name: seccomp, pkg: ./internal/seccomp, run: "." }
+          - { name: image, pkg: ./image, run: "." }
+          - { name: receipt, pkg: ./receipt, run: "." }
+          - { name: netpolicy, pkg: ./netpolicy, run: "." }
+          - { name: engine-native, pkg: ./engine, run: "/native$" }
+          - { name: engine-gvisor, pkg: ./engine, run: "/gvisor$" }
     env:
       RINGFENCE_NET_TESTS: "1"
     steps:
@@ -47,10 +61,8 @@ jobs:
       - name: Prepare the runner (gVisor, forwarding)
         run: scripts/ci/setup-host.sh
       - name: Tests as root
-        # -exec runs each compiled test binary through sudo, from its package directory.
-        run: go test -exec "sudo -E" -race -tags integration -count=1 -v ./... 2>&1 | tee integration.log
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: integration-log
-          path: integration.log
+        shell: bash
+        # -exec runs the compiled test binary through sudo, from its package directory.
+        run: |
+          go test -exec "sudo -E" -race -tags integration -count=1 -timeout 10m -v \
+            -run '${{ matrix.run }}' ${{ matrix.pkg }}

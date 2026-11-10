@@ -28,10 +28,12 @@ jobs:
           go build -o bin/ringfence ./cmd/ringfence
           CGO_ENABLED=0 go build -o bin/rfprobe ./escape/probe
       - name: Escape suite
+        shell: bash
         run: |
           sudo RINGFENCE_HOME=/var/lib/ringfence bin/ringfence escape \
             -probe bin/rfprobe -out escape.json | tee escape.md
       - name: Benchmark
+        shell: bash
         run: |
           sudo RINGFENCE_HOME=/var/lib/ringfence bin/ringfence bench \
             -n 100 -snapshots 20 -concurrency 20 -out bench.json | tee bench.md
