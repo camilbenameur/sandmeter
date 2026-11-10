@@ -184,3 +184,68 @@ func TestLoadErrors(t *testing.T) {
 		t.Fatalf("missing layer: %v", err)
 	}
 }
+
+// lyingLayer reports a DiffID that its content does not have.
+type lyingLayer struct {
+	v1.Layer
+	id v1.Hash
+}
+
+func (l lyingLayer) DiffID() (v1.Hash, error) { return l.id, nil }
+
+func TestEnsureLayerRejectsDiffIDMismatch(t *testing.T) {
+	good := tarLayer(t, fileE("a", "x", 0o644))
+	other := tarLayer(t, fileE("a", "evil", 0o644))
+	id, err := good.DiffID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{Root: t.TempDir()}
+	_, err = s.ensureLayer(context.Background(), lyingLayer{Layer: other, id: id})
+	if err == nil || !strings.Contains(err.Error(), "diff id") {
+		t.Fatalf("mismatch accepted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.layersDir(), id.Hex)); !os.IsNotExist(err) {
+		t.Fatalf("poisoned layer installed: %v", err)
+	}
+	if _, err := s.ensureLayer(context.Background(), good); err != nil {
+		t.Fatalf("good layer: %v", err)
+	}
+}
+
+func TestEnsureLayerKeepsFinishedLayer(t *testing.T) {
+	l := tarLayer(t, fileE("a", "x", 0o644))
+	s := &Store{Root: t.TempDir()}
+	dir, err := s.ensureLayer(context.Background(), l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A pull that decided to extract before the first one finished must
+	// not replace the finished tree.
+	marker := filepath.Join(dir, "sentinel")
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := s.install(tmp, dir, ExtractStats{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("finished layer was replaced: %v", err)
+	}
+}
+
+func TestReusableNeedsDirectory(t *testing.T) {
+	l := tarLayer(t, fileE("a", "x", 0o644))
+	s := &Store{Root: t.TempDir()}
+	dir, err := s.ensureLayer(context.Background(), l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if s.reusable(dir) {
+		t.Fatal("marker without directory reported reusable")
+	}
+}

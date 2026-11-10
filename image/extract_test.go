@@ -443,3 +443,53 @@ func TestExtractIDShiftOverflow(t *testing.T) {
 		t.Fatal("OwnershipSkipped should be set for non-root")
 	}
 }
+
+func TestExtractDirThenWhiteoutOfIt(t *testing.T) {
+	dst, _ := sandboxDirs(t)
+	_, err := ExtractLayer(buildTar(t,
+		dirE("a/", 0o755), dirE("a/b/", 0o700), fileE("a/b/f", "x", 0o644),
+		fileE("a/.wh.b", "", 0o644),
+	), dst, ExtractOptions{Whiteouts: WhiteoutRecord})
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "a", "b")); !os.IsNotExist(err) {
+		t.Fatalf("a/b should be gone: %v", err)
+	}
+}
+
+func TestExtractDirThenFileSameName(t *testing.T) {
+	dst, _ := sandboxDirs(t)
+	_, err := ExtractLayer(buildTar(t,
+		dirE("a/", 0o700), fileE("a", "x", 0o644),
+	), dst, ExtractOptions{Whiteouts: WhiteoutRecord})
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	fi, err := os.Lstat(filepath.Join(dst, "a"))
+	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o644 {
+		t.Fatalf("a should be a 0644 file: %v %v", fi, err)
+	}
+}
+
+func TestExtractRootAndEmptyWhiteoutNames(t *testing.T) {
+	dst, sib := sandboxDirs(t)
+	st, err := ExtractLayer(buildTar(t,
+		fileE("a/b", "x", 0o644),
+		linkE("./", "/etc"),
+		fileE(".", "x", 0o644),
+		fileE("a/.wh.", "", 0o644),
+		fileE("a/.wh..", "", 0o644),
+		fileE("a/.wh...", "", 0o644),
+	), dst, ExtractOptions{Whiteouts: WhiteoutRecord})
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	if readFile(t, filepath.Join(dst, "a", "b")) != "x" {
+		t.Fatal("a/b was removed by a bogus whiteout")
+	}
+	if len(st.Skipped) != 5 || st.Whiteouts != 0 {
+		t.Fatalf("skipped=%v whiteouts=%d", st.Skipped, st.Whiteouts)
+	}
+	assertEmpty(t, sib)
+}

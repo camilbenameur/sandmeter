@@ -182,6 +182,12 @@ func (e *extractor) entry(hdr *tar.Header, body io.Reader) error {
 		e.skip(hdr.Name, err.Error())
 		return nil
 	}
+	if name == "." && hdr.Typeflag != tar.TypeDir {
+		// Replacing the layer root itself is meaningless and would make
+		// RemoveAll fail on ".".
+		e.skip(hdr.Name, "non-directory entry for the layer root")
+		return nil
+	}
 	if name != "." {
 		if handled, err := e.whiteout(name, hdr); handled || err != nil {
 			return err
@@ -221,7 +227,13 @@ func (e *extractor) whiteout(name string, hdr *tar.Header) (bool, error) {
 		e.skip(name, "aufs bookkeeping entry")
 		return true, nil
 	}
-	target := path.Join(dir, strings.TrimPrefix(base, whiteoutPrefix))
+	victim := strings.TrimPrefix(base, whiteoutPrefix)
+	if victim == "" || victim == "." || victim == ".." {
+		// Would resolve to the directory itself or its parent.
+		e.skip(name, "invalid whiteout")
+		return true, nil
+	}
+	target := path.Join(dir, victim)
 	return true, e.whiteoutName(dir, target, hdr)
 }
 
@@ -256,6 +268,7 @@ func (e *extractor) whiteoutName(dir, target string, hdr *tar.Header) error {
 	if err := e.root.RemoveAll(target); err != nil {
 		return fmt.Errorf("remove whited-out entry: %w", err)
 	}
+	e.forget(target)
 	e.stats.Whiteouts++
 	e.stats.WhiteoutPaths = append(e.stats.WhiteoutPaths, target)
 	if e.opt.Whiteouts != WhiteoutOverlay {
@@ -284,7 +297,27 @@ func (e *extractor) replace(name string, keepDir bool) error {
 	if keepDir && fi.IsDir() {
 		return nil
 	}
-	return e.root.RemoveAll(name)
+	if err := e.root.RemoveAll(name); err != nil {
+		return err
+	}
+	e.forget(name)
+	return nil
+}
+
+// forget drops the deferred metadata of name and of everything below it, so
+// finish never applies it to an entry that has since been replaced or removed.
+func (e *extractor) forget(name string) {
+	prefix := name + "/"
+	for k := range e.dirs {
+		if k == name || strings.HasPrefix(k, prefix) {
+			delete(e.dirs, k)
+		}
+	}
+	for k := range e.times {
+		if k == name || strings.HasPrefix(k, prefix) {
+			delete(e.times, k)
+		}
+	}
 }
 
 func (e *extractor) ids(hdr *tar.Header) (uid, gid int, err error) {

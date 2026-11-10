@@ -2,6 +2,8 @@ package image
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"golang.org/x/sys/unix"
 )
 
 // Store keeps pulled images on disk.
@@ -205,6 +208,9 @@ func whiteoutMode() WhiteoutMode {
 // build. A layer extracted with recorded whiteouts is not a valid overlay
 // lower dir, so root does not reuse it.
 func (s *Store) reusable(dir string) bool {
+	if !s.layerReady(dir) {
+		return false
+	}
 	m, err := s.readMarker(dir)
 	if err != nil {
 		return false
@@ -242,43 +248,77 @@ func (s *Store) ensureLayer(ctx context.Context, l v1.Layer) (string, error) {
 	}
 	defer os.RemoveAll(tmp)
 
-	stats, err := s.extract(l, tmp)
+	stats, err := s.extract(l, tmp, diffID)
 	if err != nil {
 		return "", err
 	}
 	return final, s.install(tmp, final, stats)
 }
 
-func (s *Store) extract(l v1.Layer, dst string) (ExtractStats, error) {
+// extract unpacks l into dst and checks the result against diffID. The cache
+// is keyed by DiffID, and the registry client only verifies the compressed
+// blob against the manifest, so a hostile registry could otherwise get
+// arbitrary content cached under a well-known DiffID.
+func (s *Store) extract(l v1.Layer, dst string, diffID v1.Hash) (ExtractStats, error) {
 	rc, err := l.Uncompressed()
 	if err != nil {
 		return ExtractStats{}, fmt.Errorf("open layer: %w", err)
 	}
 	defer rc.Close()
-	stats, err := ExtractLayer(rc, dst, ExtractOptions{IDShift: s.IDShift, Whiteouts: whiteoutMode()})
+	h := sha256.New()
+	stats, err := ExtractLayer(io.TeeReader(rc, h), dst, ExtractOptions{IDShift: s.IDShift, Whiteouts: whiteoutMode()})
 	if err != nil {
 		return stats, fmt.Errorf("extract layer: %w", err)
 	}
-	// Drain so the layer's digest check runs.
-	if _, err := io.Copy(io.Discard, rc); err != nil {
+	// The tar reader stops at the end-of-archive blocks; drain the padding
+	// so the hash covers the whole stream and the compressed digest check runs.
+	if _, err := io.Copy(h, rc); err != nil {
 		return stats, fmt.Errorf("verify layer: %w", err)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != diffID.Hex {
+		return stats, fmt.Errorf("layer content hash sha256:%s does not match its diff id %s", got, diffID)
 	}
 	return stats, nil
 }
 
+// lockLayer takes an exclusive flock on a per-layer file, so two pulls of the
+// same layer cannot remove each other's finished tree. The returned function
+// releases it.
+func (s *Store) lockLayer(final string) (func(), error) {
+	f, err := os.OpenFile(final+".lock", os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open layer lock: %w", err)
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("lock layer: %w", err)
+	}
+	return func() { f.Close() }, nil
+}
+
 // install moves tmp to final, then writes the marker. The rename is atomic;
 // the marker tells readers the move finished and how the layer was built.
+// The marker lives next to the layer, not inside it, because the layer dir is
+// an overlay lower dir and must hold only image content.
 func (s *Store) install(tmp, final string, stats ExtractStats) error {
-	// A leftover from a crash, or from a layer built another way, is replaced.
-	_ = os.Remove(final + ".complete")
+	unlock, err := s.lockLayer(final)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	// Another pull may have finished this layer while we extracted. Keep its
+	// tree: it may already be a lower dir of a running sandbox.
+	if s.reusable(final) {
+		return nil
+	}
+	// What is left is a crash leftover or a layer built another way.
+	if err := os.Remove(final + ".complete"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("clear stale marker: %w", err)
+	}
 	if err := os.RemoveAll(final); err != nil {
 		return fmt.Errorf("clear stale layer: %w", err)
 	}
 	if err := os.Rename(tmp, final); err != nil {
-		// Another process may have installed the same layer meanwhile.
-		if s.reusable(final) {
-			return nil
-		}
 		return fmt.Errorf("install layer: %w", err)
 	}
 	m := layerMarker{
