@@ -1,0 +1,111 @@
+name: kvm-probe
+
+# Answers one question: can a GitHub-hosted runner boot a Firecracker micro-VM?
+# Steps: report /dev/kvm before and after the udev rule, open it with
+# KVM_GET_API_VERSION, then boot a kernel + busybox initramfs in Firecracker
+# and wait for a marker line on the serial console.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/kvm-probe.yml
+      - scripts/probe/**
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      FC_VERSION: v1.17.0
+      # Newest Firecracker CI bucket that still publishes guest kernels (checked 2026-11-10).
+      KERNEL_CI: v1.15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host report (before udev rule)
+        run: scripts/probe/host.sh | tee before.txt
+
+      - name: Enable /dev/kvm for the runner user
+        run: |
+          if [ ! -e /dev/kvm ]; then echo "no /dev/kvm on this runner"; exit 0; fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Host report (after udev rule)
+        run: scripts/probe/host.sh | tee after.txt
+
+      - name: Boot Firecracker
+        id: boot
+        run: |
+          set -euo pipefail
+          if [ ! -w /dev/kvm ]; then echo "result=no-kvm" >> "$GITHUB_OUTPUT"; exit 0; fi
+          arch=$(uname -m)
+          work=$(mktemp -d); cd "$work"
+
+          curl -fsSL -o fc.tgz \
+            "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VERSION}/firecracker-${FC_VERSION}-${arch}.tgz"
+          tar -xzf fc.tgz
+          fc="release-${FC_VERSION}-${arch}/firecracker-${FC_VERSION}-${arch}"
+
+          # Guest kernel from the Firecracker CI bucket (same source as the upstream getting-started guide).
+          ci="firecracker-ci/${KERNEL_CI}/${arch}"
+          key=$(curl -fsSL "https://s3.amazonaws.com/spec.ccfc.min/?prefix=${ci}/vmlinux-&list-type=2" \
+                | grep -oP "(?<=<Key>)${ci}/vmlinux-[0-9]+\.[0-9]+\.[0-9]{1,3}(?=</Key>)" | sort -V | tail -1)
+          echo "kernel: $key"
+          curl -fsSL -o vmlinux "https://s3.amazonaws.com/spec.ccfc.min/${key}"
+
+          # Minimal initramfs: static busybox, prints a marker, powers off.
+          sudo apt-get install -y -qq busybox-static >/dev/null
+          mkdir -p initrd/bin; cp /bin/busybox initrd/bin/busybox
+          cat > initrd/init <<'INIT'
+          #!/bin/busybox sh
+          /bin/busybox echo "PROBE_GUEST_OK $(/bin/busybox uname -r)"
+          /bin/busybox poweroff -f
+          INIT
+          chmod +x initrd/init
+          (cd initrd && find . | cpio -o -H newc --quiet) | gzip > initrd.gz
+
+          cat > vm.json <<JSON
+          {
+            "boot-source": {
+              "kernel_image_path": "$work/vmlinux",
+              "initrd_path": "$work/initrd.gz",
+              "boot_args": "console=ttyS0 reboot=k panic=1 pci=off rdinit=/init"
+            },
+            "machine-config": { "vcpu_count": 1, "mem_size_mib": 128 }
+          }
+          JSON
+
+          start=$(date +%s%N)
+          set +e
+          timeout 60 "$fc" --no-api --config-file vm.json > console.log 2>&1
+          rc=$?
+          set -e
+          ms=$(( ($(date +%s%N) - start) / 1000000 ))
+          tail -n 20 console.log
+          if grep -q PROBE_GUEST_OK console.log; then
+            echo "result=booted" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failed(rc=$rc)" >> "$GITHUB_OUTPUT"
+          fi
+          echo "wall_ms=$ms" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### ${{ matrix.runner }}"
+            echo "- Firecracker boot: \`${{ steps.boot.outputs.result }}\` (wall ${{ steps.boot.outputs.wall_ms }} ms, includes VMM start and guest poweroff)"
+            echo '```'; cat after.txt 2>/dev/null || cat before.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
