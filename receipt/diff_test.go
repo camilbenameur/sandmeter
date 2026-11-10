@@ -1,6 +1,7 @@
 package receipt
 
 import (
+	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -171,5 +172,110 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDiffUpperLowerIntermediateSymlink(t *testing.T) {
+	lower, upper := t.TempDir(), t.TempDir()
+	write(t, lower, "usr/run/real", "x")
+	must(t, os.Symlink("/usr/run", filepath.Join(lower, "run"))) // absolute
+	must(t, os.Symlink("usr/run", filepath.Join(lower, "rel")))  // relative
+	write(t, upper, "run/file", "a")
+	write(t, upper, "rel/real", "b")
+
+	d, err := DiffUpper(upper, []string{lower}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := byPath(d)
+	// overlayfs does not merge through a lower symlink: the upper directory
+	// shadows it, so everything below is new.
+	for _, k := range []string{"run/file|add", "rel/real|add", "run|modify", "rel|modify"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing %s in %+v", k, d.Entries)
+		}
+	}
+}
+
+func TestDiffUpperUserOpaqueXattr(t *testing.T) {
+	upper := t.TempDir()
+	must(t, os.Mkdir(filepath.Join(upper, "d"), 0o755))
+	if err := unix.Setxattr(filepath.Join(upper, "d"), "user.overlay.opaque", []byte("y"), 0); err != nil {
+		t.Skipf("user xattrs unsupported here: %v", err)
+	}
+	d, err := DiffUpper(upper, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := byPath(d)["d|opaque"]; !ok {
+		t.Errorf("no opaque entry: %+v", d.Entries)
+	}
+}
+
+func TestDiffUpperUnreadableDoesNotAbort(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores mode 000")
+	}
+	upper := t.TempDir()
+	write(t, upper, "ok", "fine")
+	write(t, upper, "secret", "s")
+	must(t, os.Chmod(filepath.Join(upper, "secret"), 0))
+	must(t, os.Mkdir(filepath.Join(upper, "locked"), 0o755))
+	must(t, os.Chmod(filepath.Join(upper, "locked"), 0))
+	t.Cleanup(func() { os.Chmod(filepath.Join(upper, "locked"), 0o755) })
+
+	d, err := DiffUpper(upper, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := byPath(d)
+	if m["secret|add"].Skipped != "unreadable" || m["locked|add"].Skipped != "unreadable" {
+		t.Errorf("entries = %+v", d.Entries)
+	}
+	if m["ok|add"].SHA256 == "" {
+		t.Error("readable file lost")
+	}
+}
+
+func TestDiffUpperInvalidUTF8(t *testing.T) {
+	upper := t.TempDir()
+	write(t, upper, "a\xff", "1")
+	write(t, upper, "a\xfe", "2")
+	must(t, os.Symlink("t\xff", filepath.Join(upper, "l")))
+	d, err := DiffUpper(upper, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, e := range d.Entries {
+		seen[e.Path] = true
+		if e.Path == "l" && (!e.TargetEscaped || e.Target != `"t\xff"`) {
+			t.Errorf("link = %+v", e)
+		}
+	}
+	if len(d.Entries) != 3 || !seen[`"a\xff"`] || !seen[`"a\xfe"`] {
+		t.Errorf("entries = %+v", d.Entries)
+	}
+}
+
+func TestDiffUpperHashBudget(t *testing.T) {
+	oldF, oldT := maxFileBytes, maxTotalBytes
+	t.Cleanup(func() { maxFileBytes, maxTotalBytes = oldF, oldT })
+	maxFileBytes, maxTotalBytes = 10, 15
+
+	upper := t.TempDir()
+	write(t, upper, "a", "12345678")      // 8, fits
+	write(t, upper, "b", "12345678")      // 8 more: total budget 15 exceeded
+	write(t, upper, "c", "0123456789ABC") // over the per-file cap
+	d, err := DiffUpper(upper, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := byPath(d)
+	if m["a|add"].SHA256 == "" || m["b|add"].Skipped != "too_large" || m["c|add"].Skipped != "too_large" {
+		t.Errorf("entries = %+v", d.Entries)
+	}
+	if m["c|add"].Size != 13 || !d.Truncated {
+		t.Errorf("size/truncated: %+v", d)
 	}
 }

@@ -11,7 +11,10 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strconv"
+	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
 )
@@ -37,9 +40,33 @@ type Entry struct {
 	SHA256 string `json:"sha256"`
 	// Target is a symlink target, verbatim. It is never resolved or opened.
 	Target string `json:"target"`
+
+	// PathEscaped and TargetEscaped are set when the name or link target is
+	// not valid UTF-8. JSON would silently replace the bad bytes, so two
+	// different names could collide in the signed record. The field then holds
+	// the strconv.Quote form (\xff style escapes) instead of the raw bytes.
+	PathEscaped   bool `json:"path_escaped,omitempty"`
+	TargetEscaped bool `json:"target_escaped,omitempty"`
+
+	// Skipped is empty for a normal entry. Otherwise the entry is recorded
+	// without content: "unreadable" (permission error, type swapped during
+	// the walk, I/O error) or "too_large" (over the hashing budget). A
+	// hostile program must not be able to suppress the diff by making one
+	// entry hard to read, so such entries are listed instead of failing.
+	Skipped string `json:"skipped,omitempty"`
 }
 
-const opaqueXattr = "trusted.overlay.opaque"
+// Overlayfs stores the opaque marker as a trusted.* xattr for mounts made by
+// root, and as user.* for mounts made from an unprivileged user namespace
+// (the "userxattr" mount option).
+var opaqueXattrs = []string{"trusted.overlay.opaque", "user.overlay.opaque"}
+
+// Hashing budgets. They bound the I/O a hostile upper layer can cost the host
+// (for example a sparse multi-exabyte file). Variables so tests can lower them.
+var (
+	maxFileBytes  int64 = 1 << 30
+	maxTotalBytes int64 = 8 << 30
+)
 
 var errLimit = errors.New("entry limit reached")
 
@@ -48,6 +75,9 @@ type differ struct {
 	lowers []*os.Root
 	limit  int
 	out    []Entry
+
+	hashed    int64 // bytes read so far, against maxTotalBytes
+	truncated bool  // set when a hashing budget was exceeded
 }
 
 // DiffUpper lists what an overlayfs upper directory changes over its lowers.
@@ -64,10 +94,19 @@ type differ struct {
 //   - A directory is an entry only if it does not exist in any lower ("add"),
 //     or replaces a non-directory ("modify"). Directories that exist in a
 //     lower are walked but not listed.
-//   - A directory with trusted.overlay.opaque=y gets an extra "opaque" entry.
-//     The xattr is unreadable without privilege; that counts as not opaque.
-//   - Existence in a lower uses Root.Lstat, so symlinks inside a lower are
-//     followed within that lower and never escape it.
+//   - A directory with trusted.overlay.opaque=y (or user.overlay.opaque=y, used
+//     by userns mounts) gets an extra "opaque" entry. An unreadable xattr
+//     counts as not opaque. Paths below an opaque directory are still compared
+//     with the lowers by name, so they can read "modify" although overlayfs
+//     hides the lower content; the opaque entry is the signal for that.
+//   - Existence in a lower is checked one path component at a time with
+//     Lstat. Like overlayfs, a lower symlink or file in the middle of a path
+//     means "not present" (an upper directory shadows it); no symlink is ever
+//     followed, so none can point outside the lower.
+//   - Per-entry failures (unreadable, type swapped, over the hashing budget)
+//     produce an entry with Skipped set; only failing to open the roots is an
+//     error. Names or targets that are not valid UTF-8 are stored quoted, with
+//     PathEscaped/TargetEscaped set.
 //
 // Entries are sorted by Path (then Op). Walking stops after limit entries and
 // sets Truncated; the kept set is the first entries in name order, so it is
@@ -90,7 +129,7 @@ func DiffUpper(upper string, lowers []string, limit int) (Diff, error) {
 	}
 
 	truncated := false
-	if err := d.walk("."); err != nil {
+	if err := d.walkRoot(); err != nil {
 		if !errors.Is(err, errLimit) {
 			return Diff{}, fmt.Errorf("walk upper %q: %w", upper, err)
 		}
@@ -111,7 +150,7 @@ func DiffUpper(upper string, lowers []string, limit int) (Diff, error) {
 	if err != nil {
 		return Diff{}, err
 	}
-	return Diff{SHA256: sum, Truncated: truncated, Entries: entries}, nil
+	return Diff{SHA256: sum, Truncated: truncated || d.truncated, Entries: entries}, nil
 }
 
 func entriesHash(entries []Entry) (string, error) {
@@ -127,15 +166,26 @@ func (d *differ) emit(e Entry) error {
 	if d.limit > 0 && len(d.out) >= d.limit {
 		return errLimit
 	}
+	if !utf8.ValidString(e.Path) {
+		e.Path, e.PathEscaped = strconv.Quote(e.Path), true
+	}
+	if !utf8.ValidString(e.Target) {
+		e.Target, e.TargetEscaped = strconv.Quote(e.Target), true
+	}
 	d.out = append(d.out, e)
 	return nil
 }
 
-func (d *differ) walk(dir string) error {
-	names, err := d.readDir(dir)
+// walkRoot is the only place a directory failure is fatal.
+func (d *differ) walkRoot() error {
+	names, err := d.readDir(".")
 	if err != nil {
 		return err
 	}
+	return d.walk(".", names)
+}
+
+func (d *differ) walk(dir string, names []string) error {
 	for _, name := range names {
 		p := name
 		if dir != "." {
@@ -174,7 +224,7 @@ func (d *differ) visit(p string) error {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil // removed while walking
 		}
-		return fmt.Errorf("lstat %q: %w", p, err)
+		return d.emit(Entry{Path: p, Op: "add", Type: "other", Skipped: "unreadable"})
 	}
 	st, _ := info.Sys().(*syscall.Stat_t)
 	mode := uint32(info.Mode().Perm())
@@ -201,15 +251,11 @@ func (d *differ) visit(p string) error {
 	case "symlink":
 		t, err := d.upper.Readlink(p)
 		if err != nil {
-			return fmt.Errorf("readlink %q: %w", p, err)
+			e.Skipped = "unreadable"
 		}
 		e.Target = t
 	case "file":
-		size, sum, err := d.hashFile(p)
-		if err != nil {
-			return err
-		}
-		e.Size, e.SHA256 = size, sum
+		e.Size, e.SHA256, e.Skipped = d.hashFile(p)
 	}
 	return d.emit(e)
 }
@@ -223,6 +269,13 @@ func (d *differ) visitWhiteout(p string, mode uint32) error {
 }
 
 func (d *differ) visitDir(p string, e Entry, lowerInfo fs.FileInfo) error {
+	names, rerr := d.readDir(p)
+	if rerr != nil {
+		// Always list a directory we could not enter, even one that exists
+		// in a lower, so its unseen content is not silently omitted.
+		e.Skipped = "unreadable"
+		return d.emit(e)
+	}
 	if lowerInfo == nil || !lowerInfo.IsDir() {
 		if err := d.emit(e); err != nil {
 			return err
@@ -235,10 +288,10 @@ func (d *differ) visitDir(p string, e Entry, lowerInfo fs.FileInfo) error {
 			return err
 		}
 	}
-	return d.walk(p)
+	return d.walk(p, names)
 }
 
-// isOpaque reads the opaque xattr through an fd, so no path is resolved again.
+// isOpaque reads the opaque xattrs through an fd, so no path is resolved again.
 func (d *differ) isOpaque(p string) bool {
 	f, err := d.upper.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
 	if err != nil {
@@ -246,19 +299,24 @@ func (d *differ) isOpaque(p string) bool {
 	}
 	defer f.Close()
 	buf := make([]byte, 2)
-	n, err := unix.Fgetxattr(int(f.Fd()), opaqueXattr, buf)
-	// ENODATA, EPERM, ENOTSUP, ERANGE and the like all mean "not opaque".
-	return err == nil && n == 1 && buf[0] == 'y'
+	for _, name := range opaqueXattrs {
+		n, err := unix.Fgetxattr(int(f.Fd()), name, buf)
+		// ENODATA, EPERM, ENOTSUP, ERANGE and the like all mean "not opaque".
+		if err == nil && n == 1 && buf[0] == 'y' {
+			return true
+		}
+	}
+	return false
 }
 
 // inLowers returns the Lstat result from the first lower holding p, or nil.
 func (d *differ) inLowers(p string) (fs.FileInfo, error) {
 	for _, l := range d.lowers {
-		info, err := l.Lstat(p)
+		info, err := lowerLstat(l, p)
 		if err == nil {
 			return info, nil
 		}
-		if lowerMissing(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		return nil, fmt.Errorf("lstat lower %q: %w", p, err)
@@ -266,39 +324,63 @@ func (d *differ) inLowers(p string) (fs.FileInfo, error) {
 	return nil, nil
 }
 
-// lowerMissing reports errors that mean "not present in this lower": absent,
-// a parent that is not a directory, a symlink loop, or a symlink pointing
-// outside the lower (os.Root refuses it, and we never follow it anyway).
-func lowerMissing(err error) bool {
-	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP) {
-		return true
+// lowerLstat is Lstat that treats a non-directory parent as "not present".
+// Lstat on every prefix means no symlink is ever traversed: a lower holding
+// an absolute link such as var/run -> /run would otherwise make os.Root fail
+// with "path escapes from parent", and a relative one would be followed,
+// both giving the wrong add/modify answer.
+func lowerLstat(l *os.Root, p string) (fs.FileInfo, error) {
+	parts := strings.Split(p, "/")
+	var info fs.FileInfo
+	for i := range parts {
+		var err error
+		info, err = l.Lstat(strings.Join(parts[:i+1], "/"))
+		if err != nil {
+			if errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP) {
+				return nil, fs.ErrNotExist
+			}
+			return nil, err
+		}
+		if i < len(parts)-1 && !info.IsDir() {
+			return nil, fs.ErrNotExist
+		}
 	}
-	var pe *fs.PathError
-	return errors.As(err, &pe) && pe.Err.Error() == "path escapes from parent"
+	return info, nil
 }
 
 // hashFile streams a regular file through sha256 and counts its bytes.
 // O_NONBLOCK keeps a FIFO swapped in after the Lstat from blocking open; the
-// fstat check then refuses anything that is not a regular file.
-func (d *differ) hashFile(p string) (int64, string, error) {
+// fstat check then refuses anything that is not a regular file. It never
+// fails the diff: the last result is "" on success, else the Skipped marker.
+// The size is checked against the budgets before reading, so a sparse file
+// of absurd length costs nothing.
+func (d *differ) hashFile(p string) (int64, string, string) {
 	f, err := d.upper.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return 0, "", fmt.Errorf("open %q: %w", p, err)
+		return 0, "", "unreadable"
 	}
 	defer f.Close()
 	fi, err := f.Stat()
-	if err != nil {
-		return 0, "", fmt.Errorf("stat %q: %w", p, err)
+	if err != nil || !fi.Mode().IsRegular() {
+		return 0, "", "unreadable"
 	}
-	if !fi.Mode().IsRegular() {
-		return 0, "", fmt.Errorf("%q changed type while walking", p)
+	room := min(maxFileBytes, maxTotalBytes-d.hashed)
+	if fi.Size() > room {
+		d.truncated = true
+		return fi.Size(), "", "too_large"
 	}
 	h := sha256.New()
-	n, err := io.Copy(h, f)
+	// One extra byte detects a file that grew past the budget while reading.
+	n, err := io.Copy(h, io.LimitReader(f, room+1))
+	d.hashed += n
 	if err != nil {
-		return 0, "", fmt.Errorf("hash %q: %w", p, err)
+		return 0, "", "unreadable"
 	}
-	return n, hex.EncodeToString(h.Sum(nil)), nil
+	if n > room {
+		d.truncated = true
+		return fi.Size(), "", "too_large"
+	}
+	return n, hex.EncodeToString(h.Sum(nil)), ""
 }
 
 func typeOf(m fs.FileMode) string {

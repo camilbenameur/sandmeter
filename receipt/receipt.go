@@ -70,6 +70,11 @@ type Receipt struct {
 // without indentation. It is deterministic because Receipt holds only
 // structs, slices and scalars (field order is the declaration order, and
 // there are no maps). Policy is a RawMessage, which encoding/json compacts.
+//
+// Timestamps are converted to UTC first, so the signed bytes do not depend on
+// the host time zone.
 func Canonical(r Receipt) ([]byte, error) {
+	r.StartedAt = r.StartedAt.UTC()
+	r.FinishedAt = r.FinishedAt.UTC()
 	return json.Marshal(r)
 }

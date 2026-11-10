@@ -184,3 +184,15 @@ func TestSummary(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalNormalizesToUTC(t *testing.T) {
+	a := sample()
+	b := a
+	b.StartedAt = a.StartedAt.In(time.FixedZone("x", 5*3600))
+	b.FinishedAt = a.FinishedAt.In(time.FixedZone("x", 5*3600))
+	ca, _ := Canonical(a)
+	cb, _ := Canonical(b)
+	if string(ca) != string(cb) {
+		t.Errorf("zone changes signed bytes:\n%s\n%s", ca, cb)
+	}
+}
