@@ -28,7 +28,7 @@ jobs:
       # Newest Firecracker CI bucket that still publishes guest kernels (checked 2026-11-10).
       KERNEL_CI: v1.15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Host report (before udev rule)
         run: scripts/probe/host.sh | tee before.txt

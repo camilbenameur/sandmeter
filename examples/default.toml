@@ -1,0 +1,18 @@
+# The default policy, written out. Every key is optional; a missing key keeps
+# this value. Unknown keys are an error, so a typo cannot disable a limit.
+
+[limits]
+cpu = 1.0          # cores
+memory = "512MiB"  # hard limit, the sandbox is OOM-killed above it
+pids = 256         # maximum number of tasks
+wall = "60s"       # maximum run time of one command
+
+[network]
+mode = "none"      # "none" (loopback only) or "allowlist"
+allow = []         # "host:port" entries for mode = "allowlist"
+
+[filesystem]
+read_only_root = true
+
+[syscalls]
+filter = "default" # "default" or "off"
