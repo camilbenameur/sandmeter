@@ -3,6 +3,7 @@
 package netpolicy
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"testing"
@@ -15,6 +16,11 @@ func needRoot(t *testing.T) {
 	}
 	if _, _, err := runNft(context.Background(), "", "--version"); err != nil {
 		t.Skip("nft not available")
+	}
+	// Root without CAP_NET_ADMIN (unprivileged container) fails on netlink.
+	if _, stderr, err := runNft(context.Background(), "", "list", "tables"); err != nil &&
+		bytes.Contains(stderr, []byte("Operation not permitted")) {
+		t.Skip("no CAP_NET_ADMIN")
 	}
 }
 

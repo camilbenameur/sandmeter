@@ -21,6 +21,7 @@ table inet ringfence_b2 {
 	chain egress {
 		type filter hook forward priority filter - 1; policy accept;
 		iifname "rfh-7" meta nfproto ipv6 drop
+		iifname "rfh-7" ip saddr != 10.213.4.178 counter drop
 		iifname "rfh-7" ct state new meta l4proto { tcp, udp } ip daddr . meta l4proto . th dport @allow4 update @seen_ok { ip daddr . meta l4proto . th dport }
 		iifname "rfh-7" meta l4proto { tcp, udp } ip daddr . meta l4proto . th dport @allow4 accept
 		iifname "rfh-7" ct state new meta l4proto { tcp, udp } update @seen_denied { ip daddr . meta l4proto . th dport }
@@ -31,6 +32,7 @@ table inet ringfence_b2 {
 	}
 	chain host_in {
 		type filter hook input priority filter - 1; policy accept;
+		iifname "rfh-7" ip saddr != 10.213.4.178 counter drop
 		iifname "rfh-7" ct state new meta l4proto { tcp, udp } update @seen_denied { ip daddr . meta l4proto . th dport }
 		iifname "rfh-7" ct state new meta l4proto != { tcp, udp } update @seen_denied_other { ip daddr . meta l4proto }
 		iifname "rfh-7" counter drop

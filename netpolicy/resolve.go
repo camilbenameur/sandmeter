@@ -33,6 +33,11 @@ type Lookuper interface {
 // timeout, and each A record gives a Dest and a HostEntry. IPv6 is dropped
 // entirely because the sandbox has no IPv6, so an IPv6 literal is an error and
 // AAAA records are never asked for. The results are deduplicated and sorted.
+// Addresses in DNS answers that are loopback, link-local, multicast,
+// unspecified or private are dropped: a name must not be able to open a path to
+// the host's local network or a cloud metadata service. Only an explicit IP
+// literal can allow such an address. A name left with no usable address is an
+// error.
 // A nil r means net.DefaultResolver.
 func Resolve(ctx context.Context, allow []string, r Lookuper) ([]Dest, []HostEntry, error) {
 	if r == nil {
@@ -85,12 +90,17 @@ func lookup4(ctx context.Context, r Lookuper, name string) ([]netip.Addr, error)
 	}
 	var out []netip.Addr
 	for _, a := range addrs {
-		if a = a.Unmap(); a.Is4() {
+		if a = a.Unmap(); a.Is4() && !unsafeAnswer(a) {
 			out = append(out, a)
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("resolve %s: no IPv4 address", name)
+		return nil, fmt.Errorf("resolve %s: no usable public IPv4 address", name)
 	}
 	return out, nil
+}
+
+func unsafeAnswer(a netip.Addr) bool {
+	return a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsMulticast() ||
+		a.IsUnspecified() || a.IsPrivate()
 }

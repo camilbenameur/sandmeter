@@ -73,6 +73,10 @@ const flowType = "ipv4_addr . inet_proto . inet_service"
 // to a separate set keyed by address and protocol only. Only tcp and udp can
 // be allowed, so that set only ever holds denied flows.
 //
+// A sandbox with CAP_NET_RAW can forge source addresses, and rp_filter is not
+// guaranteed to be strict, so both hooks drop anything from the veth whose
+// source is not the sandbox address before it is recorded or allowed.
+//
 // Chain names avoid nft keywords: "fwd" is the fwd statement and fails to parse.
 func Ruleset(p Plan) (string, error) {
 	if err := p.validate(); err != nil {
@@ -106,6 +110,7 @@ func Ruleset(p Plan) (string, error) {
 	w("\tchain egress {\n")
 	w("\t\ttype filter hook forward priority filter - 1; policy accept;\n")
 	w("\t\tiifname %s meta nfproto ipv6 drop\n", iface)
+	w("\t\tiifname %s ip saddr != %s counter drop\n", iface, p.Addr.Sandbox.Addr())
 	w("\t\tiifname %s ct state new meta l4proto { tcp, udp } %s @allow4 update @seen_ok { %s }\n", iface, match, match)
 	w("\t\tiifname %s meta l4proto { tcp, udp } %s @allow4 accept\n", iface, match)
 	w("\t\tiifname %s ct state new meta l4proto { tcp, udp } update @seen_denied { %s }\n", iface, match)
@@ -117,6 +122,7 @@ func Ruleset(p Plan) (string, error) {
 
 	w("\tchain host_in {\n")
 	w("\t\ttype filter hook input priority filter - 1; policy accept;\n")
+	w("\t\tiifname %s ip saddr != %s counter drop\n", iface, p.Addr.Sandbox.Addr())
 	w("\t\tiifname %s ct state new meta l4proto { tcp, udp } update @seen_denied { %s }\n", iface, match)
 	w("\t\tiifname %s ct state new meta l4proto != { tcp, udp } update @seen_denied_other { %s }\n", iface, other)
 	w("\t\tiifname %s counter drop\n", iface)

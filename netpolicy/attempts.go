@@ -38,7 +38,8 @@ type nftChain struct {
 	Policy string `json:"policy"`
 }
 
-// Attempts returns every flow recorded in the table's dynamic sets, allowed
+// Attempts returns the flows recorded, best effort (sets are capped at 4096
+// entries and IPv6 is not recorded), in the table's dynamic sets, allowed
 // and denied, sorted by destination. Flows from the veth to the host itself
 // are included as denied.
 func Attempts(ctx context.Context, table string) ([]sandbox.Connection, error) {

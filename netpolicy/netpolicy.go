@@ -17,8 +17,13 @@
 //     every site on it.
 //   - The sandbox cannot reach any service on the host, including the veth
 //     gateway address: the input hook drops everything from the veth.
-//   - Every new flow is recorded in dynamic sets, split into allowed and
-//     denied, so a run receipt can list what the sandbox tried (Attempts).
+//   - New tcp, udp and other IPv4 flows are recorded, best effort, in dynamic
+//     sets split into allowed and denied, so a run receipt can list what the
+//     sandbox tried (Attempts). Each set holds at most 4096 entries: a sandbox
+//     that scans more distinct destinations fills it and later attempts go
+//     unrecorded, though they are still dropped. IPv6 is dropped unrecorded.
+//   - Packets from the veth with a source other than the sandbox address are
+//     dropped, so a sandbox cannot spoof another address.
 //
 // Caveat: another table at the same hook can still drop what we accept. An
 // accept verdict only ends our own chain. Docker, for one, sets the iptables

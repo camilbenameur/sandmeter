@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/camilbenameur/ringfence/sandbox"
 )
@@ -337,5 +339,54 @@ func TestCheckForwarding(t *testing.T) {
 	ipForwardPath = filepath.Join(dir, "missing")
 	if CheckForwarding() == nil {
 		t.Error("missing file: want error")
+	}
+}
+
+type deadlineResolver struct {
+	deadline time.Time
+	block    bool
+}
+
+func (d *deadlineResolver) LookupNetIP(ctx context.Context, _, _ string) ([]netip.Addr, error) {
+	d.deadline, _ = ctx.Deadline()
+	if d.block {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return []netip.Addr{netip.MustParseAddr("9.9.9.9")}, nil
+}
+
+func TestResolveTimeout(t *testing.T) {
+	r := &deadlineResolver{}
+	if _, _, err := Resolve(context.Background(), []string{"a.example:443"}, r); err != nil {
+		t.Fatal(err)
+	}
+	if left := time.Until(r.deadline); r.deadline.IsZero() || left < 3*time.Second || left > resolveTimeout {
+		t.Errorf("lookup deadline %v away, want about %v", left, resolveTimeout)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := Resolve(ctx, []string{"a.example:443"}, &deadlineResolver{block: true}); err == nil {
+		t.Error("cancelled context: want error")
+	}
+}
+
+func TestResolveDropsUnsafeAnswers(t *testing.T) {
+	ip := netip.MustParseAddr
+	r := fakeResolver{
+		"meta.ex": {ip("169.254.169.254"), ip("127.0.0.1"), ip("10.0.0.5"), ip("224.0.0.1"), ip("0.0.0.0")},
+		"mix.ex":  {ip("192.168.1.1"), ip("9.9.9.9")},
+	}
+	if _, _, err := Resolve(context.Background(), []string{"meta.ex:80"}, r); err == nil {
+		t.Error("name with only unsafe answers: want error")
+	}
+	dests, _, err := Resolve(context.Background(), []string{"mix.ex:80", "10.1.2.3:22"}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Dest{{ip("9.9.9.9"), 80, "tcp"}, {ip("10.1.2.3"), 22, "tcp"}}
+	slices.SortFunc(want, compareDest)
+	if !reflect.DeepEqual(dests, want) {
+		t.Errorf("got %v, want %v (private literal kept, private answer dropped)", dests, want)
 	}
 }
