@@ -1,124 +1,108 @@
-// Command ringfence runs commands in isolated sandboxes and measures the isolation.
+// Command ringfence runs commands in isolated sandboxes, signs a receipt for
+// each run, and measures the isolation with an escape test suite.
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"os/signal"
+	"syscall"
 
 	"github.com/camilbenameur/ringfence/backend/native"
-	"github.com/camilbenameur/ringfence/policy"
-	"github.com/camilbenameur/ringfence/sandbox"
 )
 
 var version = "dev"
 
-var backends = map[string]func() sandbox.Backend{
-	"native": func() sandbox.Backend { return native.New() },
-}
-
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	// The sandbox init is this same binary, re-executed inside the new
+	// namespaces. It must take over before anything else runs.
+	if len(os.Args) > 1 && os.Args[1] == native.InitArg {
+		native.Init()
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
 }
 
-func usage(w io.Writer) {
-	fmt.Fprint(w, `usage: ringfence <command> [flags]
+const usageText = `usage: ringfence <command> [flags]
 
 commands:
+  run      run a command in a sandbox and write a signed receipt
+  pull     pull an image into the local store
+  verify   check a receipt's signature and print it
+  replay   run a receipt's command again and compare the results
+  escape   run the escape test suite on one or more backends
+  bench    measure start time, snapshot time and overhead
+  eval-agent  ask a model to escape, k times, with a hard budget (throwaway CI only)
+  mcp      serve the sandbox to agents over MCP (stdio)
+  keygen   create the receipt signing key
   caps     print what a backend can enforce on this host
   check    validate a policy file against a backend
   version  print the version
-`)
-}
 
-func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		usage(stderr)
-		return 2
-	}
-	var err error
-	switch args[0] {
-	case "caps":
-		err = cmdCaps(args[1:], stdout)
-	case "check":
-		err = cmdCheck(args[1:], stdout)
-	case "version":
-		fmt.Fprintln(stdout, version)
-	case "-h", "-help", "--help", "help":
-		usage(stdout)
-	default:
-		fmt.Fprintf(stderr, "ringfence: unknown command %q\n", args[0])
-		usage(stderr)
-		return 2
-	}
-	if err != nil {
-		fmt.Fprintln(stderr, "ringfence:", err)
-		var u usageError
-		if errors.As(err, &u) {
-			return 2
-		}
-		return 1
-	}
-	return 0
-}
+Environment: RINGFENCE_HOME (default /var/lib/ringfence) holds images,
+the signing key and receipts. Most commands need root.
+`
 
 type usageError struct{ error }
 
-func pickBackend(name string) (sandbox.Backend, error) {
-	newB, ok := backends[name]
+type command func(ctx context.Context, args []string, stdout io.Writer) error
+
+func commands() map[string]command {
+	return map[string]command{
+		"run":        cmdRun,
+		"pull":       cmdPull,
+		"verify":     cmdVerify,
+		"replay":     cmdReplay,
+		"escape":     cmdEscape,
+		"bench":      cmdBench,
+		"eval-agent": cmdEvalAgent,
+		"mcp":        cmdMCP,
+		"keygen":     cmdKeygen,
+		"caps":       cmdCaps,
+		"check":      cmdCheck,
+	}
+}
+
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprint(stderr, usageText)
+		return 2
+	}
+	switch args[0] {
+	case "version":
+		fmt.Fprintln(stdout, version)
+		return 0
+	case "-h", "-help", "--help", "help":
+		fmt.Fprint(stdout, usageText)
+		return 0
+	}
+	cmd, ok := commands()[args[0]]
 	if !ok {
-		names := make([]string, 0, len(backends))
-		for n := range backends {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-		return nil, usageError{fmt.Errorf("unknown backend %q (have %v)", name, names)}
+		fmt.Fprintf(stderr, "ringfence: unknown command %q\n%s", args[0], usageText)
+		return 2
 	}
-	return newB(), nil
+	err := cmd(ctx, args[1:], stdout)
+	if err == nil {
+		return 0
+	}
+	var ex exitError
+	if errors.As(err, &ex) {
+		return ex.code
+	}
+	fmt.Fprintln(stderr, "ringfence:", err)
+	var u usageError
+	if errors.As(err, &u) {
+		return 2
+	}
+	return 1
 }
 
-func cmdCaps(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("caps", flag.ContinueOnError)
-	name := fs.String("backend", "native", "backend name")
-	if err := fs.Parse(args); err != nil {
-		return usageError{err}
-	}
-	b, err := pickBackend(*name)
-	if err != nil {
-		return err
-	}
-	enc := json.NewEncoder(stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(b.Capabilities())
-}
+// exitError carries the sandboxed command's exit code out of "run".
+type exitError struct{ code int }
 
-func cmdCheck(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("check", flag.ContinueOnError)
-	name := fs.String("backend", "native", "backend name")
-	if err := fs.Parse(args); err != nil {
-		return usageError{err}
-	}
-	p := policy.Default()
-	if fs.NArg() > 1 {
-		return usageError{errors.New("check takes at most one policy file")}
-	}
-	if fs.NArg() == 1 {
-		var err error
-		if p, err = policy.Load(fs.Arg(0)); err != nil {
-			return err
-		}
-	}
-	b, err := pickBackend(*name)
-	if err != nil {
-		return err
-	}
-	if _, err := p.Validate(b.Capabilities()); err != nil {
-		return fmt.Errorf("policy refused by backend %q:\n%w", *name, err)
-	}
-	fmt.Fprintf(stdout, "ok: backend %q can enforce this policy (sha256 %s)\n", *name, p.Hash())
-	return nil
-}
+func (e exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }

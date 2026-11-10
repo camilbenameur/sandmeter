@@ -79,16 +79,22 @@ type Limits struct {
 // validated policy, so backends may assume every requested feature is in
 // their Capabilities.
 type Spec struct {
-	// RootFS is a directory holding the root filesystem, used read-only as the lower layer.
-	RootFS string
+	// Layers are the read-only image layer directories, bottom layer first.
+	// The backend stacks them with overlayfs and adds a writable layer on top.
+	Layers []string
+	// Workdir is the initial working directory inside the sandbox.
+	Workdir string
 	// Limits apply to the sandbox as a whole.
 	Limits Limits
 	// Network is the network mode.
 	Network NetworkMode
 	// Allow lists "host:port" or "ip:port" destinations for NetworkAllowlist.
 	Allow []string
-	// ReadOnlyRoot makes the root filesystem read-only; writes go to /tmp only.
+	// ReadOnlyRoot makes the root filesystem read-only except /tmp and /workspace.
+	// Writes to those two go to the writable layer and show up in the receipt diff.
 	ReadOnlyRoot bool
+	// Seccomp enables the default syscall filter.
+	Seccomp bool
 	// Env is the environment of executed commands.
 	Env []string
 	// Hostname is the UTS hostname inside the sandbox.
@@ -138,6 +144,17 @@ type Backend interface {
 	Capabilities() Capabilities
 	// Start creates a sandbox. The caller must call Stop.
 	Start(ctx context.Context, spec Spec) (Sandbox, error)
+}
+
+// Layered is implemented by sandboxes whose filesystem is an overlay. The
+// writable layer and the read-only layers below it let the caller compute a
+// diff of what commands wrote, without trusting anything inside the sandbox.
+type Layered interface {
+	// Layers returns the writable upper directory and the read-only lower
+	// directories. Only valid while no command runs.
+	Layers() (upper string, lowers []string)
+	// DiffBase names what the upper layer is relative to: "image" or a snapshot ID.
+	DiffBase() string
 }
 
 // SnapshotID identifies a frozen filesystem state of a sandbox.

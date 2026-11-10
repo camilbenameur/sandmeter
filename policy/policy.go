@@ -189,6 +189,7 @@ func (p Policy) Validate(caps sandbox.Capabilities) (sandbox.Spec, error) {
 	// Syscalls.
 	switch p.Syscalls.Filter {
 	case "default":
+		spec.Seccomp = true
 		if !caps.Seccomp {
 			bad("syscalls.filter", "backend %q has no syscall filter", caps.Backend)
 		}
