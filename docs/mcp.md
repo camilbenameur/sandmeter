@@ -51,16 +51,19 @@ result says when that happened.
 | `snapshot` | `session_id` | Snapshot id. |
 | `restore` | `session_id`, `snapshot_id` | Confirmation. |
 | `stop` | `session_id` | Confirmation. |
-| `report` | `receipt_path` | Verifies the receipt signature and returns a summary. |
+| `report` | `receipt_path` | Verifies the receipt signature and returns a summary. Only accepts a path that `run` returned since the server started. |
 
 Defaults: backend `native`, image `docker.io/library/alpine:3.20`, and the
-default policy (see `examples/default.toml`), which has no network.
+default policy (see `examples/default.toml`), which has no network and mounts the root read-only: set
+`[filesystem] read_only_root = false` in `policy_toml` for tasks that install
+or write outside `/tmp`.
 
 ### `run` without a session
 
 If `session_id` is omitted, `run` starts a throwaway session with the defaults
 (or the `image` and `backend` given), runs the command, and stops the session.
-The output says so. Use `start` first when you need several commands to share
+The output says so, and warns if the session could not be stopped (the
+stop is bounded to 30 seconds). Use `start` first when you need several commands to share
 a filesystem, a custom policy, or snapshots. `image` and `backend` are ignored
 when `session_id` is set.
 

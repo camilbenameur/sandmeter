@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -19,6 +21,12 @@ const (
 	// flood the agent's context window.
 	maxTextBytes = 32 << 10
 
+	// perStreamTextBytes is the share of the text part given to each of
+	// stdout and stderr, so a noisy stdout cannot push stderr out of view.
+	perStreamTextBytes = 14 << 10
+	// stopTimeout bounds the teardown of a throwaway session.
+	stopTimeout = 30 * time.Second
+
 	defaultBackend = "native"
 	defaultImage   = "docker.io/library/alpine:3.20"
 
@@ -28,7 +36,7 @@ const (
 // New builds the MCP server. version is reported to clients.
 func New(svc Service, version string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "ringfence", Version: version}, nil)
-	h := &handlers{svc: svc}
+	h := &handlers{svc: svc, receipts: map[string]struct{}{}}
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "start",
@@ -58,7 +66,7 @@ func New(svc Service, version string) *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "report",
 		Description: "Verifies the signature of a run receipt and summarizes it: files changed, connections attempted, " +
-			"cgroup statistics. Takes the receipt_path returned by run.",
+			"cgroup statistics. Only accepts a receipt_path returned by run during this server's lifetime.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, h.report)
 	return s
@@ -72,7 +80,30 @@ func Serve(ctx context.Context, svc Service, version string) error {
 	return nil
 }
 
-type handlers struct{ svc Service }
+type handlers struct {
+	svc Service
+
+	// receipts holds every path run returned. report only accepts these, so
+	// an agent cannot make the root-owned service open arbitrary files.
+	mu       sync.Mutex
+	receipts map[string]struct{}
+}
+
+func (h *handlers) rememberReceipt(path string) {
+	if path == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.receipts[path] = struct{}{}
+}
+
+func (h *handlers) knowsReceipt(path string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.receipts[path]
+	return ok
+}
 
 // StartInput is the argument of the start tool.
 type StartInput struct {
@@ -110,6 +141,9 @@ type RunOutput struct {
 	RunResult
 	SessionID string `json:"session_id,omitempty"`
 	Ephemeral bool   `json:"ephemeral"`
+	// StopError is set when the throwaway session could not be torn down, so
+	// the agent and the user know resources may be left behind.
+	StopError string `json:"stop_error,omitempty"`
 }
 
 // SnapshotOutput is the structured result of the snapshot tool.
@@ -140,25 +174,42 @@ func (h *handlers) run(ctx context.Context, _ *mcp.CallToolRequest, in RunInput)
 	if err := validateArgv(in.Argv); err != nil {
 		return toolError[RunOutput](err)
 	}
-	sessionID := in.SessionID
-	ephemeral := sessionID == ""
-	if ephemeral {
-		id, err := h.startEphemeral(ctx, in)
+	if in.SessionID != "" {
+		res, err := h.svc.Run(ctx, in.SessionID, in.Argv)
 		if err != nil {
 			return toolError[RunOutput](err)
 		}
-		sessionID = id
-		// Stop with a fresh context: if the caller cancelled the run, the
-		// session still has to be torn down.
-		defer func() { _ = h.svc.Stop(context.WithoutCancel(ctx), sessionID) }()
+		h.rememberReceipt(res.ReceiptPath)
+		out := RunOutput{RunResult: res, SessionID: in.SessionID}
+		return textResult(runText(out)), out, nil
 	}
-	res, err := h.svc.Run(ctx, sessionID, in.Argv)
+	return h.runEphemeral(ctx, in)
+}
+
+// runEphemeral runs in a session that lives for this call only. A failed
+// teardown is reported, not dropped: it can leak a cgroup, netns or mount.
+func (h *handlers) runEphemeral(ctx context.Context, in RunInput) (*mcp.CallToolResult, RunOutput, error) {
+	id, err := h.startEphemeral(ctx, in)
 	if err != nil {
 		return toolError[RunOutput](err)
 	}
-	out := RunOutput{RunResult: res, Ephemeral: ephemeral}
-	if !ephemeral {
-		out.SessionID = sessionID
+	res, runErr := h.svc.Run(ctx, id, in.Argv)
+	// A fresh context: if the caller cancelled the run, the session still has
+	// to be torn down, but a stuck Stop must not block the call forever.
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
+	defer cancel()
+	stopErr := h.svc.Stop(stopCtx, id)
+
+	if runErr != nil {
+		if stopErr != nil {
+			runErr = fmt.Errorf("%w (also failed to stop throwaway session %s: %v)", runErr, id, stopErr)
+		}
+		return toolError[RunOutput](runErr)
+	}
+	h.rememberReceipt(res.ReceiptPath)
+	out := RunOutput{RunResult: res, Ephemeral: true}
+	if stopErr != nil {
+		out.StopError = fmt.Sprintf("failed to stop throwaway session %s: %v; call stop with this id", id, stopErr)
 	}
 	return textResult(runText(out)), out, nil
 }
@@ -213,6 +264,9 @@ func (h *handlers) report(ctx context.Context, _ *mcp.CallToolRequest, in Report
 	if err := requireID("receipt_path", in.ReceiptPath); err != nil {
 		return toolError[ReportOutput](err)
 	}
+	if !h.knowsReceipt(in.ReceiptPath) {
+		return toolError[ReportOutput](errors.New("receipt_path was not returned by run in this server session; pass a path exactly as run reported it"))
+	}
 	summary, err := h.svc.Report(ctx, in.ReceiptPath)
 	if err != nil {
 		return toolError[ReportOutput](err)
@@ -242,7 +296,11 @@ func requireID(field, v string) error {
 func runText(out RunOutput) string {
 	var b strings.Builder
 	if out.Ephemeral {
-		b.WriteString("Ran in a throwaway session (started and stopped for this call).\n")
+		if out.StopError != "" {
+			b.WriteString("Ran in a throwaway session. WARNING: " + out.StopError + "\n")
+		} else {
+			b.WriteString("Ran in a throwaway session (started and stopped for this call).\n")
+		}
 	}
 	fmt.Fprintf(&b, "exit code %d in %d ms", out.ExitCode, out.DurationMS)
 	if out.Killed != "" {
@@ -268,6 +326,9 @@ func appendStream(b *strings.Builder, name, s string, truncated bool) {
 	if truncated {
 		b.WriteString(" (truncated)")
 	}
+	if len(s) > perStreamTextBytes {
+		s = cutUTF8(s, perStreamTextBytes) + "\n[" + name + " cut in this text; the full value is in the structured content]"
+	}
 	b.WriteString(" ---\n" + s)
 	if !strings.HasSuffix(s, "\n") {
 		b.WriteString("\n")
@@ -286,11 +347,18 @@ func capText(s string) string {
 		return s
 	}
 	const note = "\n[text truncated at 32 KiB; the full value is in the structured content]"
-	cut := maxTextBytes - len(note)
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
+	return cutUTF8(s, maxTextBytes-len(note)) + note
+}
+
+// cutUTF8 returns at most n bytes of s, never ending inside a rune.
+func cutUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return s[:cut] + note
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // toolError turns err into a tool error result, so the agent sees the message

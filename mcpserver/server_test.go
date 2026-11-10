@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/camilbenameur/ringfence/sandbox"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -19,6 +20,7 @@ type fakeService struct {
 	runRes   RunResult
 	stopped  []string
 	startErr error
+	stopErr  error
 }
 
 func (f *fakeService) rec(s string) {
@@ -61,7 +63,7 @@ func (f *fakeService) Stop(_ context.Context, id string) error {
 	f.mu.Lock()
 	f.stopped = append(f.stopped, id)
 	f.mu.Unlock()
-	return nil
+	return f.stopErr
 }
 
 func (f *fakeService) Report(_ context.Context, path string) (string, error) {
@@ -188,11 +190,16 @@ func TestEphemeralRunStopsAfterRunError(t *testing.T) {
 	if len(svc.stopped) != 1 {
 		t.Errorf("session not stopped after error: %v", svc.calls)
 	}
+	if !strings.Contains(text(t, res), "boom") {
+		t.Errorf("error text lost: %q", text(t, res))
+	}
 }
 
 func TestSnapshotRestoreStopReport(t *testing.T) {
-	svc := &fakeService{}
+	svc := &fakeService{runRes: RunResult{ReceiptPath: "/r/1.json"}}
 	cs := connect(t, svc)
+	call(t, cs, "run", map[string]any{"session_id": "s1", "argv": []string{"true"}})
+	svc.calls = nil
 	if res := call(t, cs, "snapshot", map[string]any{"session_id": "s1"}); res.IsError || !strings.Contains(text(t, res), "snap1") {
 		t.Errorf("snapshot: %v %q", res.IsError, text(t, res))
 	}
@@ -218,33 +225,142 @@ func TestInputValidation(t *testing.T) {
 		long[i] = "a"
 	}
 	cases := []struct {
-		name string
-		tool string
-		args map[string]any
+		name, tool, want string
+		args             map[string]any
 	}{
-		{"empty argv", "run", map[string]any{"argv": []string{}}},
-		{"empty argv[0]", "run", map[string]any{"argv": []string{""}}},
-		{"too many argv", "run", map[string]any{"argv": long}},
-		{"empty session", "snapshot", map[string]any{"session_id": ""}},
-		{"empty stop id", "stop", map[string]any{"session_id": " "}},
-		{"empty snapshot id", "restore", map[string]any{"session_id": "s1", "snapshot_id": ""}},
-		{"empty receipt", "report", map[string]any{"receipt_path": ""}},
+		{"empty argv", "run", "argv must not be empty", map[string]any{"argv": []string{}}},
+		{"empty argv[0]", "run", "argv[0] must not be empty", map[string]any{"argv": []string{""}}},
+		{"too many argv", "run", "limit is 256", map[string]any{"argv": long}},
+		{"empty session", "snapshot", "session_id must not be empty", map[string]any{"session_id": ""}},
+		{"blank stop id", "stop", "session_id must not be empty", map[string]any{"session_id": " "}},
+		{"empty snapshot id", "restore", "snapshot_id must not be empty", map[string]any{"session_id": "s1", "snapshot_id": ""}},
+		{"empty receipt", "report", "receipt_path must not be empty", map[string]any{"receipt_path": ""}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := &fakeService{}
 			cs := connect(t, svc)
-			res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
-			// Either the schema layer or our checks may reject it; the service
-			// must not be reached in both cases.
-			if err == nil && !res.IsError {
-				t.Errorf("accepted invalid input")
+			res := call(t, cs, tc.tool, tc.args)
+			if !res.IsError {
+				t.Fatalf("accepted invalid input")
+			}
+			if !strings.Contains(text(t, res), tc.want) {
+				t.Errorf("message %q lacks %q", text(t, res), tc.want)
 			}
 			if len(svc.calls) != 0 {
 				t.Errorf("service reached: %v", svc.calls)
 			}
 		})
 	}
+}
+
+func TestReportRefusesUnknownPath(t *testing.T) {
+	svc := &fakeService{}
+	cs := connect(t, svc)
+	res := call(t, cs, "report", map[string]any{"receipt_path": "/etc/shadow"})
+	if !res.IsError || !strings.Contains(text(t, res), "not returned by run") {
+		t.Errorf("want refusal, got %v %q", res.IsError, text(t, res))
+	}
+	if len(svc.calls) != 0 {
+		t.Errorf("service reached: %v", svc.calls)
+	}
+}
+
+func TestStartForwardsPolicy(t *testing.T) {
+	svc := &fakeService{}
+	cs := connect(t, svc)
+	const pol = "[network]\nmode = \"none\"\n"
+	if res := call(t, cs, "start", map[string]any{"policy_toml": pol}); res.IsError {
+		t.Fatal(text(t, res))
+	}
+	if svc.starts[0].PolicyTOML != pol {
+		t.Errorf("policy not forwarded: %+v", svc.starts[0])
+	}
+}
+
+func structured(t *testing.T, res *mcp.CallToolResult) map[string]any {
+	t.Helper()
+	m, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("structured content is %T", res.StructuredContent)
+	}
+	return m
+}
+
+func TestRunStructuredSessionFields(t *testing.T) {
+	cs := connect(t, &fakeService{})
+	m := structured(t, call(t, cs, "run", map[string]any{"session_id": "s7", "argv": []string{"true"}}))
+	if m["session_id"] != "s7" || m["ephemeral"] != false {
+		t.Errorf("session run: %v", m)
+	}
+	m = structured(t, call(t, cs, "run", map[string]any{"argv": []string{"true"}}))
+	if m["ephemeral"] != true || m["session_id"] != nil {
+		t.Errorf("ephemeral run: %v", m)
+	}
+}
+
+func TestEphemeralStartFailureDoesNotStop(t *testing.T) {
+	svc := &fakeService{startErr: errors.New("needs root")}
+	cs := connect(t, svc)
+	res := call(t, cs, "run", map[string]any{"argv": []string{"true"}})
+	if !res.IsError || !strings.Contains(text(t, res), "needs root") {
+		t.Errorf("got %v %q", res.IsError, text(t, res))
+	}
+	if len(svc.stopped) != 0 {
+		t.Errorf("stop called without a session: %v", svc.calls)
+	}
+}
+
+func TestEphemeralStopFailureIsReported(t *testing.T) {
+	svc := &fakeService{stopErr: errors.New("cgroup busy"), runRes: RunResult{Stdout: "ok"}}
+	cs := connect(t, svc)
+	res := call(t, cs, "run", map[string]any{"argv": []string{"true"}})
+	if res.IsError {
+		t.Fatalf("run output should still be returned: %s", text(t, res))
+	}
+	got := text(t, res)
+	if !strings.Contains(got, "WARNING") || !strings.Contains(got, "cgroup busy") || strings.Contains(got, "started and stopped") {
+		t.Errorf("stop failure not reported: %q", got)
+	}
+	if structured(t, res)["stop_error"] == nil {
+		t.Error("stop_error missing from structured content")
+	}
+
+	svc.runErr = errors.New("boom")
+	res = call(t, cs, "run", map[string]any{"argv": []string{"true"}})
+	if !res.IsError || !strings.Contains(text(t, res), "boom") || !strings.Contains(text(t, res), "cgroup busy") {
+		t.Errorf("both errors expected: %q", text(t, res))
+	}
+}
+
+func TestEphemeralStopSurvivesCancelledContext(t *testing.T) {
+	svc := &ctxService{}
+	h := &handlers{svc: svc, receipts: map[string]struct{}{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.runEphemeral(ctx, RunInput{Argv: []string{"true"}}) //nolint:errcheck
+	if !svc.stopCtxLive {
+		t.Error("Stop received a cancelled context")
+	}
+	if !svc.stopHasDeadline {
+		t.Error("Stop context has no deadline")
+	}
+}
+
+// ctxService records the state of the context handed to Stop.
+type ctxService struct {
+	fakeService
+	stopCtxLive, stopHasDeadline bool
+}
+
+func (c *ctxService) Run(ctx context.Context, _ string, _ []string) (RunResult, error) {
+	return RunResult{}, ctx.Err()
+}
+
+func (c *ctxService) Stop(ctx context.Context, _ string) error {
+	c.stopCtxLive = ctx.Err() == nil
+	_, c.stopHasDeadline = ctx.Deadline()
+	return nil
 }
 
 func TestServiceErrorBecomesToolError(t *testing.T) {
@@ -267,14 +383,43 @@ func TestServiceErrorBecomesToolError(t *testing.T) {
 
 func TestTextIsCapped(t *testing.T) {
 	big := strings.Repeat("é", 40<<10)
-	svc := &fakeService{runRes: RunResult{Stdout: big, StdoutTruncated: true}}
+	text40 := strings.Repeat("é", 20<<10) // 40 KiB of header-free body via summary
+	svc := &fakeService{runRes: RunResult{Summary: big + text40}}
 	cs := connect(t, svc)
 	res := call(t, cs, "run", map[string]any{"session_id": "s1", "argv": []string{"cat"}})
 	got := text(t, res)
 	if len(got) > maxTextBytes {
 		t.Errorf("text is %d bytes, cap is %d", len(got), maxTextBytes)
 	}
-	if !strings.Contains(got, "truncated") {
+	if !strings.Contains(got, "text truncated at 32 KiB") {
 		t.Error("no truncation note")
+	}
+	if !utf8.ValidString(got) {
+		t.Error("text is not valid UTF-8")
+	}
+}
+
+func TestCapTextKeepsRuneBoundary(t *testing.T) {
+	const note = "\n[text truncated at 32 KiB; the full value is in the structured content]"
+	// Place a 3-byte rune so that it straddles the cut point.
+	prefix := strings.Repeat("a", maxTextBytes-len(note)-1)
+	got := capText(prefix + "€" + strings.Repeat("b", 100))
+	if !utf8.ValidString(got) || !strings.HasSuffix(got, note) || len(got) > maxTextBytes {
+		t.Errorf("bad cap: valid=%v len=%d", utf8.ValidString(got), len(got))
+	}
+	if strings.Contains(got, "€") {
+		t.Error("straddling rune should have been dropped whole")
+	}
+}
+
+func TestStderrSurvivesLargeStdout(t *testing.T) {
+	svc := &fakeService{runRes: RunResult{
+		Stdout: strings.Repeat("o", 64<<10),
+		Stderr: "FATAL-MARKER: it broke\n",
+	}}
+	cs := connect(t, svc)
+	got := text(t, call(t, cs, "run", map[string]any{"session_id": "s1", "argv": []string{"x"}}))
+	if !strings.Contains(got, "FATAL-MARKER") {
+		t.Errorf("stderr pushed out of the text (%d bytes)", len(got))
 	}
 }
