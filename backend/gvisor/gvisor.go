@@ -283,7 +283,17 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string) (res sandbox.Result, 
 	if err != nil || strings.HasPrefix(cgRel, "..") {
 		return res, fmt.Errorf("gvisor: cgroup parent %q is not under /sys/fs/cgroup", opts.CgroupParent)
 	}
-	cg := &cgroup.Group{Path: filepath.Join(opts.CgroupParent, name)}
+	// Create the group ourselves, with the limits, and hand its path to runsc:
+	// the counters are then read from a group we know the Sentry ran in.
+	cg, err := cgroup.New(opts.CgroupParent, name, s.spec.Limits)
+	if err != nil {
+		return res, fmt.Errorf("gvisor: %w", err)
+	}
+	cleanups = append(cleanups, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cg.Remove(ctx)
+	})
 	cfg, err := ociConfig(s.spec, s.stack.Merged(), argv, "/"+cgRel, nsPath)
 	if err != nil {
 		return res, err
@@ -311,9 +321,6 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string) (res sandbox.Result, 
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL, Setsid: true}
 	cleanups = append(cleanups, func() {
 		exec.Command(s.b.path, append(global, "delete", "--force", name)...).Run()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		cg.Remove(ctx)
 	})
 
 	var timedOut atomic.Bool

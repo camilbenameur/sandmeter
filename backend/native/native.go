@@ -292,10 +292,10 @@ func (r *run) exec(ctx context.Context, argv []string) (sandbox.Result, error) {
 	defer cfgW.Close()
 	defer errR.Close()
 
-	self, err := os.Executable()
-	if err != nil {
-		return res, fmt.Errorf("native: %w", err)
-	}
+	// Re-exec through the /proc magic link: the child already runs as the
+	// shifted uid, which may not be allowed to traverse the directories that
+	// hold the binary (a 0700 build directory, a 0750 home directory).
+	const self = "/proc/self/exe"
 	stdout := &iox.LimitedBuffer{Limit: opts.OutputLimit}
 	stderr := &iox.LimitedBuffer{Limit: opts.OutputLimit}
 	cmd := &exec.Cmd{

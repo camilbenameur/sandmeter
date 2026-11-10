@@ -144,8 +144,8 @@ func TestIntegrationOOM(t *testing.T) {
 	parent := testParent(t)
 	g := newTestGroup(t, parent, "oom", sandbox.Limits{MemoryBytes: 32 << 20, PIDs: 16})
 
-	// tail buffers a line that never ends, so memory grows until the limit.
-	cmd := exec.Command("tail", "/dev/zero")
+	// The shell doubles a string until the cgroup limit stops it.
+	cmd := exec.Command("sh", "-c", `x=aaaaaaaaaaaaaaaa; while :; do x="$x$x"; done`)
 	startIn(t, g, cmd)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -160,7 +160,9 @@ func TestIntegrationOOM(t *testing.T) {
 		}
 	case <-time.After(20 * time.Second):
 		_ = cmd.Process.Kill()
-		t.Fatal("memory hog was not stopped within 20s")
+		st, _ := g.Stats()
+		t.Fatalf("memory hog was not stopped within 20s (stats %+v, memory.max %q, memory.swap.max %q)",
+			st, mustRead(t, g.Path, "memory.max"), mustRead(t, g.Path, "memory.swap.max"))
 	}
 
 	st, err := g.Stats()
