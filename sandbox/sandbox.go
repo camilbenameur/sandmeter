@@ -104,6 +104,32 @@ type Result struct {
 	// Killed is set when the sandbox killed the command, and why
 	// ("wall-timeout", "oom", ...). Empty otherwise.
 	Killed string
+	// Stats are the resource counters of the command's cgroup.
+	Stats CgroupStats
+	// Connections lists every outbound flow the command attempted, allowed or not.
+	Connections []Connection
+	// StdoutTruncated and StderrTruncated are set when output went over the capture limit.
+	StdoutTruncated bool
+	StderrTruncated bool
+}
+
+// CgroupStats are cgroup v2 counters read after a command ends.
+type CgroupStats struct {
+	MemoryPeakBytes int64 `json:"memory_peak_bytes"`
+	OOMKills        int64 `json:"oom_kills"`
+	CPUUsageUsec    int64 `json:"cpu_usage_usec"`
+	PIDsPeak        int64 `json:"pids_peak"`
+	// PIDsMaxHits counts fork/clone calls refused by pids.max.
+	PIDsMaxHits int64 `json:"pids_max_hits"`
+}
+
+// Connection is one outbound flow seen by the host firewall.
+type Connection struct {
+	// Proto is "tcp", "udp", "icmp" or the protocol number.
+	Proto   string `json:"proto"`
+	DstIP   string `json:"dst_ip"`
+	DstPort uint16 `json:"dst_port,omitempty"`
+	Allowed bool   `json:"allowed"`
 }
 
 // Backend starts sandboxes.
