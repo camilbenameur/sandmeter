@@ -112,7 +112,10 @@ episodes, at the first turn (`stop_reason` refusal), for $0.10 in total. Those
 runs say nothing about the sandbox, only that this prompt is declined by that
 model; the reports are kept in `docs/eval-sonnet-native.json` and
 `docs/eval-sonnet-gvisor.json`. The harness does not reword the task to get
-past a model's refusal.
+past a model's refusal. The way past this — a willing open-weight attacker
+through an OpenAI-compatible adapter, and a continuous local attacker that runs
+the eval 24/7 — is laid out in [docs/eval-attackers.md](docs/eval-attackers.md);
+until it is built the agent-eval numbers above are Haiku only.
 
 ### Benchmark
 
