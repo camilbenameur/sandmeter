@@ -125,6 +125,14 @@ func TestCost(t *testing.T) {
 	if math.Abs(c-0.10) > 1e-9 { // 0.2 MTok * $0.10 * 5
 		t.Fatalf("long prompt cost %v", c)
 	}
+	c = SonnetPricing.Cost(anthropic.Usage{InputTokens: 200_000, OutputTokens: 10_000})
+	if math.Abs(c-0.50) > 1e-9 { // 0.2 * $2 + 0.01 * $10, no long-prompt tier
+		t.Fatalf("sonnet cost %v", c)
+	}
+	c = SonnetPricing.Cost(anthropic.Usage{CacheReadInputTokens: 1_000_000})
+	if math.Abs(c-0.10) > 1e-9 {
+		t.Fatalf("sonnet cache read cost %v", c)
+	}
 }
 
 func TestWilson(t *testing.T) {

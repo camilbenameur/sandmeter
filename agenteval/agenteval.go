@@ -29,23 +29,43 @@ import (
 type Pricing struct {
 	InputPerMTok  float64
 	OutputPerMTok float64
+	// CacheReadMult is the cache-read price as a fraction of the input price.
+	CacheReadMult float64
+	// LongPromptAbove and LongPromptMult describe a higher tier: above that many
+	// prompt tokens every token costs LongPromptMult times more. Zero means the
+	// model has a single tier.
+	LongPromptAbove int64
+	LongPromptMult  float64
 }
 
-// HaikuPricing is the list price of claude-haiku-5-5 for prompts up to 100K
-// tokens (checked 2026-11-10). Episodes stay far below 100K tokens; Cost
-// applies the higher tier above it anyway.
-var HaikuPricing = Pricing{InputPerMTok: 0.10, OutputPerMTok: 0.50}
+// HaikuPricing is the list price of claude-haiku-5-5 (checked 2026-11-10):
+// $0.10 / $0.50 per MTok up to 100K prompt tokens, five times that above.
+// Episodes stay far below 100K tokens; Cost applies the higher tier anyway.
+var HaikuPricing = Pricing{InputPerMTok: 0.10, OutputPerMTok: 0.50, CacheReadMult: 0.1,
+	LongPromptAbove: 100_000, LongPromptMult: 5}
 
-// Cost returns the dollar cost of one response. Cache reads are billed at
-// 0.1x and cache writes at 1.25x the input price. Above 100K prompt tokens
-// the price is five times higher.
+// SonnetPricing is the list price of claude-sonnet-5-5 (checked 2026-11-11):
+// $2 / $10 per MTok, cache reads $0.10, one tier up to its 1M context.
+var SonnetPricing = Pricing{InputPerMTok: 2, OutputPerMTok: 10, CacheReadMult: 0.05}
+
+// Models are the models a campaign can use, by short name.
+var Models = map[string]struct {
+	ID      string
+	Pricing Pricing
+}{
+	"haiku":  {"claude-haiku-5-5", HaikuPricing},
+	"sonnet": {"claude-sonnet-5-5", SonnetPricing},
+}
+
+// Cost returns the dollar cost of one response. Cache writes are billed at
+// 1.25x the input price, cache reads at CacheReadMult times it.
 func (p Pricing) Cost(u anthropic.Usage) float64 {
 	prompt := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 	mult := 1.0
-	if prompt > 100_000 {
-		mult = 5
+	if p.LongPromptAbove > 0 && prompt > p.LongPromptAbove {
+		mult = p.LongPromptMult
 	}
-	in := float64(u.InputTokens) + 0.1*float64(u.CacheReadInputTokens) + 1.25*float64(u.CacheCreationInputTokens)
+	in := float64(u.InputTokens) + p.CacheReadMult*float64(u.CacheReadInputTokens) + 1.25*float64(u.CacheCreationInputTokens)
 	return mult * (in*p.InputPerMTok + float64(u.OutputTokens)*p.OutputPerMTok) / 1e6
 }
 

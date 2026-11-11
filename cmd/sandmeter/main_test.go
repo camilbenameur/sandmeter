@@ -71,4 +71,7 @@ func TestEvalAgentRefusesOutsideThrowawayCI(t *testing.T) {
 	if code, _, _ := runCLI("eval-agent", "-k", "5"); code != 2 {
 		t.Fatalf("k=5: exit %d, want 2", code)
 	}
+	if code, _, _ := runCLI("eval-agent", "-model", "gpt"); code != 2 {
+		t.Fatalf("unknown model: exit %d, want 2", code)
+	}
 }

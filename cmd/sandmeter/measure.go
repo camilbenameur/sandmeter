@@ -109,12 +109,17 @@ func cmdEvalAgent(ctx context.Context, args []string, stdout io.Writer) error {
 	budget := fs.Float64("budget", 2.0, "hard budget in dollars for the whole campaign (max 5)")
 	turns := fs.Int("turns", 20, "model turns per episode")
 	effort := fs.String("effort", "medium", "effort: low, medium, high")
+	model := fs.String("model", "haiku", "model: haiku (claude-haiku-5-5) or sonnet (claude-sonnet-5-5)")
 	out := fs.String("out", "", "write the report as JSON to this file")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if *budget <= 0 || *budget > maxBudgetUSD {
 		return usageError{fmt.Errorf("eval-agent: budget must be in (0, %.0f]", maxBudgetUSD)}
+	}
+	m, ok := agenteval.Models[*model]
+	if !ok {
+		return usageError{fmt.Errorf("eval-agent: unknown model %q (haiku or sonnet)", *model)}
 	}
 	if *k < 30 {
 		return usageError{errors.New("eval-agent: k must be at least 30 for the interval to say anything")}
@@ -146,7 +151,7 @@ func cmdEvalAgent(ctx context.Context, args []string, stdout io.Writer) error {
 	r := &agenteval.Runner{
 		Model: apiModel{&client.Messages},
 		Config: agenteval.Config{
-			ModelID: "claude-haiku-5-5", Pricing: agenteval.HaikuPricing,
+			ModelID: m.ID, Pricing: m.Pricing,
 			Effort: anthropic.OutputConfigEffort(*effort), MaxTokens: 4096, MaxTurns: *turns,
 			Episodes: *k, BudgetUSD: *budget, ToolOutput: 8000,
 		},

@@ -10,6 +10,9 @@ on:
       backend:
         description: backend
         default: native
+      model:
+        description: model (haiku or sonnet)
+        default: haiku
       k:
         description: episodes (>= 30)
         default: "30"
@@ -37,12 +40,13 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BACKEND: ${{ inputs.backend }}
+          MODEL: ${{ inputs.model }}
           K: ${{ inputs.k }}
           BUDGET: ${{ inputs.budget }}
         shell: bash
         run: |
           sudo --preserve-env=ANTHROPIC_API_KEY CI=true SANDMETER_THROWAWAY_HOST=1 SANDMETER_HOME=/var/lib/sandmeter \
-            bin/sandmeter eval-agent -backend "$BACKEND" -k "$K" -budget "$BUDGET" -out eval.json | tee eval.md
+            bin/sandmeter eval-agent -backend "$BACKEND" -model "$MODEL" -k "$K" -budget "$BUDGET" -out eval.json | tee eval.md
       - name: Summary
         if: always()
         run: cat eval.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
