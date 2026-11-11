@@ -172,6 +172,13 @@ func (h *Harness) runCase(ctx context.Context, backend string, c escape.Case, la
 
 	p := policy.Default()
 	p.Limits.Wall = (c.Timeout + 10*time.Second).String()
+	if c.ID == "13-fork-bomb" {
+		// A tight pids limit makes the bomb hit EAGAIN after a handful of
+		// forks. The default 256 lets it spawn a thousand processes first,
+		// which under gVisor exhausts the Sentry's own memory and gets the
+		// whole sandbox OOM-killed before it can report the refusal.
+		p.Limits.PIDs = 32
+	}
 	if c.Needs["network"] == "allowlist" {
 		// An allowlist that does not contain any listener: TEST-NET-1 discard port.
 		p.Network = policy.Network{Mode: "allowlist", Allow: []string{"192.0.2.1:9"}}
