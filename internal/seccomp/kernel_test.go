@@ -43,8 +43,21 @@ func probes() []probe {
 		}, true},
 		// Unprivileged mount is refused regardless, so this cannot detect a
 		// missing deny entry; TestVerdicts is the real check for mount. This
-		// only shows the filter does not change the errno.
-		{"mount", func() error { return unix.Mount("none", "/", "tmpfs", 0, "") }, false},
+		// only shows the filter does not change the errno. The target is a
+		// fresh empty directory, never "/": if this ever ran with privileges
+		// it would hide nothing that matters.
+		{"mount", func() error {
+			dir, err := os.MkdirTemp("", "seccomp-probe-")
+			if err != nil {
+				return err
+			}
+			defer os.Remove(dir)
+			err = unix.Mount("none", dir, "tmpfs", 0, "size=4k")
+			if err == nil {
+				unix.Unmount(dir, unix.MNT_DETACH)
+			}
+			return err
+		}, false},
 		// Result without the filter depends on the keyring state: not a
 		// reliable discriminator.
 		{"keyctl", func() error {
@@ -135,6 +148,12 @@ func forkTrue(attr *syscall.SysProcAttr) error {
 }
 
 func TestFilterInRealKernel(t *testing.T) {
+	// The "before" probes assume an unprivileged process; as root they would
+	// succeed and change the host (mounts, namespaces). CI runs the root
+	// integration jobs with sudo, so refuse here instead of relying on it.
+	if os.Geteuid() == 0 {
+		t.Skip("must run unprivileged: the probes before the filter would succeed as root")
+	}
 	if _, err := os.Stat("/bin/true"); err != nil {
 		t.Skip("/bin/true not available")
 	}
