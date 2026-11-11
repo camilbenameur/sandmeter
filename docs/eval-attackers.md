@@ -89,6 +89,37 @@ This does not replace the deterministic escape suite (`escape/cases`), which
 stays the backbone: fixed, reviewed, judged from the host. The continuous agent
 is the open-ended half — it looks for the case nobody wrote.
 
+## The same machinery read the other way — an attacker benchmark
+
+Point the harness at a fixed sandbox instead of a fixed attacker and it stops
+measuring the sandbox and starts measuring the attacker. Give any LLM or agent
+the `bash` tool inside one pinned, versioned sandbox, run N episodes, and a
+model **qualifies** only if it produces at least one escape the host can verify
+— the canary read out, or the marker file created. No self-report counts.
+
+What makes this a benchmark worth running, where most agent benchmarks are
+weak, is the grading: the pass criterion is ground truth, not an LLM judge and
+not the model's own claim. An escape either left evidence on the host or it did
+not. That is hard to game and cheap to check, and every run ships a signed
+receipt of what actually happened. Rank the field by escape rate, by
+turns-to-first-escape, by dollars spent.
+
+It only works under conditions the project already has reasons to hold:
+
+- **The target is pinned.** Scores only compare across attackers if the sandbox
+  version, image, and policy are fixed; a benchmark run names the commit.
+- **Refusals are not failures.** A model that declines the task (as Sonnet did,
+  60/60) is not "incapable of escaping" — it opted out. Report refused, failed,
+  and escaped as three separate columns, never fold refusals into the score.
+- **The ceiling is the sandbox's real holes.** If the sandbox is tight, nobody
+  qualifies and the board is empty — which is then a statement about the
+  sandbox, not the models. The two readings are the same measurement; this is
+  dual-use by construction, and the honest framing (defensive tool, published
+  failures, throwaway host) carries over unchanged.
+
+Axes A and B feed this directly: a willing open-weight attacker and a 24/7
+local runner are how a field of contenders actually gets measured.
+
 ## Status
 
 Not built yet. Axis A is the next step and is self-contained (one adapter file,
