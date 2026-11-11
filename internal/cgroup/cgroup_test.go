@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // writeTree creates files under dir, standing in for what the kernel provides.
@@ -358,7 +358,7 @@ func TestEnsureParent(t *testing.T) {
 		"cgroup.controllers":     "cpuset cpu io memory pids\n",
 		"cgroup.subtree_control": "cpu\n",
 	})
-	path := filepath.Join(root, "ringfence")
+	path := filepath.Join(root, "sandmeter")
 	writeTree(t, path, map[string]string{
 		"cgroup.controllers":     "cpu memory pids\n",
 		"cgroup.subtree_control": "",

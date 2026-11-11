@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/camilbenameur/ringfence/engine"
-	"github.com/camilbenameur/ringfence/mcpserver"
-	"github.com/camilbenameur/ringfence/policy"
-	"github.com/camilbenameur/ringfence/receipt"
+	"github.com/camilbenameur/sandmeter/engine"
+	"github.com/camilbenameur/sandmeter/mcpserver"
+	"github.com/camilbenameur/sandmeter/policy"
+	"github.com/camilbenameur/sandmeter/receipt"
 )
 
 // mcpService adapts the engine to the MCP server.

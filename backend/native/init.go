@@ -15,13 +15,13 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
-	"github.com/camilbenameur/ringfence/internal/seccomp"
+	"github.com/camilbenameur/sandmeter/internal/seccomp"
 )
 
-// InitArg is the hidden first argument that turns the ringfence binary into
+// InitArg is the hidden first argument that turns the sandmeter binary into
 // the sandbox init. The parent re-executes /proc/self/exe with it inside the
 // new namespaces.
-const InitArg = "__ringfence_init"
+const InitArg = "__sandmeter_init"
 
 const (
 	configFD = 3 // parent -> init: JSON config; reading it is also the "go" signal

@@ -50,7 +50,7 @@ jobs:
           - { name: engine-native, pkg: ./engine, run: "/native$" }
           - { name: engine-gvisor, pkg: ./engine, run: "/gvisor$" }
     env:
-      RINGFENCE_NET_TESTS: "1"
+      SANDMETER_NET_TESTS: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

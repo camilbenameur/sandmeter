@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -30,10 +30,10 @@ func mustAddr(t *testing.T, i int) Addr {
 func goldenPlans(t *testing.T) map[string]Plan {
 	ip := netip.MustParseAddr
 	return map[string]Plan{
-		"empty": {Table: "ringfence_a1", HostIface: "rfh0", Addr: mustAddr(t, 0)},
-		"one": {Table: "ringfence_a1", HostIface: "rfh0", Addr: mustAddr(t, 1),
+		"empty": {Table: "sandmeter_a1", HostIface: "rfh0", Addr: mustAddr(t, 0)},
+		"one": {Table: "sandmeter_a1", HostIface: "rfh0", Addr: mustAddr(t, 1),
 			Allow: []Dest{{IP: ip("93.184.216.34"), Port: 443, Proto: "tcp"}}},
-		"several": {Table: "ringfence_b2", HostIface: "rfh-7", Addr: mustAddr(t, 300),
+		"several": {Table: "sandmeter_b2", HostIface: "rfh-7", Addr: mustAddr(t, 300),
 			Allow: []Dest{
 				{IP: ip("140.82.112.3"), Port: 443, Proto: "tcp"},
 				{IP: ip("1.1.1.1"), Port: 53, Proto: "udp"},
@@ -70,7 +70,7 @@ func TestRulesetGolden(t *testing.T) {
 func TestRulesetValidation(t *testing.T) {
 	base := goldenPlans(t)["empty"]
 	cases := map[string]func(*Plan){
-		"table upper":  func(p *Plan) { p.Table = "Ringfence" },
+		"table upper":  func(p *Plan) { p.Table = "Sandmeter" },
 		"table empty":  func(p *Plan) { p.Table = "" },
 		"table inject": func(p *Plan) { p.Table = "a; flush ruleset" },
 		"table long":   func(p *Plan) { p.Table = strings.Repeat("a", 33) },
@@ -186,21 +186,21 @@ func TestResolveErrors(t *testing.T) {
 	}
 }
 
-// sample is "nft -j list table inet ringfence_a1" as nft 1.0.9 prints it:
+// sample is "nft -j list table inet sandmeter_a1" as nft 1.0.9 prints it:
 // elements of concatenated sets are {"concat": [...]} objects, and the
 // protocol is printed by name.
 const sample = `{"nftables": [
  {"metainfo": {"version": "1.0.9", "release_name": "Old Doc Yak #3", "json_schema_version": 1}},
- {"table": {"family": "inet", "name": "ringfence_a1", "handle": 7}},
- {"set": {"family": "inet", "name": "allow4", "table": "ringfence_a1", "type": ["ipv4_addr", "inet_proto", "inet_service"], "handle": 1,
+ {"table": {"family": "inet", "name": "sandmeter_a1", "handle": 7}},
+ {"set": {"family": "inet", "name": "allow4", "table": "sandmeter_a1", "type": ["ipv4_addr", "inet_proto", "inet_service"], "handle": 1,
    "elem": [{"concat": ["93.184.216.34", "tcp", 443]}]}},
- {"set": {"family": "inet", "name": "seen_ok", "table": "ringfence_a1", "type": ["ipv4_addr", "inet_proto", "inet_service"], "handle": 2, "flags": ["dynamic"], "size": 4096,
+ {"set": {"family": "inet", "name": "seen_ok", "table": "sandmeter_a1", "type": ["ipv4_addr", "inet_proto", "inet_service"], "handle": 2, "flags": ["dynamic"], "size": 4096,
    "elem": [{"concat": ["93.184.216.34", "tcp", 443]}]}},
- {"set": {"family": "inet", "name": "seen_denied", "table": "ringfence_a1", "type": ["ipv4_addr", "inet_proto", "inet_service"], "handle": 3, "flags": ["dynamic"], "size": 4096,
+ {"set": {"family": "inet", "name": "seen_denied", "table": "sandmeter_a1", "type": ["ipv4_addr", "inet_proto", "inet_service"], "handle": 3, "flags": ["dynamic"], "size": 4096,
    "elem": [{"concat": ["10.213.0.1", "udp", 53]}, {"concat": ["1.1.1.1", "tcp", 22]}, {"elem": {"val": {"concat": ["8.8.8.8", "udp", 53]}, "expires": 12}}]}},
- {"set": {"family": "inet", "name": "seen_denied_other", "table": "ringfence_a1", "type": ["ipv4_addr", "inet_proto"], "handle": 4, "flags": ["dynamic"], "size": 4096,
+ {"set": {"family": "inet", "name": "seen_denied_other", "table": "sandmeter_a1", "type": ["ipv4_addr", "inet_proto"], "handle": 4, "flags": ["dynamic"], "size": 4096,
    "elem": [{"concat": ["1.1.1.1", "icmp"]}, {"concat": ["9.9.9.9", 47]}]}},
- {"chain": {"family": "inet", "table": "ringfence_a1", "name": "fwd", "handle": 5, "type": "filter", "hook": "forward", "prio": -1, "policy": "accept"}}
+ {"chain": {"family": "inet", "table": "sandmeter_a1", "name": "fwd", "handle": 5, "type": "filter", "hook": "forward", "prio": -1, "policy": "accept"}}
 ]}`
 
 func TestParseAttempts(t *testing.T) {
@@ -251,11 +251,11 @@ func TestAttemptsUsesNft(t *testing.T) {
 		args = a
 		return []byte(sample), nil, nil
 	}
-	conns, err := Attempts(context.Background(), "ringfence_a1")
+	conns, err := Attempts(context.Background(), "sandmeter_a1")
 	if err != nil || len(conns) != 6 {
 		t.Fatalf("%v %v", conns, err)
 	}
-	if got := strings.Join(args, " "); got != "-j list table inet ringfence_a1" {
+	if got := strings.Join(args, " "); got != "-j list table inet sandmeter_a1" {
 		t.Errorf("args: %s", got)
 	}
 	if _, err := Attempts(context.Background(), "bad name"); err == nil {
@@ -271,16 +271,16 @@ func TestDelete(t *testing.T) {
 		args = a
 		return nil, []byte("Error: Could not process rule: No such file or directory"), errors.New("exit status 1")
 	}
-	if err := Delete(context.Background(), "ringfence_a1"); err != nil {
+	if err := Delete(context.Background(), "sandmeter_a1"); err != nil {
 		t.Errorf("missing table must be ignored: %v", err)
 	}
-	if got := strings.Join(args, " "); got != "delete table inet ringfence_a1" {
+	if got := strings.Join(args, " "); got != "delete table inet sandmeter_a1" {
 		t.Errorf("args: %s", got)
 	}
 	runNft = func(context.Context, string, ...string) ([]byte, []byte, error) {
 		return nil, []byte("Operation not permitted"), errors.New("exit status 1")
 	}
-	if err := Delete(context.Background(), "ringfence_a1"); err == nil {
+	if err := Delete(context.Background(), "sandmeter_a1"); err == nil {
 		t.Error("other errors must be reported")
 	}
 	if err := Delete(context.Background(), "x; y"); err == nil {
@@ -308,14 +308,14 @@ func TestApplyPipesScript(t *testing.T) {
 func TestFindForwardDrop(t *testing.T) {
 	docker := `{"nftables":[
 	 {"chain":{"family":"ip","table":"filter","name":"FORWARD","handle":1,"type":"filter","hook":"forward","prio":0,"policy":"drop"}},
-	 {"chain":{"family":"inet","table":"ringfence_a1","name":"fwd","type":"filter","hook":"forward","prio":-1,"policy":"drop"}}]}`
+	 {"chain":{"family":"inet","table":"sandmeter_a1","name":"fwd","type":"filter","hook":"forward","prio":-1,"policy":"drop"}}]}`
 	blocked, why, err := findForwardDrop([]byte(docker))
 	if err != nil || !blocked || !strings.Contains(why, "filter") {
 		t.Errorf("docker case: %v %q %v", blocked, why, err)
 	}
 	clean := `{"nftables":[
 	 {"chain":{"family":"ip","table":"filter","name":"FORWARD","type":"filter","hook":"forward","prio":0,"policy":"accept"}},
-	 {"chain":{"family":"inet","table":"ringfence_a1","name":"fwd","type":"filter","hook":"forward","prio":-1,"policy":"drop"}},
+	 {"chain":{"family":"inet","table":"sandmeter_a1","name":"fwd","type":"filter","hook":"forward","prio":-1,"policy":"drop"}},
 	 {"chain":{"family":"ip","table":"filter","name":"INPUT","type":"filter","hook":"input","prio":0,"policy":"drop"}}]}`
 	if blocked, _, err := findForwardDrop([]byte(clean)); err != nil || blocked {
 		t.Errorf("clean case: %v %v", blocked, err)

@@ -30,17 +30,17 @@ import (
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
 
-	"github.com/camilbenameur/ringfence/internal/cgroup"
-	"github.com/camilbenameur/ringfence/internal/iox"
-	"github.com/camilbenameur/ringfence/internal/layers"
-	"github.com/camilbenameur/ringfence/internal/vnet"
-	"github.com/camilbenameur/ringfence/netpolicy"
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/cgroup"
+	"github.com/camilbenameur/sandmeter/internal/iox"
+	"github.com/camilbenameur/sandmeter/internal/layers"
+	"github.com/camilbenameur/sandmeter/internal/vnet"
+	"github.com/camilbenameur/sandmeter/netpolicy"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // Options configure the backend. Zero values select the defaults.
 type Options struct {
-	// StateDir holds per-sandbox runtime state. Default /run/ringfence.
+	// StateDir holds per-sandbox runtime state. Default /run/sandmeter.
 	StateDir string
 	// CgroupParent is the cgroup under which every command gets its own group.
 	CgroupParent string
@@ -54,7 +54,7 @@ type Options struct {
 
 func (o *Options) defaults() {
 	if o.StateDir == "" {
-		o.StateDir = "/run/ringfence"
+		o.StateDir = "/run/sandmeter"
 	}
 	if o.CgroupParent == "" {
 		o.CgroupParent = cgroup.DefaultParent

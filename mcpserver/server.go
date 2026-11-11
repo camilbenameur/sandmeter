@@ -35,7 +35,7 @@ const (
 
 // New builds the MCP server. version is reported to clients.
 func New(svc Service, version string) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "ringfence", Version: version}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "sandmeter", Version: version}, nil)
 	h := &handlers{svc: svc, receipts: map[string]struct{}{}}
 
 	mcp.AddTool(s, &mcp.Tool{

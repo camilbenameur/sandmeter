@@ -14,12 +14,12 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 
-	"github.com/camilbenameur/ringfence/agenteval"
-	"github.com/camilbenameur/ringfence/bench"
-	"github.com/camilbenameur/ringfence/engine"
-	"github.com/camilbenameur/ringfence/escape"
-	"github.com/camilbenameur/ringfence/escape/harness"
-	"github.com/camilbenameur/ringfence/policy"
+	"github.com/camilbenameur/sandmeter/agenteval"
+	"github.com/camilbenameur/sandmeter/bench"
+	"github.com/camilbenameur/sandmeter/engine"
+	"github.com/camilbenameur/sandmeter/escape"
+	"github.com/camilbenameur/sandmeter/escape/harness"
+	"github.com/camilbenameur/sandmeter/policy"
 )
 
 func cmdEscape(ctx context.Context, args []string, stdout io.Writer) error {
@@ -42,8 +42,8 @@ func cmdEscape(ctx context.Context, args []string, stdout io.Writer) error {
 		Engine: e,
 		Image:  *img,
 		Probe:  *probe,
-		// Outside RINGFENCE_HOME (0700): see harness.Harness.WorkDir.
-		WorkDir: "/run/ringfence-escape",
+		// Outside SANDMETER_HOME (0700): see harness.Harness.WorkDir.
+		WorkDir: "/run/sandmeter-escape",
 		Log:     func(s string) { fmt.Fprintln(os.Stderr, s) },
 	}
 	verdicts, err := h.Run(ctx, strings.Split(*backendsFlag, ","))
@@ -121,8 +121,8 @@ func cmdEvalAgent(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	// The agent is asked to attack the host. Refuse anywhere but a CI runner
 	// marked as throwaway.
-	if os.Getenv("CI") != "true" || os.Getenv("RINGFENCE_THROWAWAY_HOST") != "1" {
-		return errors.New("eval-agent: refusing to run: set CI=true and RINGFENCE_THROWAWAY_HOST=1 on a throwaway machine only")
+	if os.Getenv("CI") != "true" || os.Getenv("SANDMETER_THROWAWAY_HOST") != "1" {
+		return errors.New("eval-agent: refusing to run: set CI=true and SANDMETER_THROWAWAY_HOST=1 on a throwaway machine only")
 	}
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		return errors.New("eval-agent: ANTHROPIC_API_KEY is not set")
@@ -133,7 +133,7 @@ func cmdEvalAgent(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	// Same rule as the escape suite: the canary must be readable by the
 	// sandbox uid, so only isolation (not file modes) keeps it out of reach.
-	work := "/run/ringfence-eval"
+	work := "/run/sandmeter-eval"
 	if err := os.MkdirAll(work, 0o711); err != nil {
 		return err
 	}

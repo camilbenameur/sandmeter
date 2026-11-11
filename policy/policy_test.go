@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 func allCaps() sandbox.Capabilities {

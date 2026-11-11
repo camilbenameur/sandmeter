@@ -14,7 +14,7 @@ import (
 )
 
 // PayloadType is the DSSE payloadType of a receipt.
-const PayloadType = "application/vnd.ringfence.receipt+json"
+const PayloadType = "application/vnd.sandmeter.receipt+json"
 
 // Envelope is a DSSE envelope (github.com/secure-systems-lab/dsse).
 type Envelope struct {

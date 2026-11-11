@@ -1,6 +1,6 @@
 # Threat model
 
-ringfence is an educational prototype. This document says what it tries to
+sandmeter is an educational prototype. This document says what it tries to
 stop, what it does not try to stop, and where the boundaries are, so that its
 measurements can be read correctly. It is not a security guarantee.
 
@@ -18,7 +18,7 @@ that was prompt-injected, a malicious package install script, or generated code
 that does something unexpected. The adversary can run any binary it can write
 into `/tmp` or `/workspace`, and can try for as long as the wall-time limit allows.
 
-Out of scope as adversaries: the person running ringfence, anyone with root on
+Out of scope as adversaries: the person running sandmeter, anyone with root on
 the host, the image registry (images are pinned by digest in receipts but their
 content is trusted), and the hardware.
 
@@ -37,7 +37,7 @@ content is trusted), and the hardware.
 | Resources | cgroup v2: cpu.max, memory.max (no swap), pids.max, OOM kills the whole group; wall-time kill | same cgroup, configured by runsc |
 | Network | own network namespace; `none` = loopback only; `allowlist` = veth pair, nftables table that accepts only listed `ip:port` (TCP), drops everything to the host itself, drops IPv6 | same namespace and nftables table; traffic leaves through gVisor's netstack |
 
-## What ringfence aims to stop (and measures)
+## What sandmeter aims to stop (and measures)
 
 Each line is covered by at least one case of the escape suite in `escape/cases`;
 the result table in the README says which cases were blocked on which backend.
@@ -56,7 +56,7 @@ the result table in the README says which cases were blocked on which backend.
 - Tricking host-side tools (the receipt diff, snapshots, cleanup) with symlinks
   or special files planted in the writable layer.
 
-## What ringfence does not stop
+## What sandmeter does not stop
 
 - **Kernel bugs.** The native backend shares the host kernel. A kernel
   vulnerability reachable through the allowed syscalls is an escape. The seccomp
@@ -74,17 +74,17 @@ the result table in the README says which cases were blocked on which backend.
   The signature proves the file was not changed after signing and which key
   signed it. It does not prove that the host ran the command honestly or that
   the sandbox held. There is no hardware attestation.
-- **Supply-chain attacks on the image or on ringfence itself.**
+- **Supply-chain attacks on the image or on sandmeter itself.**
 - **Anything the escape suite does not test.** The cases were written by the
   author of the sandbox. They form a regression suite, not a red-team audit.
 
-## Privilege of ringfence itself
+## Privilege of sandmeter itself
 
 Both backends need root on the host: creating cgroups, network devices and
 nftables rules, mounting overlayfs, and writing uid maps for other users all
 require it. On Ubuntu 23.10 and later, unprivileged user namespaces are also
 restricted by AppArmor (`kernel.apparmor_restrict_unprivileged_userns=1`), see
-[kvm.md](kvm.md). The ringfence process is therefore part of the trusted
+[kvm.md](kvm.md). The sandmeter process is therefore part of the trusted
 computing base, and a bug in its host-side code (path handling in the diff,
 snapshot renames, cleanup) is a host compromise. Run it on a throwaway VM.
 

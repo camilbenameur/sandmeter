@@ -7,13 +7,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/camilbenameur/ringfence/backend/gvisor"
-	"github.com/camilbenameur/ringfence/backend/native"
-	"github.com/camilbenameur/ringfence/engine"
-	"github.com/camilbenameur/ringfence/image"
-	"github.com/camilbenameur/ringfence/policy"
-	"github.com/camilbenameur/ringfence/receipt"
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/backend/gvisor"
+	"github.com/camilbenameur/sandmeter/backend/native"
+	"github.com/camilbenameur/sandmeter/engine"
+	"github.com/camilbenameur/sandmeter/image"
+	"github.com/camilbenameur/sandmeter/policy"
+	"github.com/camilbenameur/sandmeter/receipt"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // idShift is the host uid/gid of root inside every sandbox. Image layers
@@ -21,10 +21,10 @@ import (
 const idShift = 100000
 
 func home() string {
-	if h := os.Getenv("RINGFENCE_HOME"); h != "" {
+	if h := os.Getenv("SANDMETER_HOME"); h != "" {
 		return h
 	}
-	return "/var/lib/ringfence"
+	return "/var/lib/sandmeter"
 }
 
 func keyPath() string { return filepath.Join(home(), "receipt.key") }

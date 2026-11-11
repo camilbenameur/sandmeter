@@ -21,11 +21,11 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // DefaultParent is the cgroup under which sandbox groups are created.
-const DefaultParent = "/sys/fs/cgroup/ringfence"
+const DefaultParent = "/sys/fs/cgroup/sandmeter"
 
 const (
 	cpuPeriod = 100000

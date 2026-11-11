@@ -1,11 +1,11 @@
 ---
-name: ringfence
-description: Run commands in a ringfence sandbox through its MCP tools. Use it to run untrusted or generated code, install unknown packages, reproduce a bug in isolation, or check what a command writes to disk and which hosts it contacts. Not a security boundary you should trust.
+name: sandmeter
+description: Run commands in a sandmeter sandbox through its MCP tools. Use it to run untrusted or generated code, install unknown packages, reproduce a bug in isolation, or check what a command writes to disk and which hosts it contacts. Not a security boundary you should trust.
 ---
 
-# ringfence
+# sandmeter
 
-ringfence runs a command in a Linux sandbox (namespaces, cgroups v2, seccomp,
+sandmeter runs a command in a Linux sandbox (namespaces, cgroups v2, seccomp,
 overlayfs, nftables) and returns the output plus a signed receipt of what the
 command did. It is an educational prototype. Treat it as a way to observe and
 limit ordinary programs, not as protection against code written to escape.

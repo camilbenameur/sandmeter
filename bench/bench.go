@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/camilbenameur/ringfence/engine"
-	"github.com/camilbenameur/ringfence/policy"
+	"github.com/camilbenameur/sandmeter/engine"
+	"github.com/camilbenameur/sandmeter/policy"
 )
 
 // Options select how much to measure.

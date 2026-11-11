@@ -23,10 +23,10 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/camilbenameur/ringfence/image"
-	"github.com/camilbenameur/ringfence/policy"
-	"github.com/camilbenameur/ringfence/receipt"
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/image"
+	"github.com/camilbenameur/sandmeter/policy"
+	"github.com/camilbenameur/sandmeter/receipt"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // DiffLimit caps the number of entries in a receipt diff.
@@ -258,7 +258,7 @@ func (s *Session) receipt(argv []string, res sandbox.Result, started, finished t
 		Host: receipt.Host{
 			Kernel:           kernel(),
 			Arch:             runtime.GOARCH,
-			RingfenceVersion: s.e.Version,
+			SandmeterVersion: s.e.Version,
 			BackendVersion:   backendVersion,
 		},
 	}, nil

@@ -11,8 +11,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/camilbenameur/ringfence/mcpserver"
-	"github.com/camilbenameur/ringfence/receipt"
+	"github.com/camilbenameur/sandmeter/mcpserver"
+	"github.com/camilbenameur/sandmeter/receipt"
 )
 
 func cmdRun(ctx context.Context, args []string, stdout io.Writer) error {
@@ -21,10 +21,10 @@ func cmdRun(ctx context.Context, args []string, stdout io.Writer) error {
 	img := fs.String("image", "docker.io/library/alpine:3.20", "image reference")
 	pol := fs.String("policy", "", "policy file (TOML); default policy if empty")
 	out := fs.String("receipt", "", "also write the signed receipt to this file")
-	dir := fs.String("receipt-dir", "", "receipt directory (default $RINGFENCE_HOME/receipts)")
+	dir := fs.String("receipt-dir", "", "receipt directory (default $SANDMETER_HOME/receipts)")
 	quiet := fs.Bool("q", false, "do not print the receipt summary on stderr")
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: ringfence run [flags] -- command [args...]")
+		fmt.Fprintln(fs.Output(), "usage: sandmeter run [flags] -- command [args...]")
 		fs.PrintDefaults()
 	}
 	if err := parse(fs, args); err != nil {
@@ -59,7 +59,7 @@ func cmdRun(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 	}
 	if !*quiet {
-		fmt.Fprintf(os.Stderr, "--- ringfence receipt %s\n%s\n", o.ReceiptPath, receipt.Summary(o.Receipt))
+		fmt.Fprintf(os.Stderr, "--- sandmeter receipt %s\n%s\n", o.ReceiptPath, receipt.Summary(o.Receipt))
 	}
 	if o.Result.ExitCode != 0 {
 		return exitError{o.Result.ExitCode}
@@ -73,7 +73,7 @@ func cmdPull(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return usageError{errors.New("usage: ringfence pull <image>")}
+		return usageError{errors.New("usage: sandmeter pull <image>")}
 	}
 	img, err := store().Pull(ctx, fs.Arg(0))
 	if err != nil {
@@ -85,13 +85,13 @@ func cmdPull(ctx context.Context, args []string, stdout io.Writer) error {
 
 func cmdVerify(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
-	pub := fs.String("pub", "", "public key file (default $RINGFENCE_HOME/receipt.key.pub)")
+	pub := fs.String("pub", "", "public key file (default $SANDMETER_HOME/receipt.key.pub)")
 	asJSON := fs.Bool("json", false, "print the verified receipt as JSON")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return usageError{errors.New("usage: ringfence verify [-pub key.pub] receipt.json")}
+		return usageError{errors.New("usage: sandmeter verify [-pub key.pub] receipt.json")}
 	}
 	if *pub == "" {
 		*pub = keyPath() + ".pub"
@@ -119,12 +119,12 @@ func cmdVerify(ctx context.Context, args []string, stdout io.Writer) error {
 
 func cmdReplay(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("replay", flag.ContinueOnError)
-	pub := fs.String("pub", "", "public key file (default $RINGFENCE_HOME/receipt.key.pub)")
+	pub := fs.String("pub", "", "public key file (default $SANDMETER_HOME/receipt.key.pub)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return usageError{errors.New("usage: ringfence replay [-pub key.pub] receipt.json")}
+		return usageError{errors.New("usage: sandmeter replay [-pub key.pub] receipt.json")}
 	}
 	if *pub == "" {
 		*pub = keyPath() + ".pub"
@@ -183,7 +183,7 @@ func cmdKeygen(ctx context.Context, args []string, stdout io.Writer) error {
 
 func cmdMCP(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	dir := fs.String("receipt-dir", "", "receipt directory (default $RINGFENCE_HOME/receipts)")
+	dir := fs.String("receipt-dir", "", "receipt directory (default $SANDMETER_HOME/receipts)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}

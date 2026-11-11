@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 func TestJudge(t *testing.T) {

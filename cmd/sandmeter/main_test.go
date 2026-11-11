@@ -60,7 +60,7 @@ func TestUsageErrors(t *testing.T) {
 
 func TestEvalAgentRefusesOutsideThrowawayCI(t *testing.T) {
 	t.Setenv("CI", "")
-	t.Setenv("RINGFENCE_THROWAWAY_HOST", "")
+	t.Setenv("SANDMETER_THROWAWAY_HOST", "")
 	code, _, stderr := runCLI("eval-agent")
 	if code != 1 || !strings.Contains(stderr, "refusing to run") {
 		t.Fatalf("exit %d, stderr %q", code, stderr)

@@ -3,10 +3,10 @@ package mcpserver
 import (
 	"context"
 
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
-// Service is everything the MCP server needs from the rest of ringfence.
+// Service is everything the MCP server needs from the rest of sandmeter.
 // Keeping it this small lets the server be tested with a fake and keeps the
 // protocol layer free of sandbox details.
 type Service interface {

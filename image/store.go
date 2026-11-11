@@ -29,7 +29,7 @@ import (
 //	Root/images/<manifest digest>.json  image metadata
 //	Root/refs.json                      ref -> manifest digest
 type Store struct {
-	// Root is the store directory, such as /var/lib/ringfence.
+	// Root is the store directory, such as /var/lib/sandmeter.
 	Root string
 	// IDShift is the host uid/gid that container uid/gid 0 maps to. Files in
 	// layers are owned by uid+IDShift and gid+IDShift. Zero means no shift.

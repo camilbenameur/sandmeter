@@ -48,7 +48,7 @@ func CheckForwarding() error {
 		return fmt.Errorf("read ip_forward: %w", err)
 	}
 	if v := strings.TrimSpace(string(b)); v != "1" {
-		return fmt.Errorf("IPv4 forwarding is off (%s is %q): enable it with `sysctl -w net.ipv4.ip_forward=1`; ringfence does not change it", ipForwardPath, v)
+		return fmt.Errorf("IPv4 forwarding is off (%s is %q): enable it with `sysctl -w net.ipv4.ip_forward=1`; sandmeter does not change it", ipForwardPath, v)
 	}
 	return nil
 }

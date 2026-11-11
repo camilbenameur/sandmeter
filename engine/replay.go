@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/camilbenameur/ringfence/policy"
-	"github.com/camilbenameur/ringfence/receipt"
+	"github.com/camilbenameur/sandmeter/policy"
+	"github.com/camilbenameur/sandmeter/receipt"
 )
 
 // ReplayReport compares a fresh run with a recorded receipt.

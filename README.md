@@ -1,4 +1,4 @@
-# ringfence
+# sandmeter
 
 An educational sandbox for coding agents, written on Linux primitives
 (namespaces, `pivot_root`, cgroups v2, seccomp-BPF, overlayfs, nftables) and
@@ -15,7 +15,7 @@ It is not affiliated with any model vendor or with the gVisor project.
 ```
  agent (MCP) / CLI
         |
-   ringfence (Go, one binary)
+   sandmeter (Go, one binary)
         |
    policy.toml --> Validate(policy, backend.Capabilities())   refused if the backend cannot enforce it
         |
@@ -34,11 +34,11 @@ It is not affiliated with any model vendor or with the gVisor project.
   the same cgroup counters, the same network namespace with a veth pair and the
   same nftables table. Only what executes the sandboxed program's system calls
   changes: the host kernel (native) or gVisor's user-space kernel.
-- **Receipts.** After each command, ringfence walks the overlay's writable layer
+- **Receipts.** After each command, sandmeter walks the overlay's writable layer
   from the host (never following links the sandbox planted), records every
   outbound flow the firewall saw (allowed or not) and the cgroup counters, and
-  signs the result with ed25519 in a DSSE envelope. `ringfence verify` checks it
-  offline; `ringfence replay` runs the command again on the same image digest
+  signs the result with ed25519 in a DSSE envelope. `sandmeter verify` checks it
+  offline; `sandmeter replay` runs the command again on the same image digest
   and compares exit code, stdout hash and diff hash.
 - **Snapshots** freeze the writable layer by turning it into a read-only layer
   (a rename, no copy). Restoring rebuilds the layer stack.
@@ -50,13 +50,13 @@ It is not affiliated with any model vendor or with the gVisor project.
   read a host file or create one, k ≥ 30 times, under a hard dollar budget, on a
   throwaway CI runner only.
 - **MCP server and agent skill** to give coding agents the sandbox
-  (`ringfence mcp`, [docs/mcp.md](docs/mcp.md), [skill/ringfence](skill/ringfence/SKILL.md)).
+  (`sandmeter mcp`, [docs/mcp.md](docs/mcp.md), [skill/sandmeter](skill/sandmeter/SKILL.md)).
 
 ## Results
 
 These numbers come from one run of the `measure` workflow on a GitHub-hosted
 `ubuntu-latest` runner (2 vCPU, ~8 GB, kernel 7.0.0-azure) on 2026-11-11.
-Reproduce them with `sudo ringfence escape` and `sudo ringfence bench`; the
+Reproduce them with `sudo sandmeter escape` and `sudo sandmeter bench`; the
 raw JSON is in that workflow's artifacts, and [docs/escape.md](docs/escape.md)
 and [docs/bench.md](docs/bench.md) hold the full tables. Numbers from other
 hardware are not comparable.
@@ -104,7 +104,7 @@ honest ratio to show.
 
 ## Guaranteed / not guaranteed
 
-| ringfence aims to provide, and tests | ringfence does not provide |
+| sandmeter aims to provide, and tests | sandmeter does not provide |
 |---|---|
 | A policy is refused if the backend cannot enforce every part of it | Protection against kernel vulnerabilities (native shares the host kernel) |
 | Root in the sandbox is an unprivileged uid on the host (native) | Protection against side channels (timing, cache, Spectre-class) |
@@ -120,19 +120,19 @@ Full threat model: [docs/threat-model.md](docs/threat-model.md).
 ## Quick start
 
 Needs Linux with cgroup v2, root, `nft`, and for the gVisor backend `runsc` in
-`PATH`. Run it on a throwaway VM: ringfence itself runs as root.
+`PATH`. Run it on a throwaway VM: sandmeter itself runs as root.
 
 ```sh
-go build -o ringfence ./cmd/ringfence
-sudo ./ringfence run -- sh -c 'echo hello > /workspace/out.txt; cat /etc/os-release'
-sudo ./ringfence verify /var/lib/ringfence/receipts/<id>-1.json
-sudo ./ringfence run -backend gvisor -policy examples/allowlist.toml -- wget -qO- http://example.com
-sudo ./ringfence escape -probe "$(CGO_ENABLED=0 go build -o /tmp/rfprobe ./escape/probe && echo /tmp/rfprobe)"
-sudo ./ringfence bench
+go build -o sandmeter ./cmd/sandmeter
+sudo ./sandmeter run -- sh -c 'echo hello > /workspace/out.txt; cat /etc/os-release'
+sudo ./sandmeter verify /var/lib/sandmeter/receipts/<id>-1.json
+sudo ./sandmeter run -backend gvisor -policy examples/allowlist.toml -- wget -qO- http://example.com
+sudo ./sandmeter escape -probe "$(CGO_ENABLED=0 go build -o /tmp/rfprobe ./escape/probe && echo /tmp/rfprobe)"
+sudo ./sandmeter bench
 ```
 
-`ringfence caps -backend native` prints what a backend enforces on this host;
-`ringfence check policy.toml` validates a policy without running anything.
+`sandmeter caps -backend native` prints what a backend enforces on this host;
+`sandmeter check policy.toml` validates a policy without running anything.
 
 ## Layout
 

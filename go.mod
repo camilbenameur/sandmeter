@@ -1,4 +1,4 @@
-module github.com/camilbenameur/ringfence
+module github.com/camilbenameur/sandmeter
 
 go 1.27.0
 

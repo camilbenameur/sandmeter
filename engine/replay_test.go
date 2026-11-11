@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/camilbenameur/ringfence/policy"
+	"github.com/camilbenameur/sandmeter/policy"
 )
 
 func TestPinnedRef(t *testing.T) {

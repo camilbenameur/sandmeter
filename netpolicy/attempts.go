@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // Conn is one flow seen by the firewall.
@@ -162,7 +162,7 @@ func protoName(raw json.RawMessage) (string, error) {
 // forward-hook base chain with policy drop. Such a chain drops forwarded
 // packets whatever our table accepts; Docker's iptables FORWARD chain is the
 // usual one. It is best effort: it looks at policies only, not at rules that
-// might accept our traffic, and it skips tables named "ringfence_*".
+// might accept our traffic, and it skips tables named "sandmeter_*".
 func ForwardBlockedByOthers(ctx context.Context) (bool, string, error) {
 	out, stderr, err := runNft(ctx, "", "-j", "list", "ruleset")
 	if err != nil {
@@ -178,7 +178,7 @@ func findForwardDrop(data []byte) (bool, string, error) {
 	}
 	for _, item := range doc.Nftables {
 		c := item.Chain
-		if c == nil || c.Hook != "forward" || c.Policy != "drop" || strings.HasPrefix(c.Table, "ringfence_") {
+		if c == nil || c.Hook != "forward" || c.Policy != "drop" || strings.HasPrefix(c.Table, "sandmeter_") {
 			continue
 		}
 		return true, fmt.Sprintf("table %s %s chain %s has hook forward with policy drop", c.Family, c.Table, c.Name), nil

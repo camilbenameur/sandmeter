@@ -1,6 +1,6 @@
 # MCP server
 
-`ringfence mcp` runs an MCP server on stdin/stdout, so a coding agent can run
+`sandmeter mcp` runs an MCP server on stdin/stdout, so a coding agent can run
 commands in a sandbox through tool calls. The code is in `mcpserver/`.
 
 This is an educational prototype. Do not rely on it to contain hostile code.
@@ -12,8 +12,8 @@ Any MCP client that starts stdio servers takes the same block:
 ```json
 {
   "mcpServers": {
-    "ringfence": {
-      "command": "ringfence",
+    "sandmeter": {
+      "command": "sandmeter",
       "args": ["mcp"]
     }
   }
@@ -33,7 +33,7 @@ available to an unprivileged process on a typical host.
 Because the server runs as root and executes commands chosen by an agent, run
 it on a VM you can delete, not on a workstation that holds your credentials or
 a browser session. If the sandbox has a flaw, the process that hosts it has
-full privileges on that machine. Use `ringfence caps` to see what the backend
+full privileges on that machine. Use `sandmeter caps` to see what the backend
 can enforce on a given host.
 
 ## Tools

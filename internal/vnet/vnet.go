@@ -18,7 +18,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 
-	"github.com/camilbenameur/ringfence/netpolicy"
+	"github.com/camilbenameur/sandmeter/netpolicy"
 )
 
 // maxNetIndex matches the /30 pool of netpolicy.Allocate.
@@ -37,7 +37,7 @@ type Pair struct {
 }
 
 // reserveIndex takes the first free index with an O_EXCL lock file, so two
-// ringfence processes on the same host never share an address pair.
+// sandmeter processes on the same host never share an address pair.
 func reserveIndex(stateDir string) (int, string, error) {
 	dir := filepath.Join(stateDir, "net")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -72,7 +72,7 @@ func Setup(ctx context.Context, stateDir string, ns netns.NsHandle, dests []netp
 		index: idx,
 		lock:  lock,
 		host:  fmt.Sprintf("rf%dh", idx),
-		Table: fmt.Sprintf("ringfence_%d", idx),
+		Table: fmt.Sprintf("sandmeter_%d", idx),
 	}
 	defer func() {
 		if err != nil {

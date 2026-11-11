@@ -1,4 +1,4 @@
-table inet ringfence_a1 {
+table inet sandmeter_a1 {
 	set allow4 {
 		type ipv4_addr . inet_proto . inet_service
 	}

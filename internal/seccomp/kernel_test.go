@@ -12,7 +12,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const helperEnv = "RINGFENCE_SECCOMP_HELPER"
+const helperEnv = "SANDMETER_SECCOMP_HELPER"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(helperEnv) == "1" {

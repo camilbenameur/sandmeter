@@ -47,7 +47,7 @@ func TestApplyAttemptsDelete(t *testing.T) {
 	needRoot(t)
 	ctx := context.Background()
 	plan := goldenPlans(t)["one"]
-	plan.Table = "ringfence_itest"
+	plan.Table = "sandmeter_itest"
 	plan.HostIface = "rfdummy0"
 	script, err := Ruleset(plan)
 	if err != nil {

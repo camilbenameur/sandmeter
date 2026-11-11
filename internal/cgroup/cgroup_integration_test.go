@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // testParent creates a throwaway parent under the cgroup v2 root and removes
@@ -30,7 +30,7 @@ func testParent(t *testing.T) string {
 	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err != nil {
 		t.Skipf("cgroup v2 not mounted at /sys/fs/cgroup: %v", err)
 	}
-	parent := fmt.Sprintf("/sys/fs/cgroup/ringfence-test-%d", os.Getpid())
+	parent := fmt.Sprintf("/sys/fs/cgroup/sandmeter-test-%d", os.Getpid())
 	// Registered first: EnsureParent may create the directory and still fail.
 	t.Cleanup(func() {
 		// The groups are removed by their own tests; this only drops the parent.

@@ -18,7 +18,7 @@ type Dest struct {
 
 // Plan is the input of Ruleset.
 type Plan struct {
-	// Table is the nft table name, "ringfence_<id>"; [a-z0-9_]{1,32}.
+	// Table is the nft table name, "sandmeter_<id>"; [a-z0-9_]{1,32}.
 	Table string
 	// HostIface is the host side of the veth pair.
 	HostIface string

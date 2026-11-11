@@ -21,9 +21,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/camilbenameur/ringfence/engine"
-	"github.com/camilbenameur/ringfence/escape"
-	"github.com/camilbenameur/ringfence/policy"
+	"github.com/camilbenameur/sandmeter/engine"
+	"github.com/camilbenameur/sandmeter/escape"
+	"github.com/camilbenameur/sandmeter/policy"
 )
 
 // Harness runs cases.

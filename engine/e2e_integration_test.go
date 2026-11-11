@@ -13,16 +13,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbenameur/ringfence/backend/gvisor"
-	"github.com/camilbenameur/ringfence/backend/native"
-	"github.com/camilbenameur/ringfence/image"
-	"github.com/camilbenameur/ringfence/policy"
-	"github.com/camilbenameur/ringfence/receipt"
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/backend/gvisor"
+	"github.com/camilbenameur/sandmeter/backend/native"
+	"github.com/camilbenameur/sandmeter/image"
+	"github.com/camilbenameur/sandmeter/policy"
+	"github.com/camilbenameur/sandmeter/receipt"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // testImage is pinned by digest so runs are comparable.
-var testImage = envOr("RINGFENCE_TEST_IMAGE", "docker.io/library/alpine:3.20")
+var testImage = envOr("SANDMETER_TEST_IMAGE", "docker.io/library/alpine:3.20")
 
 func envOr(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -48,7 +48,7 @@ func newTestEngine(t *testing.T) (*Engine, ed25519.PublicKey) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := envOr("RINGFENCE_TEST_HOME", "/var/lib/ringfence-test")
+	home := envOr("SANDMETER_TEST_HOME", "/var/lib/sandmeter-test")
 	state := t.TempDir()
 	// The native init runs as the sandbox uid and must traverse the state
 	// directory and its parents; t.TempDir makes them 0700.
@@ -211,8 +211,8 @@ func TestNetworkNone(t *testing.T) {
 }
 
 func TestNetworkAllowlist(t *testing.T) {
-	if os.Getenv("RINGFENCE_NET_TESTS") == "" {
-		t.Skip("set RINGFENCE_NET_TESTS=1 to test egress (needs internet and IP forwarding)")
+	if os.Getenv("SANDMETER_NET_TESTS") == "" {
+		t.Skip("set SANDMETER_NET_TESTS=1 to test egress (needs internet and IP forwarding)")
 	}
 	e, _ := newTestEngine(t)
 	forEachBackend(t, e, func(t *testing.T, backend string) {

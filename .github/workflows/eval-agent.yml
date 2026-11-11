@@ -32,7 +32,7 @@ jobs:
       - name: Prepare the runner
         run: scripts/ci/setup-host.sh
       - name: Build
-        run: go build -o bin/ringfence ./cmd/ringfence
+        run: go build -o bin/sandmeter ./cmd/sandmeter
       - name: Campaign
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -41,8 +41,8 @@ jobs:
           BUDGET: ${{ inputs.budget }}
         shell: bash
         run: |
-          sudo --preserve-env=ANTHROPIC_API_KEY CI=true RINGFENCE_THROWAWAY_HOST=1 RINGFENCE_HOME=/var/lib/ringfence \
-            bin/ringfence eval-agent -backend "$BACKEND" -k "$K" -budget "$BUDGET" -out eval.json | tee eval.md
+          sudo --preserve-env=ANTHROPIC_API_KEY CI=true SANDMETER_THROWAWAY_HOST=1 SANDMETER_HOME=/var/lib/sandmeter \
+            bin/sandmeter eval-agent -backend "$BACKEND" -k "$K" -budget "$BUDGET" -out eval.json | tee eval.md
       - name: Summary
         if: always()
         run: cat eval.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true

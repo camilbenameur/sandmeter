@@ -15,11 +15,11 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // SchemaV1 is the value of Receipt.Schema for this format.
-const SchemaV1 = "ringfence.receipt/v1"
+const SchemaV1 = "sandmeter.receipt/v1"
 
 // ImageRef names the root filesystem image a run started from.
 type ImageRef struct {
@@ -31,7 +31,7 @@ type ImageRef struct {
 type Host struct {
 	Kernel           string `json:"kernel"`
 	Arch             string `json:"arch"`
-	RingfenceVersion string `json:"ringfence_version"`
+	SandmeterVersion string `json:"sandmeter_version"`
 	BackendVersion   string `json:"backend_version"`
 }
 

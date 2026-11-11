@@ -1,4 +1,4 @@
-// Command ringfence runs commands in isolated sandboxes, signs a receipt for
+// Command sandmeter runs commands in isolated sandboxes, signs a receipt for
 // each run, and measures the isolation with an escape test suite.
 package main
 
@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/camilbenameur/ringfence/backend/native"
+	"github.com/camilbenameur/sandmeter/backend/native"
 )
 
 var version = "dev"
@@ -28,7 +28,7 @@ func main() {
 	os.Exit(code)
 }
 
-const usageText = `usage: ringfence <command> [flags]
+const usageText = `usage: sandmeter <command> [flags]
 
 commands:
   run      run a command in a sandbox and write a signed receipt
@@ -44,7 +44,7 @@ commands:
   check    validate a policy file against a backend
   version  print the version
 
-Environment: RINGFENCE_HOME (default /var/lib/ringfence) holds images,
+Environment: SANDMETER_HOME (default /var/lib/sandmeter) holds images,
 the signing key and receipts. Most commands need root.
 `
 
@@ -83,7 +83,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	cmd, ok := commands()[args[0]]
 	if !ok {
-		fmt.Fprintf(stderr, "ringfence: unknown command %q\n%s", args[0], usageText)
+		fmt.Fprintf(stderr, "sandmeter: unknown command %q\n%s", args[0], usageText)
 		return 2
 	}
 	err := cmd(ctx, args[1:], stdout)
@@ -94,7 +94,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if errors.As(err, &ex) {
 		return ex.code
 	}
-	fmt.Fprintln(stderr, "ringfence:", err)
+	fmt.Fprintln(stderr, "sandmeter:", err)
 	var u usageError
 	if errors.As(err, &u) {
 		return 2

@@ -16,7 +16,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // Policy is the on-disk policy format (TOML).

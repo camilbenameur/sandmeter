@@ -1,4 +1,4 @@
-table inet ringfence_b2 {
+table inet sandmeter_b2 {
 	set allow4 {
 		type ipv4_addr . inet_proto . inet_service
 		elements = { 1.1.1.1 . tcp . 53, 1.1.1.1 . udp . 53, 140.82.112.3 . tcp . 443 }

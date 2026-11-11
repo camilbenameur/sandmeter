@@ -30,13 +30,13 @@ import (
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
 
-	"github.com/camilbenameur/ringfence/internal/cgroup"
-	"github.com/camilbenameur/ringfence/internal/iox"
-	"github.com/camilbenameur/ringfence/internal/layers"
-	"github.com/camilbenameur/ringfence/internal/seccomp"
-	"github.com/camilbenameur/ringfence/internal/vnet"
-	"github.com/camilbenameur/ringfence/netpolicy"
-	"github.com/camilbenameur/ringfence/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/cgroup"
+	"github.com/camilbenameur/sandmeter/internal/iox"
+	"github.com/camilbenameur/sandmeter/internal/layers"
+	"github.com/camilbenameur/sandmeter/internal/seccomp"
+	"github.com/camilbenameur/sandmeter/internal/vnet"
+	"github.com/camilbenameur/sandmeter/netpolicy"
+	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // Options configure the backend.
@@ -45,7 +45,7 @@ type Options struct {
 	Runsc string
 	// Platform is the runsc platform. Default "systrap" (works without KVM).
 	Platform string
-	// StateDir holds per-sandbox state. Default /run/ringfence.
+	// StateDir holds per-sandbox state. Default /run/sandmeter.
 	StateDir string
 	// CgroupParent is the cgroup v2 directory under which runsc creates
 	// one group per command. Default cgroup.DefaultParent.
@@ -64,7 +64,7 @@ func (o *Options) defaults() {
 		o.Platform = "systrap"
 	}
 	if o.StateDir == "" {
-		o.StateDir = "/run/ringfence"
+		o.StateDir = "/run/sandmeter"
 	}
 	if o.CgroupParent == "" {
 		o.CgroupParent = cgroup.DefaultParent
@@ -272,7 +272,7 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string) (res sandbox.Result, 
 	var pair *vnet.Pair
 	if s.spec.Network == sandbox.NetworkAllowlist {
 		networkMode = "sandbox"
-		nsName := "ringfence-" + name
+		nsName := "sandmeter-" + name
 		ns, err := newNamedNetns(nsName)
 		if err != nil {
 			return res, fmt.Errorf("gvisor: %w", err)
