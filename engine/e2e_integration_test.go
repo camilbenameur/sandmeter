@@ -50,6 +50,13 @@ func newTestEngine(t *testing.T) (*Engine, ed25519.PublicKey) {
 	}
 	home := envOr("RINGFENCE_TEST_HOME", "/var/lib/ringfence-test")
 	state := t.TempDir()
+	// The native init runs as the sandbox uid and must traverse the state
+	// directory and its parents; t.TempDir makes them 0700.
+	for d := state; d != os.TempDir() && d != "/"; d = filepath.Dir(d) {
+		if err := os.Chmod(d, 0o711); err != nil {
+			t.Fatal(err)
+		}
+	}
 	bs := map[string]sandbox.Backend{
 		"native": native.New(native.Options{StateDir: filepath.Join(state, "native")}),
 	}

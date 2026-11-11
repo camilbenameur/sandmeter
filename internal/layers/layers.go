@@ -55,7 +55,12 @@ func New(dir string, image []string, shift uint32, hosts []byte) (*Stack, error)
 	if len(image) == 0 {
 		return nil, errors.New("layers: no image layers")
 	}
-	if err := os.Mkdir(dir, 0o700); err != nil {
+	// 0711: the sandbox user must traverse it to reach merged/, but not list it.
+	if err := os.Mkdir(dir, 0o711); err != nil {
+		return nil, fmt.Errorf("layers: %w", err)
+	}
+	if err := os.Chmod(dir, 0o711); err != nil {
+		os.RemoveAll(dir)
 		return nil, fmt.Errorf("layers: %w", err)
 	}
 	s := &Stack{dir: dir, image: image, shift: shift, snaps: map[string]snapshot{}}

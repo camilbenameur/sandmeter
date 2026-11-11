@@ -75,7 +75,14 @@ func (h *Harness) Run(ctx context.Context, backends []string) ([]escape.Verdict,
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(h.WorkDir, 0o700); err != nil {
+	// The canaries must be readable by the sandbox uid if it ever reached
+	// them: the suite measures namespace isolation, not Unix permissions, so
+	// an escape must not be scored "blocked" because of a 0600 file. The work
+	// directory and its parents are therefore traversable (0711).
+	if err := os.MkdirAll(h.WorkDir, 0o711); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(h.WorkDir, 0o711); err != nil {
 		return nil, err
 	}
 	layer, err := h.probeLayer(cases)
@@ -151,8 +158,14 @@ func (h *Harness) runCase(ctx context.Context, backend string, c escape.Case, la
 		return escape.Verdict{}, err
 	}
 	defer os.RemoveAll(caseDir)
+	if err := os.Chmod(caseDir, 0o711); err != nil {
+		return escape.Verdict{}, err
+	}
 	canaryPath, token, err := escape.NewCanary(caseDir)
 	if err != nil {
+		return escape.Verdict{}, err
+	}
+	if err := os.Chmod(canaryPath, 0o644); err != nil {
 		return escape.Verdict{}, err
 	}
 	marker := filepath.Join(caseDir, "marker")

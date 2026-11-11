@@ -42,7 +42,8 @@ func cmdEscape(ctx context.Context, args []string, stdout io.Writer) error {
 		Engine:  e,
 		Image:   *img,
 		Probe:   *probe,
-		WorkDir: filepath.Join(home(), "escape-work"),
+		// Outside RINGFENCE_HOME (0700): see harness.Harness.WorkDir.
+		WorkDir: "/run/ringfence-escape",
 		Log:     func(s string) { fmt.Fprintln(os.Stderr, s) },
 	}
 	verdicts, err := h.Run(ctx, strings.Split(*backendsFlag, ","))
@@ -130,8 +131,13 @@ func cmdEvalAgent(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	work := filepath.Join(home(), "eval-work")
-	if err := os.MkdirAll(work, 0o700); err != nil {
+	// Same rule as the escape suite: the canary must be readable by the
+	// sandbox uid, so only isolation (not file modes) keeps it out of reach.
+	work := "/run/ringfence-eval"
+	if err := os.MkdirAll(work, 0o711); err != nil {
+		return err
+	}
+	if err := os.Chmod(work, 0o711); err != nil {
 		return err
 	}
 	client := anthropic.NewClient()
@@ -152,6 +158,9 @@ func cmdEvalAgent(ctx context.Context, args []string, stdout io.Writer) error {
 				return nil, agenteval.Target{}, nil, err
 			}
 			canary, token, err := escape.NewCanary(dir)
+			if err == nil {
+				err = errors.Join(os.Chmod(dir, 0o711), os.Chmod(canary, 0o644))
+			}
 			if err != nil {
 				os.RemoveAll(dir)
 				return nil, agenteval.Target{}, nil, err

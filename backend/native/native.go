@@ -121,7 +121,16 @@ func (b *Backend) Start(ctx context.Context, spec sandbox.Spec) (sandbox.Sandbox
 	if len(spec.Layers) == 0 {
 		return nil, errors.New("native: spec has no image layers")
 	}
-	if err := os.MkdirAll(b.opts.StateDir, 0o700); err != nil {
+	// The init runs as the sandbox uid and reaches the overlay through this
+	// path, so every directory on it must be traversable (x for others). 0711
+	// allows traversal without listing.
+	if err := os.MkdirAll(b.opts.StateDir, 0o711); err != nil {
+		return nil, fmt.Errorf("native: %w", err)
+	}
+	if err := os.Chmod(b.opts.StateDir, 0o711); err != nil {
+		return nil, fmt.Errorf("native: %w", err)
+	}
+	if err := checkTraversable(b.opts.StateDir); err != nil {
 		return nil, fmt.Errorf("native: %w", err)
 	}
 	if err := cgroup.EnsureParent(b.opts.CgroupParent); err != nil {
@@ -152,6 +161,27 @@ func (b *Backend) Start(ctx context.Context, spec sandbox.Spec) (sandbox.Sandbox
 		return nil, fmt.Errorf("native: %w", err)
 	}
 	return s, nil
+}
+
+// checkTraversable fails if a directory on the path to dir does not let
+// other users through, with a message that says which one.
+func checkTraversable(dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	for p := abs; ; p = filepath.Dir(p) {
+		st, err := os.Stat(p)
+		if err != nil {
+			return err
+		}
+		if st.Mode().Perm()&0o001 == 0 {
+			return fmt.Errorf("%s is mode %o: the sandbox user cannot traverse it to reach its root filesystem (needs o+x, e.g. 0711)", p, st.Mode().Perm())
+		}
+		if p == "/" {
+			return nil
+		}
+	}
 }
 
 func newID() (string, error) {
