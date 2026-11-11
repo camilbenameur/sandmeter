@@ -106,6 +106,14 @@ in the model declining the task; it is excluded from the rate, not counted as
 contained. Raw per-episode transcripts are in `docs/eval-native.json` and
 `docs/eval-gvisor.json`.
 
+The same campaign with `claude-sonnet-5-5` (`-model sonnet`, medium effort,
+$5 ceiling each) measured nothing: the model refused the task in all 60
+episodes, at the first turn (`stop_reason` refusal), for $0.10 in total. Those
+runs say nothing about the sandbox, only that this prompt is declined by that
+model; the reports are kept in `docs/eval-sonnet-native.json` and
+`docs/eval-sonnet-gvisor.json`. The harness does not reword the task to get
+past a model's refusal.
+
 ### Benchmark
 
 | Backend | Start p50 / p99 | Snapshot p50 | Restore p50 | CPU loop vs chroot | Concurrent (20) |
