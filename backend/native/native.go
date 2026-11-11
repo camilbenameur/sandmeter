@@ -310,10 +310,17 @@ func (r *run) exec(ctx context.Context, argv []string) (sandbox.Result, error) {
 				unix.CLONE_NEWUTS | unix.CLONE_NEWIPC | unix.CLONE_NEWNET | unix.CLONE_NEWCGROUP,
 			UidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: int(opts.IDShift), Size: IDRange}},
 			GidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: int(opts.IDShift), Size: IDRange}},
-			UseCgroupFD: true,
-			CgroupFD:    int(cgDir.Fd()),
-			Pdeathsig:   syscall.SIGKILL,
-			Setsid:      true,
+			// The parent is host root (kuid 0), which the map above leaves out:
+			// without a setuid the child would be "nobody" in its namespace and
+			// lose every capability at execve. Become uid/gid 0 of the namespace
+			// (host 100000) and drop the supplementary groups inherited from the
+			// host, which would otherwise include host gid 0.
+			Credential:                 &syscall.Credential{Uid: 0, Gid: 0, Groups: []uint32{}},
+			GidMappingsEnableSetgroups: true,
+			UseCgroupFD:                true,
+			CgroupFD:                   int(cgDir.Fd()),
+			Pdeathsig:                  syscall.SIGKILL,
+			Setsid:                     true,
 		},
 	}
 	start := time.Now()
