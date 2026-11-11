@@ -54,7 +54,53 @@ It is not affiliated with any model vendor or with the gVisor project.
 
 ## Results
 
-RESULTS_PLACEHOLDER
+These numbers come from one run of the `measure` workflow on a GitHub-hosted
+`ubuntu-latest` runner (2 vCPU, ~8 GB, kernel 7.0.0-azure) on 2026-11-11.
+Reproduce them with `sudo ringfence escape` and `sudo ringfence bench`; the
+raw JSON is in that workflow's artifacts, and [docs/escape.md](docs/escape.md)
+and [docs/bench.md](docs/bench.md) hold the full tables. Numbers from other
+hardware are not comparable.
+
+### Escape suite
+
+Each of the 15 cases runs on both backends; the verdict is decided by host-side
+evidence (a canary token on the host, a marker file, host sysctls compared
+before and after, TCP listeners, the firewall log, cgroup peaks), not by what
+the script claims.
+
+| | native | gvisor (runsc 20261019.0) |
+|---|---|---|
+| Cases blocked | **14 / 15** | **13 / 15** |
+| Not blocked | 15-symlink-host-tooling (*exposed*) | 13-fork-bomb (*exposed*), 15-symlink-host-tooling (*exposed*) |
+
+Two cases are deliberately not "blocked", and both are honest results, not passes:
+
+- **15-symlink-host-tooling** is *exposed* on both backends. The sandbox can
+  plant symlinks and a fake whiteout in its own writable layer — that is allowed.
+  The case then checks that the host-side tooling (the receipt diff) never
+  followed them: the canary never appeared in the signed receipt and the host
+  marker was never created. So the planting is real but the host was not reached.
+- **13-fork-bomb** is *blocked* on native and *exposed* on gvisor. This is a real
+  difference, not a bug. Under the native backend a sandboxed process is a host
+  task, so the cgroup `pids.max` stops the bomb with `EAGAIN`. Under gVisor the
+  guest's processes live inside the Sentry and are not host tasks, so a host
+  cgroup pids limit does not constrain them; a gVisor fork bomb is instead bounded
+  by the Sentry's own memory limit, not by pids. The suite reports what it
+  measured rather than hiding the gap.
+
+### Benchmark
+
+| Backend | Start p50 / p99 | Snapshot p50 | Restore p50 | CPU loop vs chroot | Concurrent (20) |
+|---|---|---|---|---|---|
+| native | 5.7 ms / 10.5 ms | 0.3 ms | 0.3 ms | x1.04 | 20 ok in 2.1 s |
+| gvisor | 53.6 ms / 74.5 ms | 0.8 ms | 0.5 ms | x1.21 | 20 ok in 2.9 s |
+
+Start is the host-side wall time of running `true` in a fresh sandbox
+(namespaces, cgroup, init, exec, teardown), 100 runs per backend. The CPU ratio
+compares a shell loop against a plain `chroot` into the same image layers, which
+still pays process start but has no isolation. The I/O overhead row is not
+reported: the `chroot` baseline could not run the fsync workload, so there is no
+honest ratio to show.
 
 ## Guaranteed / not guaranteed
 

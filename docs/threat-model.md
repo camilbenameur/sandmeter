@@ -96,3 +96,8 @@ snapshot renames, cleanup) is a host compromise. Run it on a throwaway VM.
   100000-165535, so two concurrent sandboxes could signal each other's processes
   if they could see them (PID namespaces prevent seeing them).
 - Allowlist is TCP only.
+- Under the gVisor backend, a host cgroup `pids.max` does not limit the number
+  of guest processes: they live inside the Sentry and are not host tasks. A
+  gVisor fork bomb is bounded by the Sentry's memory limit instead, not by pids.
+  The native backend, where guest processes are host tasks, does enforce `pids.max`.
+  This is visible in the escape suite (case 13).

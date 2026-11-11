@@ -113,3 +113,11 @@ they are not real:
 Read every `exposed` row as "worth tightening," not as "safe." Read every
 `blocked` row as "this one known technique didn't work today," not as
 "this sandbox is secure."
+
+## Backend-specific notes
+
+- **13-fork-bomb, pids under gVisor.** The native backend stops the bomb with
+  the cgroup `pids.max` (`EAGAIN`). Under gVisor the guest's processes are not
+  host tasks, so a host pids limit does not apply to them; the bomb is bounded by
+  the Sentry's memory instead. The suite reports this as *exposed* on gVisor
+  rather than pretending the host pids limit took effect.
