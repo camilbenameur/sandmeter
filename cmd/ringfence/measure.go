@@ -39,9 +39,9 @@ func cmdEscape(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	h := &harness.Harness{
-		Engine:  e,
-		Image:   *img,
-		Probe:   *probe,
+		Engine: e,
+		Image:  *img,
+		Probe:  *probe,
 		// Outside RINGFENCE_HOME (0700): see harness.Harness.WorkDir.
 		WorkDir: "/run/ringfence-escape",
 		Log:     func(s string) { fmt.Fprintln(os.Stderr, s) },

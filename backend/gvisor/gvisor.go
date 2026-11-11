@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/vishvananda/netns"
+	"golang.org/x/sys/unix"
 
 	"github.com/camilbenameur/ringfence/internal/cgroup"
 	"github.com/camilbenameur/ringfence/internal/iox"
@@ -230,6 +231,13 @@ func (s *Sandbox) Stop(ctx context.Context) error {
 		return nil
 	}
 	s.stopped = true
+	// With --network none, runsc bind-mounts an empty netns at
+	// <root>/null-netns and leaves it mounted after delete. Detach it so the
+	// state directory can be removed; ignore "not mounted".
+	nullNetns := filepath.Join(s.b.opts.StateDir, "runsc", "null-netns")
+	if err := unix.Unmount(nullNetns, unix.MNT_DETACH); err != nil && !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOENT) {
+		return fmt.Errorf("gvisor: unmount %s: %w", nullNetns, err)
+	}
 	return s.stack.Close()
 }
 
