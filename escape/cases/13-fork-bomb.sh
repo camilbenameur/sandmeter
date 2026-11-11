@@ -43,10 +43,18 @@ setsid sh -c '
 
 wait "$killer" 2>/dev/null
 
+# Detect the refusal with shell builtins only: once pids.max is hit, the
+# script itself cannot fork an external tool such as grep, so matching the
+# error file is done with read and case, which need no new process.
 result="EXPOSED no fork was refused: pids.max may not have been enforced"
-if grep -qi "can't fork\|cannot fork\|resource temporarily unavailable" "$err"; then
-	result="BLOCKED fork refused with EAGAIN (pids.max)"
-fi
-rm -f "$err" "$pidfile"
+while IFS= read -r line; do
+	case "$line" in
+	*"can't fork"* | *"cannot fork"* | *[Rr]"esource temporarily unavailable"*)
+		result="BLOCKED fork refused with EAGAIN (pids.max)"
+		break
+		;;
+	esac
+done <"$err"
+rm -f "$err" "$pidfile" 2>/dev/null
 
 echo "RESULT: $result"
