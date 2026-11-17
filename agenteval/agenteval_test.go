@@ -156,3 +156,70 @@ func TestMarkdown(t *testing.T) {
 		t.Fatal(md)
 	}
 }
+
+// failing returns the same error on every call.
+type failing struct{ err error }
+
+func (f failing) New(context.Context, anthropic.MessageNewParams) (*anthropic.Message, error) {
+	return nil, f.err
+}
+
+func TestMalformedToolCallIsFailedNotEscaped(t *testing.T) {
+	err := &ToolCallError{Reason: "bad arguments", Usage: anthropic.Usage{InputTokens: 1000, OutputTokens: 100}}
+	marker := false
+	rep, _ := runner(failing{err}, fakeShell{}, &marker, 1, 1).Run(context.Background(), time.Now)
+	ep := rep.Episodes[0]
+	if ep.Outcome != "failed" || rep.Failed != 1 || rep.Escaped != 0 || rep.Completed != 0 {
+		t.Fatalf("%+v", rep)
+	}
+	if ep.Tokens != 1100 || ep.CostUSD <= 0 {
+		t.Fatalf("the paid response must be counted: %+v", ep)
+	}
+	if !strings.Contains(rep.Markdown(), "| 0 | 0 | 0 | 1 | 0 |") {
+		t.Fatalf("failed column missing: %s", rep.Markdown())
+	}
+}
+
+func TestTokenBudgetStopsFreeModel(t *testing.T) {
+	// Zero price: only the token cap can stop it. Each request is worst-cased
+	// at prompt + 4096; the first (system prompt only, about 700 tokens)
+	// fits in 5400, the second (1200 spent, 1200 in the prompt) does not.
+	free := runner(&scripted{t: t, resps: []string{toolUse("1", "ls"), toolUse("2", "ls")}}, fakeShell{}, nil, 1, 3)
+	free.Config.Pricing = Pricing{}
+	free.Config.TokenBudget = 5400
+	m := free.Model.(*scripted)
+	rep, _ := free.Run(context.Background(), time.Now)
+	if m.calls != 1 || rep.StoppedBy != "budget" || rep.Tokens != 1200 || rep.CostUSD != 0 {
+		t.Fatalf("calls=%d stopped=%q tokens=%d %+v", m.calls, rep.StoppedBy, rep.Tokens, rep.Episodes)
+	}
+	if rep.Tokens > rep.TokenBudget {
+		t.Fatal("over the token budget")
+	}
+}
+
+// slow blocks until the context ends.
+type slow struct{}
+
+func (slow) New(ctx context.Context, _ anthropic.MessageNewParams) (*anthropic.Message, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestWallBudgetStopsFreeModel(t *testing.T) {
+	r := runner(slow{}, fakeShell{}, nil, 1, 5)
+	r.Config.Pricing = Pricing{}
+	r.Config.WallBudget = 50 * time.Millisecond
+	rep, _ := r.Run(context.Background(), time.Now)
+	if rep.StoppedBy != "budget" || rep.Errors != 0 || len(rep.Episodes) != 1 || rep.Episodes[0].Outcome != "budget" {
+		t.Fatalf("%+v", rep)
+	}
+}
+
+func TestCancellationIsNotABudgetStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rep, _ := runner(slow{}, fakeShell{}, nil, 1, 5).Run(ctx, time.Now)
+	if rep.StoppedBy != "cancelled" {
+		t.Fatalf("%+v", rep)
+	}
+}
