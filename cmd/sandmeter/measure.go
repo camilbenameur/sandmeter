@@ -108,8 +108,14 @@ func cmdEvalAgent(ctx context.Context, args []string, stdout io.Writer) error {
 	k := fs.Int("k", 30, "episodes")
 	budget := fs.Float64("budget", 2.0, "hard budget in dollars for the whole campaign (max 5)")
 	turns := fs.Int("turns", 20, "model turns per episode")
-	effort := fs.String("effort", "medium", "effort: low, medium, high")
-	model := fs.String("model", "haiku", "model: haiku (claude-haiku-5-5) or sonnet (claude-sonnet-5-5)")
+	effort := fs.String("effort", "medium", "effort: low, medium, high (sent to -provider anthropic only)")
+	provider := fs.String("provider", "anthropic", "attacker API: anthropic (the Messages API) or openai (any OpenAI-compatible /v1/chat/completions)")
+	model := fs.String("model", "", "attacker model: with -provider anthropic haiku (default) or sonnet; with -provider openai the model id the server expects")
+	baseURL := fs.String("base-url", "", "server root for -provider openai, e.g. http://localhost:8000 (default: $OPENAI_BASE_URL; the key, if any, is $OPENAI_API_KEY)")
+	inPrice := fs.Float64("input-price", 0, "dollars per million input tokens, -provider openai (default 0: self-hosted)")
+	outPrice := fs.Float64("output-price", 0, "dollars per million output tokens, -provider openai (default 0: self-hosted)")
+	tokenBudget := fs.Int64("token-budget", 0, "cap on the tokens the whole campaign may process, 0 for none (required for a zero-priced model unless -wall-budget is set)")
+	wallBudget := fs.Duration("wall-budget", 0, "cap on the wall-clock time of the whole campaign, e.g. 2h, 0 for none")
 	out := fs.String("out", "", "write the report as JSON to this file")
 	if err := parse(fs, args); err != nil {
 		return err
@@ -117,9 +123,12 @@ func cmdEvalAgent(ctx context.Context, args []string, stdout io.Writer) error {
 	if *budget <= 0 || *budget > maxBudgetUSD {
 		return usageError{fmt.Errorf("eval-agent: budget must be in (0, %.0f]", maxBudgetUSD)}
 	}
-	m, ok := agenteval.Models[*model]
-	if !ok {
-		return usageError{fmt.Errorf("eval-agent: unknown model %q (haiku or sonnet)", *model)}
+	atk, err := resolveAttacker(evalModelFlags{
+		provider: *provider, model: *model, baseURL: *baseURL, inPrice: *inPrice, outPrice: *outPrice,
+		tokenBudget: *tokenBudget, wallBudget: *wallBudget,
+	})
+	if err != nil {
+		return usageError{err}
 	}
 	if *k < 30 {
 		return usageError{errors.New("eval-agent: k must be at least 30 for the interval to say anything")}
@@ -129,8 +138,10 @@ func cmdEvalAgent(ctx context.Context, args []string, stdout io.Writer) error {
 	if os.Getenv("CI") != "true" || os.Getenv("SANDMETER_THROWAWAY_HOST") != "1" {
 		return errors.New("eval-agent: refusing to run: set CI=true and SANDMETER_THROWAWAY_HOST=1 on a throwaway machine only")
 	}
-	if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		return errors.New("eval-agent: ANTHROPIC_API_KEY is not set")
+	client := anthropic.NewClient()
+	attackerModel, err := atk.build(&client)
+	if err != nil {
+		return err
 	}
 	e, err := newEngine(filepath.Join(home(), "eval-receipts"))
 	if err != nil {
@@ -145,15 +156,15 @@ func cmdEvalAgent(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := os.Chmod(work, 0o711); err != nil {
 		return err
 	}
-	client := anthropic.NewClient()
 	p := policy.Default()
 	p.Limits.Wall = "30s"
 	r := &agenteval.Runner{
-		Model: apiModel{&client.Messages},
+		Model: attackerModel,
 		Config: agenteval.Config{
-			ModelID: m.ID, Pricing: m.Pricing,
-			Effort: anthropic.OutputConfigEffort(*effort), MaxTokens: 4096, MaxTurns: *turns,
+			Provider: atk.provider, ModelID: atk.modelID, Pricing: atk.pricing,
+			Effort: atk.effort(*effort), MaxTokens: 4096, MaxTurns: *turns,
 			Episodes: *k, BudgetUSD: *budget, ToolOutput: 8000,
+			TokenBudget: *tokenBudget, WallBudget: *wallBudget,
 		},
 		Backend: *backend,
 		Log:     func(s string) { fmt.Fprintln(os.Stderr, s) },

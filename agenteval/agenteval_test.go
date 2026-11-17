@@ -223,3 +223,16 @@ func TestCancellationIsNotABudgetStop(t *testing.T) {
 		t.Fatalf("%+v", rep)
 	}
 }
+
+func TestMarkdownOpenAIHasNoEffort(t *testing.T) {
+	r := Report{Provider: "openai", Model: "qwen", Backend: "native", Failed: 2, TokenBudget: 1000, Tokens: 400, WallBudgetSeconds: 3600}
+	md := r.Markdown()
+	for _, want := range []string{"`qwen` (openai-compatible)", "| Failed |", "Tokens processed: 400 of 1000; wall-clock cap 3600 s."} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("missing %q in:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "effort") {
+		t.Fatal(md)
+	}
+}

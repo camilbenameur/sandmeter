@@ -94,6 +94,9 @@ type Target struct {
 
 // Config is one campaign.
 type Config struct {
+	// Provider names the API the attacker is reached through ("anthropic",
+	// "openai"); it is recorded in the report and does not change behaviour.
+	Provider   string
 	ModelID    string
 	Pricing    Pricing
 	Effort     anthropic.OutputConfigEffort
@@ -133,6 +136,7 @@ type Episode struct {
 
 // Report is the campaign result.
 type Report struct {
+	Provider  string    `json:"provider,omitempty"`
 	Model     string    `json:"model"`
 	Backend   string    `json:"backend"`
 	Episodes  []Episode `json:"episodes"`
@@ -204,7 +208,7 @@ var ErrBudget = errors.New("budget exhausted")
 // Run plays cfg.Episodes episodes or stops when the budget runs out.
 func (r *Runner) Run(ctx context.Context, now func() time.Time) (Report, error) {
 	cfg := r.Config
-	rep := Report{Model: cfg.ModelID, Backend: r.Backend, BudgetUSD: cfg.BudgetUSD,
+	rep := Report{Provider: cfg.Provider, Model: cfg.ModelID, Backend: r.Backend, BudgetUSD: cfg.BudgetUSD,
 		TokenBudget: cfg.TokenBudget, WallBudgetSeconds: cfg.WallBudget.Seconds(),
 		MaxTurns: cfg.MaxTurns, MaxTokens: cfg.MaxTokens, Effort: string(cfg.Effort), StartedAt: now()}
 	spent := 0.0
@@ -427,8 +431,8 @@ func (r Report) Markdown() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "| Model | Backend | Episodes run | Escaped | Contained | Refused | Failed | Errors | Escape rate (95%% Wilson CI) | Cost |\n")
 	fmt.Fprintf(&b, "|---|---|---|---|---|---|---|---|---|---|\n")
-	fmt.Fprintf(&b, "| `%s` (effort %s) | %s | %d | %d | %d | %d | %d | %d | %d/%d, CI [%.1f%%, %.1f%%] | $%.2f of $%.2f |\n",
-		r.Model, r.Effort, r.Backend, len(r.Episodes), r.Escaped, r.Contained, r.Refused, r.Failed, r.Errors,
+	fmt.Fprintf(&b, "| `%s`%s | %s | %d | %d | %d | %d | %d | %d | %d/%d, CI [%.1f%%, %.1f%%] | $%.2f of $%.2f |\n",
+		r.Model, r.attackerNote(), r.Backend, len(r.Episodes), r.Escaped, r.Contained, r.Refused, r.Failed, r.Errors,
 		r.Escaped, r.Completed, 100*r.RateLow, 100*r.RateHigh, r.CostUSD, r.BudgetUSD)
 	if r.TokenBudget > 0 || r.WallBudgetSeconds > 0 {
 		fmt.Fprintf(&b, "\nTokens processed: %d", r.Tokens)
@@ -444,4 +448,17 @@ func (r Report) Markdown() string {
 		fmt.Fprintf(&b, "\nStopped early: %s.\n", r.StoppedBy)
 	}
 	return b.String()
+}
+
+// attackerNote says how the attacker was reached: the effort level for the
+// Messages API, the provider for an OpenAI-compatible server (which has no
+// effort setting).
+func (r Report) attackerNote() string {
+	switch {
+	case r.Provider == "openai":
+		return " (openai-compatible)"
+	case r.Effort != "":
+		return " (effort " + r.Effort + ")"
+	}
+	return ""
 }
