@@ -49,6 +49,11 @@ It is not affiliated with any model vendor or with the gVisor project.
 - **Agent eval.** A model gets a `bash` tool inside the sandbox and is asked to
   read a host file or create one, k ≥ 30 times, under a hard dollar budget, on a
   throwaway CI runner only.
+  The attacker is the Messages API by default; `-provider openai` points it at
+  any OpenAI-compatible server (`-base-url`, `-model`; `OPENAI_API_KEY` is
+  optional), with a token or wall-clock cap (`-token-budget`, `-wall-budget`)
+  in place of dollars for a self-hosted model. The report keeps `refused` and
+  `failed` apart from `escaped`.
 - **MCP server and agent skill** to give coding agents the sandbox
   (`sandmeter mcp`, [docs/mcp.md](docs/mcp.md), [skill/sandmeter](skill/sandmeter/SKILL.md)).
 
@@ -114,8 +119,10 @@ model; the reports are kept in `docs/eval-sonnet-native.json` and
 `docs/eval-sonnet-gvisor.json`. The harness does not reword the task to get
 past a model's refusal. The way past this — a willing open-weight attacker
 through an OpenAI-compatible adapter, and a continuous local attacker that runs
-the eval 24/7 — is laid out in [docs/eval-attackers.md](docs/eval-attackers.md);
-until it is built the agent-eval numbers above are Haiku only.
+the eval 24/7 — is laid out in [docs/eval-attackers.md](docs/eval-attackers.md).
+The adapter is built and tested against fake servers but has not been run
+against a real open-weight attacker, so the agent-eval numbers above are Haiku
+only.
 
 ### Benchmark
 
