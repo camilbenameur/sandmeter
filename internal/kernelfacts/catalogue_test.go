@@ -34,6 +34,11 @@ var catalogue = []def{
 
 	{"K5", "when the supervisor is killed, PID 1 reads end-of-file and exits, the kernel kills its pid namespace and the leaf cgroup.procs is empty within 2 s", true},
 
+	{"K6-owner", "under runsc with an OCI user namespace that maps 0 to the shifted uid, a file written on a bind-mounted directory is owned by the shifted uid on the host", true},
+	{"K6-bind", "an rbind OCI mount of an overlay path works under runsc: the lower content is read and a write lands in the upper directory, owned by the shifted uid", true},
+	{"K6-uids", "the Sentry and the gofer run as the shifted uid on the host", false},
+	{"K6-submount", "a mount placed under the root path before runsc starts is visible inside the sandbox", false},
+
 	{"K8", "unshare(CLONE_NEWCGROUP) from inside the target cgroup makes /proc/self/cgroup read 0::/", true},
 	{"K8-cloneflag", "CLONE_NEWCGROUP given to the clone that uses CLONE_INTO_CGROUP also makes /proc/self/cgroup read 0::/", false},
 

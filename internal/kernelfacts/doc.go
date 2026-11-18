@@ -139,6 +139,20 @@
 // cgroup.kill from the sweep as the only backstop. A "no" to K8 keeps the
 // clone flag, and the leak of the host's cgroup path is documented.
 //
+// gVisor. The backend gives runsc an OCI user namespace that maps 0 to the
+// shifted uid, and the workspace overlay as an OCI bind mount.
+//
+//	K6-owner     required  what the workload writes belongs to the shifted uid
+//	                       on the host
+//	K6-bind      required  the workspace overlay works as an rbind OCI mount
+//	K6-uids      recorded  the host uids of the Sentry and the gofer, for the
+//	                       sentence of the threat model about their privilege
+//	K6-submount  recorded  runsc shows a mount under the root path; the design
+//	                       does not rely on it
+//
+// A "no" to K6-owner or K6-bind makes gVisor a preview backend with network
+// none and no project, outside the claims.
+//
 // The runner. Every fact is a fact about one kernel on one image; these say
 // which, so that "tested" is claimed for exactly what ran.
 //

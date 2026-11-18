@@ -29,4 +29,7 @@ var children = map[string]func(args []string) error{
 	"k5orphaner":   childK5Orphaner,
 	"k5sleep":      childSleep,
 	"k8cgns":       childK8,
+
+	"k6worker": childK6Worker,
+	"k6probe":  childK6Probe,
 }
