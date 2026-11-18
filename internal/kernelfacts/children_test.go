@@ -35,4 +35,8 @@ var children = map[string]func(args []string) error{
 
 	"k7crash": childK7Crash,
 	"tmnt":    childMnt,
+
+	"k11idmap": childK11,
+	"k11view":  childK11View,
+	"tloop":    childLoop,
 }

@@ -52,11 +52,17 @@ var catalogue = []def{
 
 	{"K10", "this runner ran the kernel-facts tests", false},
 
+	{"K11-idmap", "mount_setattr(MOUNT_ATTR_IDMAP) with the map line \"owner shifted 1\" shows the owner's files as the shifted uid", false},
+	{"K11-overlay", "an overlay over the ID-mapped lower shows the owner's files as uid 0 in the sandbox namespace and copies them up owned by the shifted uid", false},
+	{"K11-owners", "through that overlay a file of a mapped group can be modified, a foreign file can be read and not modified, and a foreign 0600 file cannot be read", false},
+
 	{"T-syncfs", "unmounting an overlay stays under one second after 50 MiB and after 5,000 small files were written", false},
 	{"T-pids-leaf", "with pids.max on the session group and on the leaf, a fork refused by the leaf limit is counted in the leaf's pids.events", true},
 	{"T-pids-session", "a fork refused by the session limit is also counted in the leaf's pids.events", false},
 	{"T-mnt", "inside a user namespace, a mount target opened with openat2(RESOLVE_IN_ROOT|RESOLVE_NO_SYMLINKS|RESOLVE_NO_MAGICLINKS) and mounted through /proc/self/fd/N lands on that directory", true},
 	{"T-mnt-symlink", "a symbolic link planted at or above the target makes that open fail with ELOOP and nothing is mounted", true},
+	{"T-loop", "a sparse 2 GiB ext4 image on a loop device configured with autoclear carries an overlay, and the device is released after the unmount", false},
+	{"T-loop-kill", "the loop device is released within 2 s when the process whose mount namespace holds it is killed", false},
 
 	{"T-host-kernel", "kernel release", false},
 	{"T-host-arch", "architecture", false},

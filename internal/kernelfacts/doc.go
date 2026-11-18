@@ -169,6 +169,20 @@
 // A "no" to K6-owner or K6-bind makes gVisor a preview backend with network
 // none and no project, outside the claims.
 //
+// Left for a later release, and measured now so that the next design starts
+// from facts: the project as a live, ID-mapped lower layer, and a disk quota
+// made of an ext4 image on a loop device.
+//
+//	K11-idmap    recorded  mount_setattr(MOUNT_ATTR_IDMAP) with the map line
+//	                       "owner shifted 1", per filesystem
+//	K11-overlay  recorded  an overlay over the ID-mapped lower: uid 0 inside,
+//	                       copy-up owned by the shifted uid
+//	K11-owners   recorded  what the sandbox can do with files of other owners
+//	                       and groups
+//	T-loop       recorded  what the loop image costs, and whether the kernel
+//	                       takes the device back after the unmount
+//	T-loop-kill  recorded  and after the death of the process that held it
+//
 // The runner. Every fact is a fact about one kernel on one image; these say
 // which, so that "tested" is claimed for exactly what ran.
 //
