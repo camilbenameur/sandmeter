@@ -9,9 +9,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -320,6 +322,246 @@ func TestV1EncodingIsFrozen(t *testing.T) {
 			t.Errorf("the v1 structs no longer encode to the signed bytes:\n got  %s\n want %s", got, payload)
 		}
 	})
+}
+
+// v1Field is one field of a frozen struct: its Go name, its type the way
+// v1.go writes it, and its whole struct tag.
+type v1Field struct{ name, typ, tag string }
+
+// v1Frozen is the declaration of every struct of schema v1, written out a
+// second time. It is compared with what the compiler sees, and is not derived
+// from any other type: neither from the structs in v1.go nor from the types
+// the rest of the code works with.
+var v1Frozen = []struct {
+	typ    reflect.Type
+	fields []v1Field
+}{
+	{reflect.TypeFor[ReceiptV1](), []v1Field{
+		{"Schema", "string", `json:"schema"`},
+		{"ID", "string", `json:"id"`},
+		{"Backend", "string", `json:"backend"`},
+		{"Capabilities", "CapabilitiesV1", `json:"capabilities"`},
+		{"PolicySHA256", "string", `json:"policy_sha256"`},
+		{"Policy", "json.RawMessage", `json:"policy"`},
+		{"Image", "ImageRefV1", `json:"image"`},
+		{"Argv", "[]string", `json:"argv"`},
+		{"ExitCode", "int", `json:"exit_code"`},
+		{"Killed", "string", `json:"killed"`},
+		{"StartedAt", "time.Time", `json:"started_at"`},
+		{"FinishedAt", "time.Time", `json:"finished_at"`},
+		{"DurationMS", "int64", `json:"duration_ms"`},
+		{"StdoutSHA256", "string", `json:"stdout_sha256"`},
+		{"StderrSHA256", "string", `json:"stderr_sha256"`},
+		{"StdoutTruncated", "bool", `json:"stdout_truncated"`},
+		{"StderrTruncated", "bool", `json:"stderr_truncated"`},
+		{"Diff", "DiffV1", `json:"diff"`},
+		{"Connections", "[]ConnectionV1", `json:"connections"`},
+		{"Cgroup", "CgroupStatsV1", `json:"cgroup"`},
+		{"Host", "HostV1", `json:"host"`},
+	}},
+	{reflect.TypeFor[CapabilitiesV1](), []v1Field{
+		{"Backend", "string", `json:"backend"`},
+		{"Isolation", "string", `json:"isolation"`},
+		{"CPULimit", "bool", `json:"cpu_limit"`},
+		{"MemoryLimit", "bool", `json:"memory_limit"`},
+		{"PIDsLimit", "bool", `json:"pids_limit"`},
+		{"WallTimeout", "bool", `json:"wall_timeout"`},
+		{"Networks", "[]string", `json:"networks"`},
+		{"ReadOnlyRoot", "bool", `json:"read_only_root"`},
+		{"Seccomp", "bool", `json:"seccomp"`},
+		{"DropCaps", "bool", `json:"drop_capabilities"`},
+		{"Snapshot", "bool", `json:"snapshot"`},
+		{"NeedsRoot", "bool", `json:"needs_root"`},
+		{"Notes", "[]string", `json:"notes,omitempty"`},
+	}},
+	{reflect.TypeFor[ImageRefV1](), []v1Field{
+		{"Ref", "string", `json:"ref"`},
+		{"Digest", "string", `json:"digest"`},
+	}},
+	{reflect.TypeFor[HostV1](), []v1Field{
+		{"Kernel", "string", `json:"kernel"`},
+		{"Arch", "string", `json:"arch"`},
+		{"SandmeterVersion", "string", `json:"sandmeter_version"`},
+		{"BackendVersion", "string", `json:"backend_version"`},
+	}},
+	{reflect.TypeFor[DiffV1](), []v1Field{
+		{"SHA256", "string", `json:"sha256"`},
+		{"Truncated", "bool", `json:"truncated"`},
+		{"Entries", "[]EntryV1", `json:"entries"`},
+	}},
+	{reflect.TypeFor[EntryV1](), []v1Field{
+		{"Path", "string", `json:"path"`},
+		{"Op", "string", `json:"op"`},
+		{"Type", "string", `json:"type"`},
+		{"Mode", "uint32", `json:"mode"`},
+		{"Size", "int64", `json:"size"`},
+		{"SHA256", "string", `json:"sha256"`},
+		{"Target", "string", `json:"target"`},
+		{"PathEscaped", "bool", `json:"path_escaped,omitempty"`},
+		{"TargetEscaped", "bool", `json:"target_escaped,omitempty"`},
+		{"Skipped", "string", `json:"skipped,omitempty"`},
+	}},
+	{reflect.TypeFor[ConnectionV1](), []v1Field{
+		{"Proto", "string", `json:"proto"`},
+		{"DstIP", "string", `json:"dst_ip"`},
+		{"DstPort", "uint16", `json:"dst_port,omitempty"`},
+		{"Allowed", "bool", `json:"allowed"`},
+	}},
+	{reflect.TypeFor[CgroupStatsV1](), []v1Field{
+		{"MemoryPeakBytes", "int64", `json:"memory_peak_bytes"`},
+		{"OOMKills", "int64", `json:"oom_kills"`},
+		{"CPUUsageUsec", "int64", `json:"cpu_usage_usec"`},
+		{"PIDsPeak", "int64", `json:"pids_peak"`},
+		{"PIDsMaxHits", "int64", `json:"pids_max_hits"`},
+	}},
+	{reflect.TypeFor[PolicyV1](), []v1Field{
+		{"Limits", "PolicyLimitsV1", `json:"limits"`},
+		{"Network", "PolicyNetworkV1", `json:"network"`},
+		{"Filesystem", "PolicyFilesystemV1", `json:"filesystem"`},
+		{"Syscalls", "PolicySyscallsV1", `json:"syscalls"`},
+	}},
+	{reflect.TypeFor[PolicyLimitsV1](), []v1Field{
+		{"CPU", "float64", `json:"cpu,omitempty"`},
+		{"Memory", "string", `json:"memory,omitempty"`},
+		{"PIDs", "int64", `json:"pids,omitempty"`},
+		{"Wall", "string", `json:"wall,omitempty"`},
+	}},
+	{reflect.TypeFor[PolicyNetworkV1](), []v1Field{
+		{"Mode", "string", `json:"mode"`},
+		{"Allow", "[]string", `json:"allow,omitempty"`},
+	}},
+	{reflect.TypeFor[PolicyFilesystemV1](), []v1Field{
+		{"ReadOnlyRoot", "bool", `json:"read_only_root"`},
+	}},
+	{reflect.TypeFor[PolicySyscallsV1](), []v1Field{
+		{"Filter", "string", `json:"filter"`},
+	}},
+}
+
+// v1TypeName writes a field type the way v1.go declares it.
+func v1TypeName(t reflect.Type) string {
+	switch {
+	case t == reflect.TypeFor[json.RawMessage]():
+		// Told apart by identity: what reflection calls this type depends on
+		// the toolchain.
+		return "json.RawMessage"
+	case t == reflect.TypeFor[time.Time]():
+		return "time.Time"
+	case t.Kind() == reflect.Slice && t.Name() == "":
+		return "[]" + v1TypeName(t.Elem())
+	case t.Name() != "" && t.PkgPath() == reflect.TypeFor[ReceiptV1]().PkgPath():
+		return t.Name()
+	default:
+		// A predeclared type prints as its name. Anything else, such as a
+		// type of another package, prints in full and matches nothing above.
+		return t.String()
+	}
+}
+
+// v1StructsIn adds to seen every struct of this package that a value of type
+// t holds, t included.
+func v1StructsIn(t reflect.Type, seen map[reflect.Type]bool) {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		v1StructsIn(t.Elem(), seen)
+	case reflect.Map:
+		v1StructsIn(t.Key(), seen)
+		v1StructsIn(t.Elem(), seen)
+	case reflect.Struct:
+		if t.PkgPath() != reflect.TypeFor[ReceiptV1]().PkgPath() || seen[t] {
+			return
+		}
+		seen[t] = true
+		for i := range t.NumField() {
+			v1StructsIn(t.Field(i).Type, seen)
+		}
+	}
+}
+
+// TestV1StructsAreFrozen holds every v1 struct to its declaration: the
+// fields, their order, their types and their tags, and no method.
+//
+// The other tests cannot. A field added with omitempty encodes the recorded
+// values to the same bytes and decodes the recorded payloads to the same
+// values, so every one of them still passes, while DecodeV1 has started to
+// accept a key that every reader of v1 released before refuses.
+func TestV1StructsAreFrozen(t *testing.T) {
+	pinned := map[reflect.Type]bool{}
+	for _, frozen := range v1Frozen {
+		name := frozen.typ.Name()
+		if pinned[frozen.typ] {
+			t.Errorf("%s is listed twice", name)
+		}
+		pinned[frozen.typ] = true
+		if frozen.typ.Kind() != reflect.Struct {
+			t.Errorf("%s is no longer a struct", name)
+			continue
+		}
+
+		var now []v1Field
+		for i := range frozen.typ.NumField() {
+			f := frozen.typ.Field(i)
+			field := v1Field{f.Name, v1TypeName(f.Type), string(f.Tag)}
+			if f.Anonymous {
+				field.name = "(embedded) " + f.Name
+			}
+			now = append(now, field)
+		}
+		if !slices.Equal(now, frozen.fields) {
+			t.Errorf("%s is no longer the struct schema v1 was published with:\n%s"+
+				"Put the struct back. A field that is new, gone, moved, renamed, retyped or re-tagged belongs to another schema.",
+				name, v1Changes(now, frozen.fields))
+		}
+
+		// A method such as UnmarshalJSON takes the decoding of its struct
+		// over, whatever the fields say, and no other test would notice one
+		// that still reads the recordings. The frozen structs are plain data.
+		ptr := reflect.PointerTo(frozen.typ)
+		for i := range ptr.NumMethod() {
+			t.Errorf("%s has a method, %s: a frozen struct is plain data, write a function instead", name, ptr.Method(i).Name)
+		}
+	}
+
+	// As a check on the list itself: it names every struct a v1 receipt or
+	// its policy is made of, and nothing else.
+	reachable := map[reflect.Type]bool{}
+	v1StructsIn(reflect.TypeFor[ReceiptV1](), reachable)
+	v1StructsIn(reflect.TypeFor[PolicyV1](), reachable)
+	for typ := range reachable {
+		if !pinned[typ] {
+			t.Errorf("%s is part of a v1 receipt and v1Frozen does not list it", typ.Name())
+		}
+	}
+	for typ := range pinned {
+		if !reachable[typ] {
+			t.Errorf("v1Frozen lists %s, which is no part of a v1 receipt or of its policy", typ.Name())
+		}
+	}
+}
+
+func (f v1Field) String() string { return f.name + " " + f.typ + " `" + f.tag + "`" }
+
+// v1Changes says in what a field list differs from the frozen one.
+func v1Changes(now, frozen []v1Field) string {
+	var b strings.Builder
+	for _, f := range now {
+		if !slices.Contains(frozen, f) {
+			fmt.Fprintf(&b, "  not a field of v1:  %s\n", f)
+		}
+	}
+	for _, f := range frozen {
+		if !slices.Contains(now, f) {
+			fmt.Fprintf(&b, "  gone or changed:    %s\n", f)
+		}
+	}
+	if b.Len() == 0 {
+		b.WriteString("  the same fields in another order:")
+		for _, f := range now {
+			b.WriteString(" " + f.name)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // TestV1ZeroValuesEncode pins which keys a v1 receipt always carries and

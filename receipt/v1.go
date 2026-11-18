@@ -20,8 +20,10 @@ import (
 // change how a v1 receipt is decoded.
 //
 // Nothing here may be edited, reordered or re-tagged, and no field may be
-// added: a new field is a new schema. The recordings in testdata/v1 and the
-// tests in v1_test.go pin every name, tag and position; a change that makes
+// added: a new field is a new schema. No method may be attached to one of
+// these structs either: a method such as UnmarshalJSON would decide how its
+// struct is decoded. The recordings in testdata/v1 and the tests in
+// v1_test.go pin every name, type, tag and position; a change that makes
 // them fail is a change to a published format.
 
 // ReceiptV1 is the signed payload of a schema v1 receipt: the record of one
