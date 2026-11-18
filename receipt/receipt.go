@@ -39,8 +39,8 @@ type Host struct {
 // works with.
 //
 // It is not the form that is signed. Canonical encodes ReceiptV1, the frozen
-// copy in v1.go, so a change to this struct or to the types it embeds cannot
-// change what a receipt of schema v1 holds.
+// copy in v1.go, so a change to this struct or to a type it embeds does not
+// by itself change a signed byte.
 type Receipt struct {
 	Schema       string               `json:"schema"`
 	ID           string               `json:"id"`
@@ -71,7 +71,8 @@ type Receipt struct {
 // Diff is the change set of a writable overlay layer.
 type Diff struct {
 	// SHA256 is the hex sha256 of the canonical JSON (encoding/json, no
-	// indentation) of Entries, with a nil slice encoded as [].
+	// indentation) of Entries in the form a receipt signs them, EntryV1,
+	// with a nil slice encoded as [].
 	SHA256    string  `json:"sha256"`
 	Truncated bool    `json:"truncated"`
 	Entries   []Entry `json:"entries"`
