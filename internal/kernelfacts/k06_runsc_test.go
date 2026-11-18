@@ -139,8 +139,10 @@ func k6Prepare(lay k6Layout) error {
 	return os.WriteFile(filepath.Join(lay.bundle, "config.json"), cfg, 0o644)
 }
 
-// k6Config is the OCI runtime configuration: today's, plus a user namespace
-// with the mapping of the design and the two bind mounts under test.
+// k6Config is the OCI runtime configuration of today's backend, reduced to
+// what these facts need (its process, its capabilities, /proc and /dev),
+// plus a user namespace with the mapping of the design and the two bind
+// mounts under test.
 func k6Config(lay k6Layout) ([]byte, error) {
 	caps := []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL",
 		"CAP_SETGID", "CAP_SETUID", "CAP_SETPCAP", "CAP_NET_BIND_SERVICE", "CAP_SYS_CHROOT", "CAP_AUDIT_WRITE"}
@@ -279,8 +281,9 @@ func childK6Worker(args []string) error {
 	}
 	defer errf.Close()
 
-	// The flags of the backend (network none, writes straight to the host
-	// directories), plus debug logs for the day this fails.
+	// The flags of the backend that matter here (network none, writes
+	// straight to the host directories), plus debug logs for the day this
+	// fails.
 	global := []string{
 		"--root=" + lay.state,
 		"--debug", "--debug-log=" + lay.logs + "/",
