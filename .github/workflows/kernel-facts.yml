@@ -1,0 +1,156 @@
+name: kernel-facts
+
+# One root test per kernel assumption of the design (internal/kernelfacts),
+# on the three hosted runners the release claims to be tested on. A required
+# fact that comes out "no" fails the job: the design branch that rests on it
+# has to switch to its fallback before anything is built on it.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - internal/kernelfacts/**
+      - .github/workflows/kernel-facts.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernel-facts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  facts:
+    name: facts (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
+    env:
+      CI: "true"
+      # The runner is thrown away after the job: the two tests that change a
+      # host-wide setting for a moment (K7, half of K2b) may run.
+      SANDMETER_THROWAWAY_HOST: "1"
+      # A missing prerequisite is a broken job, not a skipped test.
+      SANDMETER_REQUIRE: root,cgroup2,runsc
+      SANDMETER_FACTS_OUT: ${{ github.workspace }}/out/facts.jsonl
+      # A static test binary: it is also the process K6 runs inside gVisor.
+      CGO_ENABLED: "0"
+      # The release of scripts/ci/setup-host.sh. The checksums are pinned
+      # here, not fetched next to the archive, so a replaced archive fails.
+      GVISOR_RELEASE: "20261019.0"
+      GVISOR_SHA512_X86_64: bcbf431b2f9a039f6ab23bfe23986031130c0f149294978cedfd46910901deba0737d8642c848f597ed4b5c72324885db4d75ee86a1f6a90915fbe1f2f2eb915
+      GVISOR_SHA512_AARCH64: 60a8239ec21ba1495633dbfa24ab4d43578066fcebef2482f9d0cd1486abbfd3c5c5face1749a31cc62b287a0a44198a0852024c7f2e5683917c7c1c342d0bbe
+      RUNNER_LABEL: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+
+      # Not scripts/ci/setup-host.sh: that script also turns on IP forwarding
+      # and changes the FORWARD policy, and K1 must find the host untouched.
+      - name: Install gVisor (pinned release, pinned checksum)
+        shell: bash
+        run: |
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) sum=$GVISOR_SHA512_X86_64 ;;
+            aarch64) sum=$GVISOR_SHA512_AARCH64 ;;
+            *) echo "::error::no pinned gVisor checksum for $arch"; exit 1 ;;
+          esac
+          command -v zstd > /dev/null || sudo apt-get install -y -qq zstd
+          work=$(mktemp -d)
+          curl -fsSL --retry 3 -o "$work/gvisor.tar.zstd" \
+            "https://storage.googleapis.com/gvisor/releases/release/${GVISOR_RELEASE}/${arch}/gvisor.tar.zstd"
+          echo "$sum  $work/gvisor.tar.zstd" | sha512sum --check --strict -
+          sudo mkdir -p /usr/local/lib/gvisor
+          sudo tar --zstd -xf "$work/gvisor.tar.zstd" -C /usr/local/lib/gvisor
+          sudo ln -sf /usr/local/lib/gvisor/runsc /usr/local/bin/runsc
+          runsc --version
+
+      - name: Kernel facts (as root)
+        shell: bash
+        # -exec runs the compiled test binary through sudo, from its package
+        # directory. -json keeps every line of every test for the artifact.
+        # The step fails with go test: bash runs it with pipefail.
+        run: |
+          mkdir -p out
+          : > "$SANDMETER_FACTS_OUT"
+          go test -exec "sudo -E" -tags integration -count=1 -timeout 15m -json \
+            ./internal/kernelfacts/ | tee out/test.jsonl
+
+      - name: Table of the facts
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Kernel facts on ${RUNNER_LABEL}"
+            echo
+            echo "Kernel \`$(uname -r)\`, \`$(uname -m)\`."
+            echo
+            if [ -s "$SANDMETER_FACTS_OUT" ]; then
+              echo "| Fact | Gates a decision | Outcome | Statement | What was found |"
+              echo "|---|---|---|---|---|"
+              jq -r '
+                def cell: tostring | gsub("\\|"; "\\|") | gsub("<"; "&lt;") | gsub("[\\r\\n]+"; " ");
+                "| \(.id | cell) | \(if .required then "yes" else "no" end) | \(.outcome | cell) | \(.name | cell) | \(.detail | cell) |"
+              ' "$SANDMETER_FACTS_OUT"
+            else
+              echo "No fact was recorded."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the facts and the log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kernel-facts-${{ matrix.runner }}
+          path: |
+            out/facts.jsonl
+            out/test.jsonl
+          if-no-files-found: error
+
+      # The step above already fails the job when go test fails. This one
+      # adds what go test cannot say: that nothing ran, or that nothing was
+      # recorded, and it names the required facts that came out "no".
+      - name: Gate
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -s out/test.jsonl ] || [ ! -e "$SANDMETER_FACTS_OUT" ]; then
+            echo "::error::the tests did not run: no log, or no file of facts"
+            exit 1
+          fi
+          status=0
+          ran=$(jq -R -c 'fromjson? | select(.Action == "run" and .Test != null)' out/test.jsonl | wc -l)
+          if [ "$ran" -eq 0 ]; then
+            echo "::error::no test ran"
+            status=1
+          fi
+          facts=$(wc -l < "$SANDMETER_FACTS_OUT")
+          if [ "$facts" -eq 0 ]; then
+            echo "::error::no fact was recorded"
+            status=1
+          fi
+          failed=$(jq -r 'select(.required and .outcome == "no") | "::error title=Required fact \(.id) is no::\(.name). Found: \(.detail)"' "$SANDMETER_FACTS_OUT")
+          if [ -n "$failed" ]; then
+            echo "$failed"
+            status=1
+          fi
+          # A required fact that was not measured decides nothing: say so.
+          jq -r 'select(.required and .outcome == "skipped") | "::warning title=Required fact \(.id) was skipped::\(.detail)"' "$SANDMETER_FACTS_OUT"
+          # Whatever else go test counted as a failure: a prerequisite of
+          # SANDMETER_REQUIRE that is missing, a host left changed.
+          tests=$(jq -R -r 'fromjson? | select(.Action == "fail" and .Test != null) | .Test' out/test.jsonl | sort -u | paste -sd ' ' -)
+          if [ -n "$tests" ]; then
+            echo "::error::failed tests: $tests"
+            status=1
+          fi
+          echo "$ran tests ran, $facts facts recorded"
+          exit "$status"
