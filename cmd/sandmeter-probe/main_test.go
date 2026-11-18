@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The tests here need the built binary. Those of the probe's code are with
@@ -43,7 +45,19 @@ func TestUnshareNewuserAgrees(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
-	out, err := exec.Command(bin, "syscalls").Output()
+	// The run is bounded. A check of the batch that got stuck would otherwise
+	// hold this test until the timeout of the whole suite, and leave its
+	// processes on the host after that. Killing the probe lets go of a child
+	// it was waiting for.
+	const limit = 30 * time.Second
+	ctx, cancel := context.WithTimeout(t.Context(), limit)
+	defer cancel()
+	run := exec.CommandContext(ctx, bin, "syscalls")
+	run.WaitDelay = 5 * time.Second
+	out, err := run.Output()
+	if ctx.Err() != nil {
+		t.Fatalf("sandmeter-probe syscalls was still running after %s and was killed. Its output until then:\n%s", limit, out)
+	}
 	if err != nil {
 		t.Fatalf("sandmeter-probe syscalls: %v", err)
 	}
