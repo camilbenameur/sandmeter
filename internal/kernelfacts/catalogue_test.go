@@ -16,6 +16,13 @@ var catalogue = []def{
 	{"K1-links", "a fresh network namespace holds no interface but lo", false},
 	{"K1-setns", "a listener created by a locked thread of the parent after setns into the namespace accepts a connection made from inside", false},
 
+	{"K2", "after 0 is written to user/max_user_namespaces through a procfs the init mounted itself, unshare(CLONE_NEWUSER) fails with ENOSPC, with and without capabilities", true},
+	{"K2-control", "with that write skipped, the same unshare(CLONE_NEWUSER) is not refused with ENOSPC", true},
+	{"K2-raise", "a process without CAP_SYS_RESOURCE and CAP_SYS_ADMIN cannot raise the value back", true},
+	{"K2-lsm", "with the write skipped, a process without any capability can still create a nested user namespace", false},
+	{"K2b-unbounded", "host root can still create an inotify instance while a sandbox user namespace holds as many as the kernel lets it create", false},
+	{"K2b-lowered", "host root can still create an inotify instance once the sandbox lowered user/max_inotify_instances in its own user namespace", false},
+
 	{"K10", "this runner ran the kernel-facts tests", false},
 
 	{"T-host-kernel", "kernel release", false},

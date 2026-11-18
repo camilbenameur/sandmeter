@@ -13,4 +13,7 @@ var children = map[string]func(args []string) error{
 	"cgreport": childCgroupReport,
 
 	"k1netns": childK1,
+
+	"k2userns":   childK2,
+	"k2binotify": childK2b,
 }

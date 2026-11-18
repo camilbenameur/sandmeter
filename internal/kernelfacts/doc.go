@@ -70,6 +70,24 @@
 // (K1-setns); if that is "no" as well, proxy mode does not ship. A "no" to
 // K1-unreach or K1-host withdraws the claim it states.
 //
+// Nested user namespaces without the syscall filter. The init writes 0 to
+// user/max_user_namespaces through a procfs it mounted itself, and lowers
+// the inotify maxima of the sandbox's user namespace at the same time.
+//
+//	K2             required  unshare(CLONE_NEWUSER) then fails with ENOSPC
+//	K2-control     required  without the write it does not: the write is the cause
+//	K2-raise       required  the workload cannot write the value back
+//	K2-lsm         recorded  what the image's LSM does to a nested user namespace
+//	                         when the init wrote nothing: a second barrier or none
+//	K2b-unbounded  recorded  host root can still create an inotify instance while
+//	                         a sandbox takes all it can; "no" is the flaw, as read
+//	                         in the kernel source
+//	K2b-lowered    recorded  it can once the init lowered the sandbox's maximum
+//
+// A "no" to K2, K2-control or K2-raise leaves the syscall filter as the only
+// barrier, and the profile "off" is documented as removing it. A "no" to
+// K2b-lowered publishes the limit as not enforced, in the threat model too.
+//
 // The runner. Every fact is a fact about one kernel on one image; these say
 // which, so that "tested" is claimed for exactly what ran.
 //
