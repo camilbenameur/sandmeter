@@ -78,3 +78,72 @@ func Canonical(r Receipt) ([]byte, error) {
 	r.FinishedAt = r.FinishedAt.UTC()
 	return json.Marshal(r)
 }
+
+// fromV1 gives a decoded v1 receipt the type the rest of the code works
+// with. Nothing is lost on the way while that type still has the v1 shape:
+// Canonical(fromV1(r)) is the payload r was decoded from, which the tests
+// check on the recordings in testdata/v1.
+//
+// Where the shapes allow it (everywhere but the capabilities, whose network
+// modes have a type of their own) a nested struct is converted whole, on
+// purpose. The day one of those live types gains, loses or renames a field,
+// the conversion stops compiling, and what a v1 receipt means for the new
+// shape has to be decided here instead of happening by accident.
+func fromV1(r ReceiptV1) Receipt {
+	caps := r.Capabilities
+	return Receipt{
+		Schema:  r.Schema,
+		ID:      r.ID,
+		Backend: r.Backend,
+		Capabilities: sandbox.Capabilities{
+			Backend:      caps.Backend,
+			Isolation:    caps.Isolation,
+			CPULimit:     caps.CPULimit,
+			MemoryLimit:  caps.MemoryLimit,
+			PIDsLimit:    caps.PIDsLimit,
+			WallTimeout:  caps.WallTimeout,
+			Networks:     mapSlice(caps.Networks, func(m string) sandbox.NetworkMode { return sandbox.NetworkMode(m) }),
+			ReadOnlyRoot: caps.ReadOnlyRoot,
+			Seccomp:      caps.Seccomp,
+			DropCaps:     caps.DropCaps,
+			Snapshot:     caps.Snapshot,
+			NeedsRoot:    caps.NeedsRoot,
+			Notes:        caps.Notes,
+		},
+		PolicySHA256:    r.PolicySHA256,
+		Policy:          r.Policy,
+		Image:           ImageRef(r.Image),
+		Argv:            r.Argv,
+		ExitCode:        r.ExitCode,
+		Killed:          r.Killed,
+		StartedAt:       r.StartedAt,
+		FinishedAt:      r.FinishedAt,
+		DurationMS:      r.DurationMS,
+		StdoutSHA256:    r.StdoutSHA256,
+		StderrSHA256:    r.StderrSHA256,
+		StdoutTruncated: r.StdoutTruncated,
+		StderrTruncated: r.StderrTruncated,
+		Diff: Diff{
+			SHA256:    r.Diff.SHA256,
+			Truncated: r.Diff.Truncated,
+			Entries:   mapSlice(r.Diff.Entries, func(e EntryV1) Entry { return Entry(e) }),
+		},
+		Connections: mapSlice(r.Connections, func(c ConnectionV1) sandbox.Connection { return sandbox.Connection(c) }),
+		Cgroup:      sandbox.CgroupStats(r.Cgroup),
+		Host:        Host(r.Host),
+	}
+}
+
+// mapSlice converts a slice element by element and keeps nil apart from
+// empty: the two encode differently ("null" and "[]") and a signed receipt
+// can hold either.
+func mapSlice[A, B any](in []A, f func(A) B) []B {
+	if in == nil {
+		return nil
+	}
+	out := make([]B, len(in))
+	for i, v := range in {
+		out[i] = f(v)
+	}
+	return out
+}

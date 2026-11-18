@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strconv"
 )
 
@@ -79,8 +78,8 @@ func Sign(r Receipt, key ed25519.PrivateKey) ([]byte, error) {
 
 // Verify checks an envelope against pub and returns the decoded receipt.
 // It checks the payload type, finds the signature with the matching key id,
-// verifies it over the PAE, then decodes the payload strictly (unknown fields
-// are errors) and checks the schema.
+// verifies it over the PAE, then decodes the payload by its schema string,
+// strictly (unknown fields are errors).
 func Verify(envelope []byte, pub ed25519.PublicKey) (Receipt, error) {
 	if len(pub) != ed25519.PublicKeySize {
 		return Receipt{}, errors.New("verify receipt: invalid public key")
@@ -99,7 +98,7 @@ func Verify(envelope []byte, pub ed25519.PublicKey) (Receipt, error) {
 	if err := checkSignature(env, pub, body); err != nil {
 		return Receipt{}, err
 	}
-	return decodeStrict(body)
+	return decodePayload(body)
 }
 
 func checkSignature(env Envelope, pub ed25519.PublicKey, body []byte) error {
@@ -120,18 +119,30 @@ func checkSignature(env Envelope, pub ed25519.PublicKey, body []byte) error {
 	return fmt.Errorf("no signature for key id %s", id)
 }
 
-func decodeStrict(body []byte) (Receipt, error) {
-	var r Receipt
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&r); err != nil {
+// schemaHeader is the one field every receipt payload has, whatever its
+// schema.
+type schemaHeader struct {
+	Schema string `json:"schema"`
+}
+
+// decodePayload decodes a signed payload with the decoder of the schema it
+// names. A v1 payload goes through the frozen v1 structs, so the types the
+// engine works with can change without changing what a v1 receipt decodes to.
+func decodePayload(body []byte) (Receipt, error) {
+	// Only the schema string is read here. The decoder of that schema then
+	// reads the whole payload again and applies its own strictness.
+	var head schemaHeader
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&head); err != nil {
 		return Receipt{}, fmt.Errorf("decode receipt: %w", err)
 	}
-	if _, err := dec.Token(); err != io.EOF {
-		return Receipt{}, errors.New("decode receipt: trailing data")
+	switch head.Schema {
+	case SchemaV1:
+		r, err := DecodeV1(body)
+		if err != nil {
+			return Receipt{}, err
+		}
+		return fromV1(r), nil
+	default:
+		return Receipt{}, fmt.Errorf("unsupported schema %q", head.Schema)
 	}
-	if r.Schema != SchemaV1 {
-		return Receipt{}, fmt.Errorf("unsupported schema %q", r.Schema)
-	}
-	return r, nil
 }

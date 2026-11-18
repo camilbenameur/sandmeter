@@ -28,14 +28,9 @@ type ReplayReport struct {
 // makes sense for commands that start from the image (diff base "image").
 func (e *Engine) Replay(ctx context.Context, rec receipt.Receipt) (ReplayReport, error) {
 	r := ReplayReport{Original: rec}
-	// Decode into a zero policy, not Default(): the receipt holds the full
-	// effective policy, and omitted zero fields must stay zero.
-	var p policy.Policy
-	if err := jsonUnmarshalStrict(rec.Policy, &p); err != nil {
-		return r, fmt.Errorf("replay: policy in receipt: %w", err)
-	}
-	if p.Hash() != rec.PolicySHA256 {
-		return r, fmt.Errorf("replay: policy hash mismatch in receipt")
+	p, err := replayPolicy(rec)
+	if err != nil {
+		return r, err
 	}
 	ref := pinnedRef(rec.Image.Ref, rec.Image.Digest)
 	s, err := e.Start(ctx, rec.Backend, ref, p)
@@ -67,6 +62,41 @@ func (e *Engine) Replay(ctx context.Context, rec receipt.Receipt) (ReplayReport,
 		r.Differences = append(r.Differences, "stdout differs")
 	}
 	return r, nil
+}
+
+// replayPolicy returns the policy a v1 receipt says its command ran under.
+//
+// The policy is decoded into the frozen v1 form, starting from zero and not
+// from Default(): the receipt holds the full effective policy, and omitted
+// zero fields must stay zero.
+//
+// The hash is checked on the policy bytes as they were signed, never on a
+// struct encoded again. Encoding again answers "does the policy type of this
+// build still marshal the way the build that signed did", and the first new
+// policy field would then make every receipt written before fail here.
+func replayPolicy(rec receipt.Receipt) (policy.Policy, error) {
+	var signed receipt.PolicyV1
+	if err := jsonUnmarshalStrict(rec.Policy, &signed); err != nil {
+		return policy.Policy{}, fmt.Errorf("replay: policy in receipt: %w", err)
+	}
+	if receipt.PolicyHashV1(rec.Policy) != rec.PolicySHA256 {
+		return policy.Policy{}, fmt.Errorf("replay: policy hash mismatch in receipt")
+	}
+	return policyFromV1(signed), nil
+}
+
+// policyFromV1 maps the policy of a v1 receipt onto the policy type of this
+// build. The parts are converted whole on purpose: when a part of
+// policy.Policy gains, loses or renames a field, this stops compiling, and
+// what a v1 receipt means for the new field is then decided here rather than
+// left to a zero value.
+func policyFromV1(p receipt.PolicyV1) policy.Policy {
+	return policy.Policy{
+		Limits:     policy.Limits(p.Limits),
+		Network:    policy.Network(p.Network),
+		Filesystem: policy.Filesystem(p.Filesystem),
+		Syscalls:   policy.Syscalls(p.Syscalls),
+	}
 }
 
 // pinnedRef turns "docker.io/library/alpine:3.20" and a digest into

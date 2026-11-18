@@ -53,6 +53,40 @@ func TestCheckRefusesBadPolicy(t *testing.T) {
 	}
 }
 
+// TestVerifyRecordedV1Receipts runs the verify command on the v1 receipts
+// recorded under receipt/testdata/v1, with the public key in the form the
+// builds that wrote v1 keep next to their signing key.
+func TestVerifyRecordedV1Receipts(t *testing.T) {
+	dir := filepath.Join("..", "..", "receipt", "testdata", "v1")
+	pub := filepath.Join(dir, "key.pub")
+	for name, result := range map[string]string{
+		"success": "result:   exit 0\n",
+		"failed":  "result:   exit 2\n",
+		"killed":  "result:   killed (wall-timeout), exit 137\n",
+		"oom":     "result:   killed (oom), exit 137\n",
+	} {
+		code, out, stderr := runCLI("verify", "-pub", pub, filepath.Join(dir, name+".json"))
+		if code != 0 || !strings.Contains(out, "signature ok (key e3fe53e2a733fc90)\n") || !strings.Contains(out, result) {
+			t.Errorf("%s: exit %d, stdout:\n%s\nstderr:\n%s", name, code, out, stderr)
+		}
+	}
+
+	// The same receipt with one signed byte changed is refused.
+	env, err := os.ReadFile(filepath.Join(dir, "success.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := filepath.Join(t.TempDir(), "tampered.json")
+	i := bytes.Index(env, []byte(`"payload": "`)) + len(`"payload": "`)
+	env[i] ^= 1
+	if err := os.WriteFile(tampered, env, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := runCLI("verify", "-pub", pub, tampered); code != 1 || !strings.Contains(stderr, "verify failed") {
+		t.Errorf("tampered receipt: exit %d, stderr %q", code, stderr)
+	}
+}
+
 func TestUsageErrors(t *testing.T) {
 	for _, args := range [][]string{{}, {"nope"}, {"caps", "-backend", "nope"}, {"check", "a", "b"}, {"run"}, {"pull"}, {"verify"}} {
 		if code, _, _ := runCLI(args...); code != 2 {
