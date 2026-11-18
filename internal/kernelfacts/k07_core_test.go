@@ -171,9 +171,7 @@ func TestK7PipedCoreHandler(t *testing.T) {
 		_ = c.wait(30 * time.Second) // it dies of a signal: the error is expected
 		out.pid = c.pid()
 		out.state = c.cmd.ProcessState.String()
-		if ws, ok := c.cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
-			out.aborted = ws.Signaled() && ws.Signal() == syscall.SIGABRT
-		}
+		out.aborted = c.diedOf(syscall.SIGABRT)
 		out.handler = ranFor(out.pid, wait)
 		return out
 	}
@@ -215,8 +213,7 @@ func TestSelfCrasher(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = c.wait(30 * time.Second)
-	ws, ok := c.cmd.ProcessState.Sys().(syscall.WaitStatus)
-	if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGABRT {
+	if !c.diedOf(syscall.SIGABRT) {
 		t.Errorf("the crasher ended with %q, want death by SIGABRT; its stderr: %s", c.cmd.ProcessState, c.stderr())
 	}
 }

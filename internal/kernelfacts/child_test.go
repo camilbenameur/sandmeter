@@ -340,6 +340,17 @@ func (c *child) wait(timeout time.Duration) error {
 	return nil
 }
 
+// diedOf reports whether the helper, once waited for, was killed by sig. A
+// helper whose wait failed has no status: nothing is known of its end.
+func (c *child) diedOf(sig syscall.Signal) bool {
+	ps := c.cmd.ProcessState
+	if ps == nil {
+		return false
+	}
+	ws, ok := ps.Sys().(syscall.WaitStatus)
+	return ok && ws.Signaled() && ws.Signal() == sig
+}
+
 // findLine returns what follows prefix on the first complete line that
 // starts with it.
 func findLine(data []byte, prefix string) ([]byte, bool) {

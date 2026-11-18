@@ -172,10 +172,13 @@ func boundLoops() map[string]string {
 	paths, _ := filepath.Glob("/sys/block/loop*/loop/backing_file")
 	for _, p := range paths {
 		b, err := os.ReadFile(p)
-		if err != nil {
-			continue // released while we were looking
+		backing := strings.TrimSpace(string(b))
+		if err != nil || backing == "" {
+			// Released while we were looking: the kernel forgets the file
+			// a moment before it removes the attribute.
+			continue
 		}
-		out[filepath.Base(filepath.Dir(filepath.Dir(p)))] = strings.TrimSpace(string(b))
+		out[filepath.Base(filepath.Dir(filepath.Dir(p)))] = backing
 	}
 	return out
 }
