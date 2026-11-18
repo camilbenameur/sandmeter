@@ -10,6 +10,12 @@ package kernelfacts
 // doc.go lists the same identifiers with the decision each one gates, and
 // TestSelfDocListsEveryFact keeps the two in step.
 var catalogue = []def{
+	{"K1", "a TCP listener created on 127.0.0.1 inside a loopback-only network namespace and passed out with SCM_RIGHTS accepts, in the host namespace, a connection made from inside", true},
+	{"K1-unreach", "a direct connect from inside that namespace to a public address fails with ENETUNREACH", true},
+	{"K1-host", "the host's links, addresses, routes, forwarding switches and nft ruleset are identical before, during and after", true},
+	{"K1-links", "a fresh network namespace holds no interface but lo", false},
+	{"K1-setns", "a listener created by a locked thread of the parent after setns into the namespace accepts a connection made from inside", false},
+
 	{"K10", "this runner ran the kernel-facts tests", false},
 
 	{"T-host-kernel", "kernel release", false},

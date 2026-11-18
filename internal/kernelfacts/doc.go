@@ -52,6 +52,24 @@
 // Each group names a decision of the design, lists its facts, and says what
 // a "no" to a required one switches.
 //
+// The egress listener. In proxy mode the sandbox's network namespace has
+// loopback only; the init creates the proxy's listener inside it and passes
+// it to the supervisor with SCM_RIGHTS. Nothing is created in the host's
+// network namespace.
+//
+//	K1          required  the passed listener accepts, in the host namespace, a
+//	                      connection made from inside
+//	K1-unreach  required  a direct connect from inside gets ENETUNREACH
+//	K1-host     required  links, addresses, routes, forwarding and nft ruleset
+//	                      of the host do not move
+//	K1-links    recorded  a fresh network namespace holds lo and nothing else
+//	K1-setns    recorded  a supervisor thread can create the listener itself
+//	                      after setns
+//
+// A "no" to K1 moves the creation of the listener to a supervisor thread
+// (K1-setns); if that is "no" as well, proxy mode does not ship. A "no" to
+// K1-unreach or K1-host withdraws the claim it states.
+//
 // The runner. Every fact is a fact about one kernel on one image; these say
 // which, so that "tested" is claimed for exactly what ran.
 //

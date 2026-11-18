@@ -11,4 +11,6 @@ var children = map[string]func(args []string) error{
 	"idle":     childIdle,
 	"echo":     childEcho,
 	"cgreport": childCgroupReport,
+
+	"k1netns": childK1,
 }
