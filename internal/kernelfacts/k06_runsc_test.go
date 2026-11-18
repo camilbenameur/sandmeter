@@ -542,8 +542,13 @@ func TestSelfK6Processes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir := filepath.Join(cgroupRoot, path)
+	if !slices.Contains(cgProcs(dir), os.Getpid()) {
+		// A cgroup namespace whose root is not the mounted hierarchy's.
+		t.Skipf("the cgroup of this process, %q, is not at %s: nothing to list", path, dir)
+	}
 	uid := fmt.Sprint(os.Getuid())
-	for _, p := range k6Processes(filepath.Join(cgroupRoot, path), -1) {
+	for _, p := range k6Processes(dir, -1) {
 		if p.pid != os.Getpid() {
 			continue
 		}
@@ -552,5 +557,5 @@ func TestSelfK6Processes(t *testing.T) {
 		}
 		return
 	}
-	t.Errorf("k6Processes does not list this process")
+	t.Errorf("k6Processes does not list this process, which cgroup.procs of %s does", dir)
 }

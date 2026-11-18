@@ -314,7 +314,10 @@ func (base hostState) cgroupsDiffNow(afterTeardown bool) string {
 			out = append(out, "left behind: "+filepath.Dir(p))
 		}
 	}
-	if d := lineDiff(strings.Join(base.cgroups, "\n"), strings.Join(now, "\n")); d != "" {
+	// The parent group is this run's own on both sides of the comparison:
+	// a snapshot taken while it exists must not report it as gone.
+	was := slices.DeleteFunc(slices.Clone(base.cgroups), func(name string) bool { return name == own })
+	if d := lineDiff(strings.Join(was, "\n"), strings.Join(now, "\n")); d != "" {
 		out = append(out, "groups under the root: "+d)
 	}
 	return strings.Join(out, "; ")

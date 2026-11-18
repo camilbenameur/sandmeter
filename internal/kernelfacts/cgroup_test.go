@@ -93,8 +93,18 @@ func cgInt(dir, file string) (int64, error) {
 	return strconv.ParseInt(s, 10, 64)
 }
 
+// cgWrite writes a value to a cgroup file. The file is opened without
+// O_CREAT, so that one this kernel does not have answers ENOENT and not
+// the refusal to create it.
 func cgWrite(dir, file, value string) error {
-	if err := os.WriteFile(filepath.Join(dir, file), []byte(value), 0o644); err != nil {
+	f, err := os.OpenFile(filepath.Join(dir, file), os.O_WRONLY, 0)
+	if err == nil {
+		_, err = f.Write([]byte(value))
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("write %q to %s of %s: %w", value, file, dir, err)
 	}
 	return nil

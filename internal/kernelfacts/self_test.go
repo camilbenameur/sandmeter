@@ -361,19 +361,27 @@ func TestSelfCgroupReaders(t *testing.T) {
 	}
 	dir := filepath.Join(cgroupRoot, path)
 	if !slices.Contains(cgProcs(dir), os.Getpid()) {
-		t.Fatalf("cgroup.procs of %s does not list this process: %v", dir, cgProcs(dir))
+		// A cgroup namespace whose root is not the mounted hierarchy's.
+		t.Skipf("the cgroup of this process, %q, is not at %s: nothing to read", path, dir)
 	}
-	if got := cgFlat(dir, "cgroup.events"); !strings.Contains(got, "populated=1") {
-		t.Errorf("cgFlat(cgroup.events) = %q, want populated=1 in it", got)
-	}
-	if got := cgCounter(dir, "cgroup.events", "populated"); got != 1 {
-		t.Errorf("cgCounter(cgroup.events, populated) = %d, want 1", got)
+	// The root group has no cgroup.events.
+	if exists(filepath.Join(dir, "cgroup.events")) {
+		if got := cgFlat(dir, "cgroup.events"); !strings.Contains(got, "populated=1") {
+			t.Errorf("cgFlat(cgroup.events) = %q, want populated=1 in it", got)
+		}
+		if got := cgCounter(dir, "cgroup.events", "populated"); got != 1 {
+			t.Errorf("cgCounter(cgroup.events, populated) = %d, want 1", got)
+		}
 	}
 	if got := cgFlat(dir, "pids.events.of-no-kernel"); got != "absent" {
 		t.Errorf("cgFlat of a file that does not exist = %q, want absent", got)
 	}
 	if got := cgCounter(dir, "pids.events.of-no-kernel", "max"); got != 0 {
 		t.Errorf("cgCounter of a file that does not exist = %d, want 0", got)
+	}
+	// What a kernel without cgroup.kill, or without swap accounting, answers.
+	if got := errnoName(cgWrite(dir, "cgroup.file-of-no-kernel", "1")); got != "ENOENT" {
+		t.Errorf("cgWrite to a file that does not exist = %s, want ENOENT", got)
 	}
 	if !slices.Contains(mntNamespaceMembers(nsLink("mnt")), os.Getpid()) {
 		t.Errorf("mntNamespaceMembers does not list this process in its own mount namespace %s", nsLink("mnt"))
