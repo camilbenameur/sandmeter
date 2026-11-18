@@ -135,7 +135,7 @@ func declare(t *testing.T, ids ...string) *recorder {
 	for _, id := range ids {
 		d, ok := catalogued(id)
 		if !ok {
-			t.Fatalf("fact %q is not in the catalogue of record_test.go", id)
+			t.Fatalf("fact %q is not in the catalogue (catalogue_test.go)", id)
 		}
 		r.open = append(r.open, d)
 	}
@@ -225,15 +225,15 @@ func (r *recorder) needCgroup2() {
 	r.need("cgroup2", haveCgroup2(), "cgroup v2 is not mounted at "+cgroupRoot)
 }
 
-// close records what the test left open.
+// close records what the test left open. Such a fact was not measured, so
+// its outcome is "skipped" whatever stopped the test: a "no" is only ever
+// something the kernel answered. The failure is carried by the test.
 func (r *recorder) close() {
 	for len(r.open) > 0 {
 		d := r.open[0]
 		switch {
 		case r.t.Skipped():
-			r.record(d.id, skipped, "the test was skipped before it reached this fact")
-		case r.t.Failed() && d.required:
-			r.record(d.id, no, "not established: the test failed before it reached this fact")
+			r.record(d.id, skipped, "not measured: the test was skipped before it reached this fact")
 		case r.t.Failed():
 			r.record(d.id, skipped, "not measured: the test failed before it reached this fact")
 		default:

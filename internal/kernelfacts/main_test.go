@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // scratchEnv chooses the directory under which the tests work. The default
@@ -38,6 +40,10 @@ func TestMain(m *testing.M) {
 }
 
 func runTests(m *testing.M) int {
+	// Helpers that run as the shifted uid reach the files of a test through
+	// their "other" permission bits: the modes the tests ask for must be
+	// the modes they get, whatever umask root has here.
+	unix.Umask(0o022)
 	baseline = snapshotHost()
 	if os.Geteuid() != 0 {
 		// Every test that creates something skips itself, or fails when
