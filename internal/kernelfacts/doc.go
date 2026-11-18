@@ -109,6 +109,36 @@
 // required K9 fact cuts the tmpfs quota: a disk limit is refused and the
 // free-space floor is the only guard.
 //
+// The worker and its commands. A worker serves one connection in its own
+// mount namespace and cgroup subtree. A command runs in a leaf group of its
+// session, under an init that is PID 1 of a new pid namespace and exits
+// when its supervisor is gone.
+//
+//	K4-mounts       required  what a worker mounts never shows in the host's
+//	                          mount table
+//	K4-kill         required  after SIGKILL nothing of it is left mounted
+//	K4-cgroup       required  the session and leaf groups can be built and a
+//	                          command cloned into the leaf
+//	K4-scope        recorded  what a systemd unit with Delegate=yes gives, for
+//	                          the unit file of the service
+//	K5              required  the supervisor dies, PID 1 reads end-of-file and
+//	                          exits, the kernel kills the pid namespace
+//	K8              required  unshare(CLONE_NEWCGROUP) from inside the leaf
+//	                          hides the host's cgroup path
+//	K8-cloneflag    recorded  what CLONE_NEWCGROUP in the clone itself shows
+//	T-pids-leaf     required  a fork refused by the leaf's own pids.max is
+//	                          counted on the leaf
+//	T-pids-session  recorded  where a fork refused by the session's limit is
+//	                          counted; the two hosted kernels are expected to
+//	                          differ
+//
+// A "no" to K4-mounts or K4-kill means mounts have to be swept after a
+// crash, and that between two commands a session is more than a directory.
+// A "no" to K4-cgroup or T-pids-leaf means the cgroup layout has to change:
+// the receipt and the fork-bomb case read the leaf. A "no" to K5 leaves
+// cgroup.kill from the sweep as the only backstop. A "no" to K8 keeps the
+// clone flag, and the leak of the host's cgroup path is documented.
+//
 // The runner. Every fact is a fact about one kernel on one image; these say
 // which, so that "tested" is claimed for exactly what ran.
 //

@@ -27,6 +27,16 @@ var catalogue = []def{
 	{"K3-delete-file", "lower files deleted while the overlay was unmounted are gone at the next mount, and an upper copy stays until it is dropped", true},
 	{"K3-delete-dir", "a lower directory deleted while the overlay was unmounted leaves only its upper counterpart at the next mount", true},
 
+	{"K4-mounts", "mounts made by a CLONE_NEWNS child after MS_REC|MS_SLAVE on / never appear in the host's /proc/self/mountinfo", true},
+	{"K4-kill", "after SIGKILL of that child nothing is left mounted: its mount namespace has no member and its upper directory can be mounted again", true},
+	{"K4-cgroup", "a cgroup subtree with cpu, memory and pids can be created under a parent group and a process cloned into its leaf with CLONE_INTO_CGROUP", true},
+	{"K4-scope", "a systemd-run scope with Delegate=yes gives a subtree where cpu, memory and pids can be enabled", false},
+
+	{"K5", "when the supervisor is killed, PID 1 reads end-of-file and exits, the kernel kills its pid namespace and the leaf cgroup.procs is empty within 2 s", true},
+
+	{"K8", "unshare(CLONE_NEWCGROUP) from inside the target cgroup makes /proc/self/cgroup read 0::/", true},
+	{"K8-cloneflag", "CLONE_NEWCGROUP given to the clone that uses CLONE_INTO_CGROUP also makes /proc/self/cgroup read 0::/", false},
+
 	{"K9-whiteouts", "an overlay whose upper and work directories are on a size-capped tmpfs handles whiteouts and opaque directories, across a remount", true},
 	{"K9-size", "that overlay returns ENOSPC when the tmpfs reaches size=", true},
 	{"K9-inodes", "that overlay returns ENOSPC when the tmpfs reaches nr_inodes=", true},
@@ -35,6 +45,8 @@ var catalogue = []def{
 	{"K10", "this runner ran the kernel-facts tests", false},
 
 	{"T-syncfs", "unmounting an overlay stays under one second after 50 MiB and after 5,000 small files were written", false},
+	{"T-pids-leaf", "with pids.max on the session group and on the leaf, a fork refused by the leaf limit is counted in the leaf's pids.events", true},
+	{"T-pids-session", "a fork refused by the session limit is also counted in the leaf's pids.events", false},
 
 	{"T-host-kernel", "kernel release", false},
 	{"T-host-arch", "architecture", false},

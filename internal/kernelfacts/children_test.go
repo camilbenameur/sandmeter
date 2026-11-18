@@ -20,4 +20,13 @@ var children = map[string]func(args []string) error{
 	"k3":      childK3,
 	"k9tmpfs": childK9,
 	"tsyncfs": childSyncfs,
+
+	"k4worker":     childK4Worker,
+	"k4probe":      childK4Probe,
+	"k4scope":      childK4Scope,
+	"k5supervisor": childK5Supervisor,
+	"k5init":       childK5Init,
+	"k5orphaner":   childK5Orphaner,
+	"k5sleep":      childSleep,
+	"k8cgns":       childK8,
 }
