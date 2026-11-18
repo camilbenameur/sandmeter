@@ -428,6 +428,43 @@ func TestSelfCgroupReaders(t *testing.T) {
 	}
 }
 
+// The clone that puts a process straight into a cgroup, which most root
+// tests start with, on the one group that may need no privilege: the group
+// this process is in already. Where it is not this user's to write, as in a
+// login session, there is nothing to try.
+func TestSelfCloneIntoCgroup(t *testing.T) {
+	if !haveCgroup2() {
+		t.Skip("cgroup v2 is not mounted at " + cgroupRoot)
+	}
+	path, err := ownCgroup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(cgroupRoot, path)
+	if !slices.Contains(cgProcs(dir), os.Getpid()) {
+		t.Skipf("the cgroup of this process, %q, is not at %s: nothing to clone into", path, dir)
+	}
+	c, err := spawnChild(t, spawn{name: "cgreport", cgroup: dir})
+	if errors.Is(err, fs.ErrPermission) {
+		t.Skipf("this user may not put a process into %s: %v", dir, err)
+	}
+	if err != nil {
+		t.Fatalf("clone3 with CLONE_INTO_CGROUP into the group this process is in: %v", err)
+	}
+	var rdy struct {
+		Cgroup string `json:"cgroup"`
+	}
+	if err := c.ready(&rdy); err != nil {
+		t.Fatal(err)
+	}
+	if want := "0::" + path; rdy.Cgroup != want {
+		t.Errorf("the cloned process reads %q from /proc/self/cgroup, want %q", rdy.Cgroup, want)
+	}
+	if !slices.Contains(cgProcs(dir), c.pid()) {
+		t.Errorf("cgroup.procs of %s does not list the cloned process %d", dir, c.pid())
+	}
+}
+
 // A detector that never fires is worth nothing: each comparison of the
 // last test is given something to find.
 func TestSelfLeakDetectors(t *testing.T) {

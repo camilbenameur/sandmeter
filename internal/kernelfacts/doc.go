@@ -233,9 +233,10 @@
 // it.
 //
 // Where half of a mechanism needs no privilege (the socket passing of K1,
-// the path resolution of T-mnt, the crash of K7), a self-test next to the
-// root test runs that half on any host, so that a "no" on a runner is a
-// fact about the kernel and not a defect of the instrument.
+// the path resolution of T-mnt, the crash of K7, the clone into a cgroup),
+// a self-test next to the root test runs that half on any host, so that a
+// "no" on a runner is a fact about the kernel and not a defect of the
+// instrument.
 //
 // To add a fact: add it to the catalogue, give it a line here in the group
 // of the decision it gates, declare it in the test that records it. The
