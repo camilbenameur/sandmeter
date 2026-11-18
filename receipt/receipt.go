@@ -121,11 +121,14 @@ func Canonical(r Receipt) ([]byte, error) {
 // Canonical(fromV1(r)) is the payload r was decoded from, which the tests
 // check on the recordings in testdata/v1.
 //
-// Where the shapes allow it (everywhere but the capabilities, whose network
-// modes have a type of their own) a nested struct is converted whole, on
-// purpose. The day one of those live types gains, loses or renames a field,
-// the conversion stops compiling, and what a v1 receipt means for the new
-// shape has to be decided here instead of happening by accident.
+// A nested struct is converted whole wherever its two shapes agree type for
+// type, on purpose: the day the live one gains, loses, renames or retypes a
+// field, the conversion stops compiling. Three structs cannot be converted
+// whole and are copied field by field: the receipt itself, the capabilities
+// (their network modes have a type of their own) and the diff (so have its
+// entries). The declarations under this function do for those three what the
+// conversions do for the others. Either way, what a v1 receipt means for a
+// new shape has to be decided here instead of happening by accident.
 func fromV1(r ReceiptV1) Receipt {
 	caps := r.Capabilities
 	return Receipt{
@@ -170,6 +173,60 @@ func fromV1(r ReceiptV1) Receipt {
 		Host:        Host(r.Host),
 	}
 }
+
+// The three live structs that fromV1 copies field by field have exactly the
+// fields listed here, in this order and with these types (tags do not
+// count): the conversions below do not compile otherwise.
+//
+// A keyed literal alone does not notice a new field. It would compile, and
+// the field would silently be zero in every v1 receipt that Verify returns.
+// When one of these stops compiling, decide in fromV1 what a v1 receipt
+// holds for the new shape, then bring the list in line.
+var (
+	_ = struct {
+		Schema          string
+		ID              string
+		Backend         string
+		Capabilities    sandbox.Capabilities
+		PolicySHA256    string
+		Policy          json.RawMessage
+		Image           ImageRef
+		Argv            []string
+		ExitCode        int
+		Killed          string
+		StartedAt       time.Time
+		FinishedAt      time.Time
+		DurationMS      int64
+		StdoutSHA256    string
+		StderrSHA256    string
+		StdoutTruncated bool
+		StderrTruncated bool
+		Diff            Diff
+		Connections     []sandbox.Connection
+		Cgroup          sandbox.CgroupStats
+		Host            Host
+	}(Receipt{})
+	_ = struct {
+		Backend      string
+		Isolation    string
+		CPULimit     bool
+		MemoryLimit  bool
+		PIDsLimit    bool
+		WallTimeout  bool
+		Networks     []sandbox.NetworkMode
+		ReadOnlyRoot bool
+		Seccomp      bool
+		DropCaps     bool
+		Snapshot     bool
+		NeedsRoot    bool
+		Notes        []string
+	}(sandbox.Capabilities{})
+	_ = struct {
+		SHA256    string
+		Truncated bool
+		Entries   []Entry
+	}(Diff{})
+)
 
 // mapSlice converts a slice element by element and keeps nil apart from
 // empty: the two encode differently ("null" and "[]") and a signed receipt

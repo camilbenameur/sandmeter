@@ -86,10 +86,11 @@ func replayPolicy(rec receipt.Receipt) (policy.Policy, error) {
 }
 
 // policyFromV1 maps the policy of a v1 receipt onto the policy type of this
-// build. The parts are converted whole on purpose: when a part of
-// policy.Policy gains, loses or renames a field, this stops compiling, and
-// what a v1 receipt means for the new field is then decided here rather than
-// left to a zero value.
+// build. Each part is converted whole on purpose: when a part of
+// policy.Policy gains, loses, renames or retypes a field, its conversion
+// stops compiling. The declaration under this function does the same for
+// the list of parts. Either way, what a v1 receipt means for the new shape
+// is then decided here rather than left to a zero value.
 func policyFromV1(p receipt.PolicyV1) policy.Policy {
 	return policy.Policy{
 		Limits:     policy.Limits(p.Limits),
@@ -98,6 +99,18 @@ func policyFromV1(p receipt.PolicyV1) policy.Policy {
 		Syscalls:   policy.Syscalls(p.Syscalls),
 	}
 }
+
+// policy.Policy has exactly the parts policyFromV1 fills, in this order: the
+// conversion does not compile otherwise. The keyed literal above would
+// compile with a part added to policy.Policy, and a replayed v1 receipt
+// would then run with that part at its zero value without anyone having
+// decided that zero is what v1 meant.
+var _ = struct {
+	Limits     policy.Limits
+	Network    policy.Network
+	Filesystem policy.Filesystem
+	Syscalls   policy.Syscalls
+}(policy.Policy{})
 
 // pinnedRef turns "docker.io/library/alpine:3.20" and a digest into
 // "docker.io/library/alpine@sha256:...", so the replay cannot get a newer image.
