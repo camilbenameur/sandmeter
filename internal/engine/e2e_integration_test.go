@@ -15,6 +15,7 @@ import (
 
 	"github.com/camilbenameur/sandmeter/internal/backend/gvisor"
 	"github.com/camilbenameur/sandmeter/internal/backend/native"
+	"github.com/camilbenameur/sandmeter/internal/hidden"
 	"github.com/camilbenameur/sandmeter/internal/image"
 	"github.com/camilbenameur/sandmeter/internal/sandbox"
 	"github.com/camilbenameur/sandmeter/policy"
@@ -33,9 +34,7 @@ func envOr(k, def string) string {
 
 func TestMain(m *testing.M) {
 	// The native backend re-executes this test binary as the sandbox init.
-	if len(os.Args) > 1 && os.Args[1] == native.InitArg {
-		native.Init()
-	}
+	hidden.Dispatch(os.Args)
 	os.Exit(m.Run())
 }
 

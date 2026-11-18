@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/camilbenameur/sandmeter/internal/backend/native"
+	"github.com/camilbenameur/sandmeter/internal/hidden"
 )
 
 var version = "dev"
@@ -19,9 +19,7 @@ var version = "dev"
 func main() {
 	// The sandbox init is this same binary, re-executed inside the new
 	// namespaces. It must take over before anything else runs.
-	if len(os.Args) > 1 && os.Args[1] == native.InitArg {
-		native.Init()
-	}
+	hidden.Dispatch(os.Args)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
