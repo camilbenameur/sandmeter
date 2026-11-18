@@ -66,17 +66,18 @@ func (e *Engine) Replay(ctx context.Context, rec receipt.Receipt) (ReplayReport,
 
 // replayPolicy returns the policy a v1 receipt says its command ran under.
 //
-// The policy is decoded into the frozen v1 form, starting from zero and not
-// from Default(): the receipt holds the full effective policy, and omitted
-// zero fields must stay zero.
+// The policy is decoded into the frozen v1 form by receipt.DecodePolicyV1,
+// the one decoder of that form, starting from zero and not from Default():
+// the receipt holds the full effective policy, and omitted zero fields must
+// stay zero.
 //
 // The hash is checked on the policy bytes as they were signed, never on a
 // struct encoded again. Encoding again answers "does the policy type of this
 // build still marshal the way the build that signed did", and the first new
 // policy field would then make every receipt written before fail here.
 func replayPolicy(rec receipt.Receipt) (policy.Policy, error) {
-	var signed receipt.PolicyV1
-	if err := jsonUnmarshalStrict(rec.Policy, &signed); err != nil {
+	signed, err := receipt.DecodePolicyV1(rec.Policy)
+	if err != nil {
 		return policy.Policy{}, fmt.Errorf("replay: policy in receipt: %w", err)
 	}
 	if receipt.PolicyHashV1(rec.Policy) != rec.PolicySHA256 {

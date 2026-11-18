@@ -141,11 +141,28 @@ func TestReplayPolicyChecksTheSignedBytes(t *testing.T) {
 		})
 	}
 
-	rec := recordedReceipt(t, "failed")
-	rec.Policy = bytes.Replace(rec.Policy, []byte(`{"limits":`), []byte(`{"mounts":[],"limits":`), 1)
-	rec.PolicySHA256 = receipt.PolicyHashV1(rec.Policy)
-	if _, err := replayPolicy(rec); err == nil || !strings.Contains(err.Error(), "policy in receipt") {
-		t.Fatalf("a v1 policy with an unknown key: err = %v, want it refused", err)
+	// Bytes that match their hash are still read with the strictness of the
+	// one decoder of the frozen form, receipt.DecodePolicyV1.
+	for name, change := range map[string]func([]byte) []byte{
+		"an unknown key": func(p []byte) []byte {
+			return bytes.Replace(p, []byte(`{"limits":`), []byte(`{"mounts":[],"limits":`), 1)
+		},
+		"data after the policy": func(p []byte) []byte {
+			return append(bytes.Clone(p), ` {"network":{"mode":"allowlist"}}`...)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := recordedReceipt(t, "failed")
+			changed := change(rec.Policy)
+			if bytes.Equal(changed, rec.Policy) {
+				t.Fatal("the case does not change the policy")
+			}
+			rec.Policy = changed
+			rec.PolicySHA256 = receipt.PolicyHashV1(rec.Policy)
+			if _, err := replayPolicy(rec); err == nil || !strings.Contains(err.Error(), "policy in receipt") {
+				t.Fatalf("err = %v, want the policy refused", err)
+			}
+		})
 	}
 }
 
