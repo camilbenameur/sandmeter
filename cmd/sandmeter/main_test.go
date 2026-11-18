@@ -6,11 +6,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/camilbenameur/sandmeter/internal/agenteval"
 )
 
 func runCLI(args ...string) (int, string, string) {
@@ -95,86 +93,31 @@ func TestUsageErrors(t *testing.T) {
 	}
 }
 
-func TestEvalAgentRefusesOutsideThrowawayCI(t *testing.T) {
-	t.Setenv("CI", "")
-	t.Setenv("SANDMETER_THROWAWAY_HOST", "")
-	code, _, stderr := runCLI("eval-agent")
-	if code != 1 || !strings.Contains(stderr, "refusing to run") {
-		t.Fatalf("exit %d, stderr %q", code, stderr)
-	}
-	if code, _, _ := runCLI("eval-agent", "-budget", "50"); code != 2 {
-		t.Fatalf("budget over the ceiling: exit %d, want 2", code)
-	}
-	if code, _, _ := runCLI("eval-agent", "-k", "5"); code != 2 {
-		t.Fatalf("k=5: exit %d, want 2", code)
-	}
-	if code, _, _ := runCLI("eval-agent", "-model", "gpt"); code != 2 {
-		t.Fatalf("unknown model: exit %d, want 2", code)
-	}
-}
-
-func TestResolveAttacker(t *testing.T) {
-	t.Setenv("OPENAI_BASE_URL", "")
-	tests := []struct {
-		name    string
-		env     string
-		flags   evalModelFlags
-		wantErr string
-		check   func(attacker) bool
-	}{
-		{"default is haiku", "", evalModelFlags{provider: "anthropic"}, "",
-			func(a attacker) bool { return a.modelID == "claude-haiku-5-5" && a.pricing == agenteval.HaikuPricing }},
-		{"sonnet", "", evalModelFlags{provider: "anthropic", model: "sonnet"}, "",
-			func(a attacker) bool { return a.modelID == "claude-sonnet-5-5" }},
-		{"unknown anthropic model", "", evalModelFlags{provider: "anthropic", model: "qwen"}, "unknown model", nil},
-		{"anthropic rejects base url", "", evalModelFlags{provider: "anthropic", baseURL: "http://x"}, "apply to -provider openai", nil},
-		{"unknown provider", "", evalModelFlags{provider: "gemini"}, "unknown provider", nil},
-		{"openai needs a model", "", evalModelFlags{provider: "openai", baseURL: "http://x", tokenBudget: 1}, "-model is required", nil},
-		{"openai needs a base url", "", evalModelFlags{provider: "openai", model: "m", tokenBudget: 1}, "base URL", nil},
-		{"openai base url from env", "http://env:8000", evalModelFlags{provider: "openai", model: "m", tokenBudget: 1}, "",
-			func(a attacker) bool { return a.baseURL == "http://env:8000" }},
-		{"flag beats env", "http://env:8000", evalModelFlags{provider: "openai", model: "m", baseURL: "https://flag", tokenBudget: 1}, "",
-			func(a attacker) bool { return a.baseURL == "https://flag" }},
-		{"free model needs a cap", "", evalModelFlags{provider: "openai", model: "m", baseURL: "http://x"}, "needs -token-budget or -wall-budget", nil},
-		{"wall cap is enough", "", evalModelFlags{provider: "openai", model: "m", baseURL: "http://x", wallBudget: time.Hour}, "",
-			func(a attacker) bool { return a.modelID == "m" && a.pricing == (agenteval.Pricing{}) }},
-		{"priced model needs no cap", "", evalModelFlags{provider: "openai", model: "m", baseURL: "http://x", inPrice: 1, outPrice: 2}, "",
-			func(a attacker) bool { return a.pricing.InputPerMTok == 1 && a.pricing.OutputPerMTok == 2 }},
-		{"negative cap", "", evalModelFlags{provider: "openai", model: "m", baseURL: "http://x", tokenBudget: -1}, "negative", nil},
-		{"non-http base url", "", evalModelFlags{provider: "openai", model: "m", baseURL: "localhost:8000", tokenBudget: 1}, "base URL", nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("OPENAI_BASE_URL", tt.env)
-			a, err := resolveAttacker(tt.flags)
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("err %v, want %q", err, tt.wantErr)
-				}
-				return
-			}
-			if err != nil || !tt.check(a) {
-				t.Fatalf("%+v, %v", a, err)
-			}
-		})
-	}
-}
-
-func TestEvalAgentOpenAIUsageErrorsComeFirst(t *testing.T) {
-	t.Setenv("CI", "")
-	t.Setenv("OPENAI_BASE_URL", "")
-	for _, args := range [][]string{
-		{"eval-agent", "-provider", "openai"},
-		{"eval-agent", "-provider", "openai", "-model", "m", "-base-url", "http://x"},
-		{"eval-agent", "-provider", "nope"},
-	} {
-		if code, _, _ := runCLI(args...); code != 2 {
-			t.Errorf("%v: exit %d, want 2", args, code)
+// TestLabCommandsAreNotHere checks the split: the benchmark and the agent
+// eval belong to sandmeter-lab, and the usage text says where they went.
+func TestLabCommandsAreNotHere(t *testing.T) {
+	for _, name := range []string{"bench", "eval-agent"} {
+		code, _, stderr := runCLI(name)
+		if code != 2 || !strings.Contains(stderr, "unknown command") || !strings.Contains(stderr, "sandmeter-lab") {
+			t.Errorf("%s: exit %d, stderr:\n%s", name, code, stderr)
 		}
 	}
-	// A valid openai invocation still stops at the throwaway-host guard.
-	code, _, stderr := runCLI("eval-agent", "-provider", "openai", "-model", "m", "-base-url", "http://x", "-token-budget", "1000")
-	if code != 1 || !strings.Contains(stderr, "refusing to run") {
-		t.Fatalf("exit %d, stderr %q", code, stderr)
+}
+
+// TestLinksNoModelSDK holds the reason the lab is a binary of its own: no
+// model SDK is linked into sandmeter. The module list of this test binary is
+// that of the command plus its tests, so a test that imports one fails too.
+func TestLinksNoModelSDK(t *testing.T) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		t.Fatal("this test binary carries no build information to read its modules from")
+	}
+	if len(info.Deps) == 0 {
+		t.Fatal("the build information lists no module: the check below would pass on nothing")
+	}
+	for _, dep := range info.Deps {
+		if strings.HasPrefix(dep.Path, "github.com/anthropics/") {
+			t.Errorf("sandmeter links %s: model clients belong in sandmeter-lab", dep.Path)
+		}
 	}
 }

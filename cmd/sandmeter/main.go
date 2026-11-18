@@ -34,8 +34,6 @@ commands:
   verify   check a receipt's signature and print it
   replay   run a receipt's command again and compare the results
   escape   run the escape test suite on one or more backends
-  bench    measure start time, snapshot time and overhead
-  eval-agent  ask a model to escape, k times, with a hard budget (throwaway CI only)
   mcp      serve the sandbox to agents over MCP (stdio)
   keygen   create the receipt signing key
   caps     print what a backend can enforce on this host
@@ -44,6 +42,8 @@ commands:
 
 Environment: SANDMETER_HOME (default /var/lib/sandmeter) holds images,
 the signing key and receipts. Most commands need root.
+
+The benchmark and the agent eval are in sandmeter-lab.
 `
 
 type usageError struct{ error }
@@ -52,17 +52,15 @@ type command func(ctx context.Context, args []string, stdout io.Writer) error
 
 func commands() map[string]command {
 	return map[string]command{
-		"run":        cmdRun,
-		"pull":       cmdPull,
-		"verify":     cmdVerify,
-		"replay":     cmdReplay,
-		"escape":     cmdEscape,
-		"bench":      cmdBench,
-		"eval-agent": cmdEvalAgent,
-		"mcp":        cmdMCP,
-		"keygen":     cmdKeygen,
-		"caps":       cmdCaps,
-		"check":      cmdCheck,
+		"run":    cmdRun,
+		"pull":   cmdPull,
+		"verify": cmdVerify,
+		"replay": cmdReplay,
+		"escape": cmdEscape,
+		"mcp":    cmdMCP,
+		"keygen": cmdKeygen,
+		"caps":   cmdCaps,
+		"check":  cmdCheck,
 	}
 }
 
