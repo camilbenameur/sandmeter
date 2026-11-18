@@ -177,7 +177,7 @@ sudo ./sandmeter-lab bench
 |---|---|
 | `cmd/sandmeter/` | the CLI and the MCP server command |
 | `cmd/sandmeter-lab/` | the benchmark and the agent escape eval commands |
-| `cmd/sandmeter-probe/` | the probe helper the escape cases call inside the sandbox |
+| `cmd/sandmeter-probe/` | the probe helper the escape cases call inside the sandbox (its code is in `internal/escape/probe/`) |
 | `policy/` | TOML policy, validation against capabilities |
 | `receipt/` | receipt format, DSSE signing, verification |
 | `internal/sandbox/` | `Backend` and `Sandbox` interfaces, `Capabilities` |
@@ -191,7 +191,7 @@ sudo ./sandmeter-lab bench
 | `internal/image/` | OCI pull, safe layer extraction, layer cache |
 | `internal/differ/` | diff of the writable layer |
 | `internal/engine/` | glue, replay |
-| `internal/escape/` | escape cases, judge, harness |
+| `internal/escape/` | escape cases, judge, harness, probe |
 | `internal/bench/` | benchmark |
 | `internal/agenteval/` | the agent escape eval |
 | `internal/mcpserver/`, `skill/` | MCP server and agent skill |
