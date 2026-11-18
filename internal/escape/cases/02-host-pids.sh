@@ -28,7 +28,7 @@ done
 init_comm=$(cat /proc/1/comm 2>/dev/null)
 init_ok=0
 case "$init_comm" in
-sh | ash | rfprobe | init) init_ok=1 ;;
+sh | ash | sandmeter-probe | init) init_ok=1 ;;
 esac
 
 result="BLOCKED pid namespace isolated ($count pids, init=$init_comm)"

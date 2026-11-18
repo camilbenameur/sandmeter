@@ -19,8 +19,8 @@ if [ -r /proc/partitions ]; then
 fi
 [ -n "$cands" ] || cands="8:0 259:0 252:0 253:0"
 
-dev=/tmp/rf-disk-$$
-mnt=/tmp/rf-mnt-$$
+dev=/tmp/sandmeter-disk-$$
+mnt=/tmp/sandmeter-mnt-$$
 result="BLOCKED mknod refused for: $(echo $cands)"
 
 for c in $cands; do

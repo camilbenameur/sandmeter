@@ -58,7 +58,7 @@ func startErrno(err error) unix.Errno {
 func runUsernsMount() error {
 	cmd, err := usernsCommand(usernsChildArg)
 	if err != nil {
-		return fmt.Errorf("rfprobe: userns-mount: %w", err)
+		return fmt.Errorf("sandmeter-probe: userns-mount: %w", err)
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -71,7 +71,7 @@ func runUsernsMount() error {
 // runUsernsChild runs inside the new namespaces, where it holds a full
 // capability set by kernel definition.
 func runUsernsChild() error {
-	dir, err := os.MkdirTemp("", "rfprobe-userns-*")
+	dir, err := os.MkdirTemp("", "sandmeter-probe-userns-*")
 	if err != nil {
 		return fmt.Errorf("make mount point: %w", err)
 	}

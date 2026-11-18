@@ -25,8 +25,8 @@ type Evidence struct {
 	// its presence in Stdout, Stderr or ReceiptJSON means the sandbox read
 	// a host file it should not have reached.
 	CanaryToken string
-	// MarkerExists is true when RF_HOST_MARKER_PATH exists on the host
-	// after the case ran. It must not.
+	// MarkerExists is true when SANDMETER_ESCAPE_HOST_MARKER_PATH exists on
+	// the host after the case ran. It must not.
 	MarkerExists bool
 	// HostChanged lists host-side values that changed during the case
 	// (such as /proc/sys/kernel/core_pattern) and should not have.

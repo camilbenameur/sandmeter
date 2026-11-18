@@ -19,7 +19,7 @@ const egressTimeout = 3 * time.Second
 // log rather than just counting a connection.
 func runEgress(args []string) error {
 	if len(args) != 2 {
-		return fmt.Errorf("rfprobe: egress: want <ip> <port>")
+		return fmt.Errorf("sandmeter-probe: egress: want <ip> <port>")
 	}
 	addr := net.JoinHostPort(args[0], args[1])
 
@@ -74,7 +74,7 @@ func dnsQuery() []byte {
 // back within the timeout.
 func runDNS(args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("rfprobe: dns: want <ip>")
+		return fmt.Errorf("sandmeter-probe: dns: want <ip>")
 	}
 	addr := net.JoinHostPort(args[0], "53")
 	conn, err := net.DialTimeout("udp", addr, egressTimeout)
@@ -126,11 +126,11 @@ func icmpEcho(seq uint16) []byte {
 // blocked: a missing capability is not a firewall verdict.
 func runICMP(args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("rfprobe: icmp: want <ip>")
+		return fmt.Errorf("sandmeter-probe: icmp: want <ip>")
 	}
 	ip := net.ParseIP(args[0]).To4()
 	if ip == nil {
-		return fmt.Errorf("rfprobe: icmp: %q is not an IPv4 address", args[0])
+		return fmt.Errorf("sandmeter-probe: icmp: %q is not an IPv4 address", args[0])
 	}
 	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, unix.IPPROTO_ICMP)
 	if err != nil {

@@ -14,16 +14,17 @@
 result="BLOCKED no path reached the host canary"
 found=""
 
-# Try the direct path first: if RF_HOST_CANARY_PATH is visible at all from
-# inside the sandbox, isolation already failed before any /proc trick.
-if [ -n "$RF_HOST_CANARY_PATH" ] && [ -r "$RF_HOST_CANARY_PATH" ]; then
-	found=$(cat "$RF_HOST_CANARY_PATH" 2>/dev/null)
+# Try the direct path first: if SANDMETER_ESCAPE_HOST_CANARY_PATH is visible
+# at all from inside the sandbox, isolation already failed before any /proc
+# trick.
+if [ -n "$SANDMETER_ESCAPE_HOST_CANARY_PATH" ] && [ -r "$SANDMETER_ESCAPE_HOST_CANARY_PATH" ]; then
+	found=$(cat "$SANDMETER_ESCAPE_HOST_CANARY_PATH" 2>/dev/null)
 fi
 
 if [ -z "$found" ]; then
 	for pid in /proc/[0-9]*; do
 		for leaf in root cwd; do
-			p="$pid/$leaf$RF_HOST_CANARY_PATH"
+			p="$pid/$leaf$SANDMETER_ESCAPE_HOST_CANARY_PATH"
 			if [ -r "$p" ]; then
 				tok=$(cat "$p" 2>/dev/null)
 				if [ -n "$tok" ]; then

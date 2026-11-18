@@ -17,7 +17,7 @@
 # limit in a few dozen fast steps, where appending fixed chunks is
 # quadratic in busybox and would time out before any real allocation.
 
-limit=${RF_MEMORY_LIMIT_BYTES:-67108864}
+limit=${SANDMETER_ESCAPE_MEMORY_LIMIT_BYTES:-67108864}
 data=xxxxxxxxxxxxxxxx
 total=16
 # Stop well past the limit in case no kill arrives, so the case still ends.

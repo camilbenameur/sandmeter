@@ -134,8 +134,8 @@ func (l *Listener) Close() error {
 
 // NewCanary writes a random token to a new file 0600 under dir and returns
 // its path and the token. The harness places this file outside the sandbox
-// root, as RF_HOST_CANARY_PATH, and a case passes only if the sandboxed
-// process never manages to read it.
+// root, as SANDMETER_ESCAPE_HOST_CANARY_PATH, and a case passes only if the
+// sandboxed process never manages to read it.
 func NewCanary(dir string) (path, token string, err error) {
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {

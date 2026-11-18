@@ -30,7 +30,8 @@ import (
 type Harness struct {
 	Engine *engine.Engine
 	Image  string
-	// Probe is the path of a static rfprobe binary for the sandbox's arch.
+	// Probe is the path of a static sandmeter-probe binary for the sandbox's
+	// arch.
 	Probe string
 	// WorkDir holds canaries, markers and the probe layer. It must be
 	// outside every sandbox root.
@@ -122,7 +123,11 @@ func (h *Harness) Run(ctx context.Context, backends []string) ([]escape.Verdict,
 	return out, nil
 }
 
-// probeLayer builds a read-only layer with /usr/local/bin/rfprobe and
+// probeName is the name the cases call the probe by. The harness installs
+// it in /usr/local/bin, which is on the PATH of every command.
+const probeName = "sandmeter-probe"
+
+// probeLayer builds a read-only layer with /usr/local/bin/sandmeter-probe and
 // /escape/<id>.sh, owned by the sandbox's root.
 func (h *Harness) probeLayer(cases []escape.Case) (string, error) {
 	dir := filepath.Join(h.WorkDir, "layer")
@@ -136,9 +141,9 @@ func (h *Harness) probeLayer(cases []escape.Case) (string, error) {
 	}
 	probe, err := os.ReadFile(h.Probe)
 	if err != nil {
-		return "", fmt.Errorf("read rfprobe: %w", err)
+		return "", fmt.Errorf("read %s: %w", probeName, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "usr/local/bin/rfprobe"), probe, 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "usr/local/bin", probeName), probe, 0o755); err != nil {
 		return "", err
 	}
 	for _, c := range cases {
@@ -189,16 +194,7 @@ func (h *Harness) runCase(ctx context.Context, backend string, c escape.Case, la
 	}
 	_, egressPort, _ := net.SplitHostPort(egress.Addr().String())
 	_, gatewayPort, _ := net.SplitHostPort(gateway.Addr().String())
-	env := []string{
-		"RF_HOST_CANARY_PATH=" + canaryPath,
-		"RF_HOST_MARKER_PATH=" + marker,
-		"RF_EGRESS_IP=" + ip,
-		"RF_EGRESS_PORT=" + egressPort,
-		"RF_GATEWAY_IP=auto",
-		"RF_GATEWAY_PORT=" + gatewayPort,
-		"RF_PIDS_LIMIT=" + strconv.FormatInt(p.Limits.PIDs, 10),
-		"RF_MEMORY_LIMIT_BYTES=" + strconv.FormatInt(memLimit, 10),
-	}
+	env := caseEnv(canaryPath, marker, ip, egressPort, gatewayPort, p.Limits.PIDs, memLimit)
 
 	before := readHost()
 	egressBefore, gatewayBefore := egress.Hits(), gateway.Hits()
@@ -251,6 +247,22 @@ func (h *Harness) runCase(ctx context.Context, backend string, c escape.Case, la
 		}
 	}
 	return escape.Judge(c, backend, ev), nil
+}
+
+// caseEnv is everything the harness tells a case, through its environment.
+// Every name starts with SANDMETER_ESCAPE_, so that a case and a reader of
+// its output can tell these values from the settings of sandmeter itself.
+func caseEnv(canaryPath, marker, ip, egressPort, gatewayPort string, pidsLimit, memLimit int64) []string {
+	return []string{
+		"SANDMETER_ESCAPE_HOST_CANARY_PATH=" + canaryPath,
+		"SANDMETER_ESCAPE_HOST_MARKER_PATH=" + marker,
+		"SANDMETER_ESCAPE_EGRESS_IP=" + ip,
+		"SANDMETER_ESCAPE_EGRESS_PORT=" + egressPort,
+		"SANDMETER_ESCAPE_GATEWAY_IP=auto",
+		"SANDMETER_ESCAPE_GATEWAY_PORT=" + gatewayPort,
+		"SANDMETER_ESCAPE_PIDS_LIMIT=" + strconv.FormatInt(pidsLimit, 10),
+		"SANDMETER_ESCAPE_MEMORY_LIMIT_BYTES=" + strconv.FormatInt(memLimit, 10),
+	}
 }
 
 func allowed(p policy.Policy, ip string, port uint16) bool {

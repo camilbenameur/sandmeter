@@ -34,7 +34,7 @@ var syscallChecks = []string{
 func runSyscalls() error {
 	self, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("rfprobe: find own path: %w", err)
+		return fmt.Errorf("sandmeter-probe: find own path: %w", err)
 	}
 	for _, name := range syscallChecks {
 		fmt.Println(runOneSyscallCheck(self, name))
@@ -45,7 +45,7 @@ func runSyscalls() error {
 // runOneSyscallCheck re-execs self as "__syscall-check <name>" and turns the
 // result (ordinary exit, non-zero exit, or death by signal) into a report
 // line. It never returns an error: an unreachable syscall is a normal,
-// expected result, not a failure of rfprobe itself.
+// expected result, not a failure of sandmeter-probe itself.
 func runOneSyscallCheck(self, name string) string {
 	out, err := exec.Command(self, syscallCheckArg, name).Output()
 	return formatCheckResult(name, out, err)
@@ -93,7 +93,7 @@ func trimNL(b []byte) string {
 // refused in a way that is not a plain errno.
 func runSyscallCheck(args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("rfprobe: %s: want exactly one check name", syscallCheckArg)
+		return fmt.Errorf("sandmeter-probe: %s: want exactly one check name", syscallCheckArg)
 	}
 	switch args[0] {
 	case "bpf":
@@ -113,7 +113,7 @@ func runSyscallCheck(args []string) error {
 	case "ptrace_traceme":
 		return reportErrno(checkPtraceTraceme())
 	default:
-		return fmt.Errorf("rfprobe: %s: unknown check %q", syscallCheckArg, args[0])
+		return fmt.Errorf("sandmeter-probe: %s: unknown check %q", syscallCheckArg, args[0])
 	}
 }
 
@@ -276,7 +276,7 @@ func checkUnshareNewuser() (unix.Errno, bool) {
 // mount namespace (as it should), the mount never reaches the host; this
 // check is exactly what would catch the case where it does not.
 func checkMountTmpfs() (unix.Errno, bool) {
-	dir, err := os.MkdirTemp("", "rfprobe-mount-*")
+	dir, err := os.MkdirTemp("", "sandmeter-probe-mount-*")
 	if err != nil {
 		return unix.EIO, false
 	}

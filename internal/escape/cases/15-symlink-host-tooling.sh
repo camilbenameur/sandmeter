@@ -16,14 +16,14 @@
 made=""
 for dir in /tmp /workspace /; do
 	if [ -w "$dir" ]; then
-		if ln -sf "$RF_HOST_CANARY_PATH" "$dir/rf-link-canary" 2>/dev/null; then
-			made="${made}${dir}/rf-link-canary "
+		if ln -sf "$SANDMETER_ESCAPE_HOST_CANARY_PATH" "$dir/sandmeter-link-canary" 2>/dev/null; then
+			made="${made}${dir}/sandmeter-link-canary "
 		fi
-		if ln -sf "$RF_HOST_MARKER_PATH" "$dir/rf-link-marker" 2>/dev/null; then
-			made="${made}${dir}/rf-link-marker "
+		if ln -sf "$SANDMETER_ESCAPE_HOST_MARKER_PATH" "$dir/sandmeter-link-marker" 2>/dev/null; then
+			made="${made}${dir}/sandmeter-link-marker "
 		fi
-		if mknod "$dir/.wh.rf-whiteout" c 0 0 2>/dev/null; then
-			made="${made}${dir}/.wh.rf-whiteout "
+		if mknod "$dir/.wh.sandmeter-whiteout" c 0 0 2>/dev/null; then
+			made="${made}${dir}/.wh.sandmeter-whiteout "
 		fi
 	fi
 done

@@ -1,6 +1,6 @@
-// Command rfprobe is a static helper copied into the sandbox rootfs as
-// /usr/local/bin/rfprobe. Escape cases shell out to it for syscall-level
-// checks busybox applets cannot do on their own.
+// Command sandmeter-probe is a static helper copied into the sandbox rootfs
+// as /usr/local/bin/sandmeter-probe. Escape cases shell out to it for
+// syscall-level checks busybox applets cannot do on their own.
 //
 // Every subcommand is read-only or self-contained: it never changes host
 // state, only reports what the kernel let it do from inside the sandbox.
@@ -14,7 +14,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: rfprobe <syscalls|shocker|userns-mount|egress|dns|icmp|maps> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: sandmeter-probe <syscalls|shocker|userns-mount|egress|dns|icmp|maps> [args...]")
 		os.Exit(2)
 	}
 
@@ -45,7 +45,7 @@ func main() {
 		// the child, not the whole batch. See runSyscalls.
 		err = runSyscallCheck(os.Args[2:])
 	default:
-		fmt.Fprintf(os.Stderr, "rfprobe: unknown subcommand %q\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "sandmeter-probe: unknown subcommand %q\n", os.Args[1])
 		os.Exit(2)
 	}
 	if err != nil {

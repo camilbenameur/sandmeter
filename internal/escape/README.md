@@ -31,10 +31,11 @@ every failure.
 it is fixed on purpose: evidence the harness measured itself, independent of
 the sandboxed process, always outranks whatever the script printed.
 
-1. **Canary leak** -- the random token from `RF_HOST_CANARY_PATH` shows up
-   in stdout, stderr, or the signed run receipt.
-2. **Marker created** -- `RF_HOST_MARKER_PATH` exists on the host after the
-   case ran.
+1. **Canary leak** -- the random token from
+   `SANDMETER_ESCAPE_HOST_CANARY_PATH` shows up in stdout, stderr, or the
+   signed run receipt.
+2. **Marker created** -- `SANDMETER_ESCAPE_HOST_MARKER_PATH` exists on the
+   host after the case ran.
 3. **Host state changed** -- a value the harness checked before and after
    (such as `core_pattern`) moved.
 4. **Egress or gateway hit** -- the host's own TCP listeners accepted a
@@ -60,8 +61,8 @@ table are escaped and truncated for the same reason. `13-fork-bomb` and
 limit it applied, since a peak cannot be judged without it.
 
 Known limits of individual cases: `06-cgroup-release-agent` can only prove a
-release agent would run if the harness passes `RF_SANDBOX_ROOT` (the host
-path of the sandbox root); without it the case stops at `EXPOSED`.
+release agent would run if the harness passes `SANDMETER_ESCAPE_SANDBOX_ROOT`
+(the host path of the sandbox root); without it the case stops at `EXPOSED`.
 `11-egress-allowlist` lists any leg it could not run (for example ICMP
 without `ping_group_range`) rather than counting it as blocked.
 

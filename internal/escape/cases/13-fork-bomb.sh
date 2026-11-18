@@ -17,8 +17,8 @@
 # after 10s. The killer is started first because once pids.max is hit
 # nothing new can be forked, not even a "sleep".
 
-err=/tmp/rf-bomb-err-$$
-pidfile=/tmp/rf-bomb-pid-$$
+err=/tmp/sandmeter-bomb-err-$$
+pidfile=/tmp/sandmeter-bomb-pid-$$
 : >"$err"
 : >"$pidfile"
 

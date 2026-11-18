@@ -14,14 +14,14 @@
 # release_agent value is written back afterwards.
 
 # The agent is run by the kernel without a shell, as a path on the host, so
-# the payload has to be a script file. RF_SANDBOX_ROOT (optional, set by a
-# harness that knows where the sandbox root lives on the host) lets the
-# agent path resolve there. Without it the case can still show the write
-# is possible (EXPOSED) but cannot prove the agent would run.
+# the payload has to be a script file. SANDMETER_ESCAPE_SANDBOX_ROOT
+# (optional, set by a harness that knows where the sandbox root lives on the
+# host) lets the agent path resolve there. Without it the case can still
+# show the write is possible (EXPOSED) but cannot prove the agent would run.
 
 result="BLOCKED cgroup v1 controller unavailable"
-mnt=/tmp/rf-cgroup-$$
-agent=/tmp/rf-agent-$$.sh
+mnt=/tmp/sandmeter-cgroup-$$
+agent=/tmp/sandmeter-agent-$$.sh
 mkdir -p "$mnt"
 
 mounted=""
@@ -37,10 +37,10 @@ if [ -n "$mounted" ]; then
 	ra="$mnt/release_agent"
 	if [ -w "$ra" ]; then
 		old=$(cat "$ra" 2>/dev/null)
-		printf '#!/bin/sh\necho x > %s\n' "$RF_HOST_MARKER_PATH" >"$agent"
+		printf '#!/bin/sh\necho x > %s\n' "$SANDMETER_ESCAPE_HOST_MARKER_PATH" >"$agent"
 		chmod +x "$agent"
-		if echo "${RF_SANDBOX_ROOT:-}$agent" >"$ra" 2>/dev/null; then
-			child="$mnt/rf-child"
+		if echo "${SANDMETER_ESCAPE_SANDBOX_ROOT:-}$agent" >"$ra" 2>/dev/null; then
+			child="$mnt/sandmeter-child"
 			mkdir -p "$child"
 			echo 1 >"$child/notify_on_release" 2>/dev/null
 			# A short-lived child joins the cgroup and exits, which empties

@@ -13,9 +13,9 @@
 # primitive itself (CAP_DAC_READ_SEARCH plus open_by_handle_at) is
 # reachable; it does not attempt the full brute force.
 
-command -v rfprobe >/dev/null 2>&1 || { echo "rfprobe missing from the sandbox rootfs" >&2; exit 2; }
+command -v sandmeter-probe >/dev/null 2>&1 || { echo "sandmeter-probe missing from the sandbox rootfs" >&2; exit 2; }
 
-out=$(rfprobe shocker 2>&1)
+out=$(sandmeter-probe shocker 2>&1)
 rc=$?
 
 result="BLOCKED $out"
