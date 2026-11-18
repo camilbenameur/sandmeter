@@ -234,15 +234,11 @@ func (s *Session) receipt(argv []string, res sandbox.Result, started, finished t
 	if v, ok := s.e.Backends[s.Backend].(Versioner); ok {
 		backendVersion = v.Version()
 	}
-	conns := res.Connections
-	if conns == nil {
-		conns = []sandbox.Connection{}
-	}
 	return receipt.Receipt{
 		Schema:          receipt.SchemaV1,
 		ID:              id,
 		Backend:         s.Backend,
-		Capabilities:    s.Caps,
+		Capabilities:    capabilitiesV1(s.Caps),
 		PolicySHA256:    receipt.PolicyHashV1(pol),
 		Policy:          pol,
 		Image:           receipt.ImageRef{Ref: s.Image.Ref, Digest: s.Image.Digest},
@@ -257,8 +253,8 @@ func (s *Session) receipt(argv []string, res sandbox.Result, started, finished t
 		StdoutTruncated: res.StdoutTruncated,
 		StderrTruncated: res.StderrTruncated,
 		Diff:            diff,
-		Connections:     conns,
-		Cgroup:          res.Stats,
+		Connections:     connectionsV1(res.Connections),
+		Cgroup:          receipt.CgroupStatsV1(res.Stats),
 		Host: receipt.Host{
 			Kernel:           kernel(),
 			Arch:             runtime.GOARCH,

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/camilbenameur/sandmeter/internal/prototype/sandbox"
 )
 
 func sample() Receipt {
@@ -19,7 +17,7 @@ func sample() Receipt {
 		Schema:       SchemaV1,
 		ID:           "r1",
 		Backend:      "native",
-		Capabilities: sandbox.Capabilities{Backend: "native", Networks: []sandbox.NetworkMode{sandbox.NetworkNone}},
+		Capabilities: CapabilitiesV1{Backend: "native", Networks: []string{"none"}},
 		PolicySHA256: "abc",
 		Policy:       json.RawMessage(`{"a": 1}`),
 		Image:        ImageRef{Ref: "alpine:3", Digest: "sha256:00"},
@@ -28,8 +26,8 @@ func sample() Receipt {
 		FinishedAt:   t0.Add(time.Second),
 		DurationMS:   1000,
 		Diff:         Diff{Entries: []Entry{{Path: "a", Op: "add", Type: "file"}}},
-		Connections:  []sandbox.Connection{{Proto: "tcp", DstIP: "1.1.1.1", DstPort: 443}, {Proto: "tcp", DstIP: "2.2.2.2", Allowed: true}},
-		Cgroup:       sandbox.CgroupStats{MemoryPeakBytes: 5 << 20, PIDsPeak: 3},
+		Connections:  []ConnectionV1{{Proto: "tcp", DstIP: "1.1.1.1", DstPort: 443}, {Proto: "tcp", DstIP: "2.2.2.2", Allowed: true}},
+		Cgroup:       CgroupStatsV1{MemoryPeakBytes: 5 << 20, PIDsPeak: 3},
 	}
 }
 

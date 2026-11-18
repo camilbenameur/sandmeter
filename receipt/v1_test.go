@@ -17,8 +17,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/camilbenameur/sandmeter/internal/prototype/sandbox"
 )
 
 // The tests in this file hold schema v1 in place. They read the recordings
@@ -771,31 +769,13 @@ func TestVerifyKeepsEachV1Capability(t *testing.T) {
 	}
 }
 
-// backendCapabilitySetters sets each capability flag by its Go field on the
-// type the backends declare them with, under the key a v1 receipt records it
-// under.
-var backendCapabilitySetters = map[string]func(*sandbox.Capabilities){
-	"cpu_limit":         func(c *sandbox.Capabilities) { c.CPULimit = true },
-	"memory_limit":      func(c *sandbox.Capabilities) { c.MemoryLimit = true },
-	"pids_limit":        func(c *sandbox.Capabilities) { c.PIDsLimit = true },
-	"wall_timeout":      func(c *sandbox.Capabilities) { c.WallTimeout = true },
-	"read_only_root":    func(c *sandbox.Capabilities) { c.ReadOnlyRoot = true },
-	"seccomp":           func(c *sandbox.Capabilities) { c.Seccomp = true },
-	"drop_capabilities": func(c *sandbox.Capabilities) { c.DropCaps = true },
-	"snapshot":          func(c *sandbox.Capabilities) { c.Snapshot = true },
-	"needs_root":        func(c *sandbox.Capabilities) { c.NeedsRoot = true },
-}
-
 // TestSigningKeepsEachCapability is the same check on the way out, through
-// toV1: a control the backend declared is signed under its own key and under
-// no other. Here too the recordings would not notice two flags swapped.
+// toV1: a control the receipt holds is signed under its own key and under no
+// other. Here too the recordings would not notice two flags swapped. The step
+// before this one, from the type a backend declares its capabilities with to
+// the one a receipt holds, is checked where it is taken, in the engine.
 func TestSigningKeepsEachCapability(t *testing.T) {
-	for key := range v1CapabilitySetters {
-		if backendCapabilitySetters[key] == nil {
-			t.Errorf("no backend capability is checked against the v1 key %q", key)
-		}
-	}
-	for key, set := range backendCapabilitySetters {
+	for key, set := range v1CapabilitySetters {
 		r := Receipt{Schema: SchemaV1}
 		set(&r.Capabilities)
 		body, err := Canonical(r)

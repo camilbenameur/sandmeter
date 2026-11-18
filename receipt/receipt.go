@@ -14,8 +14,6 @@ package receipt
 import (
 	"encoding/json"
 	"time"
-
-	"github.com/camilbenameur/sandmeter/internal/prototype/sandbox"
 )
 
 // SchemaV1 is the value of Receipt.Schema for this format.
@@ -41,17 +39,22 @@ type Host struct {
 // It is not the form that is signed. Canonical encodes ReceiptV1, the frozen
 // copy in v1.go, so a change to this struct or to a type it embeds does not
 // by itself change a signed byte.
+//
+// The capabilities, the connections and the counters are held in their
+// frozen v1 shapes, on purpose: this package can be imported from outside the
+// module, so nothing in it may be declared by a package under internal/. The
+// engine turns a backend's own types into these where it builds a receipt.
 type Receipt struct {
-	Schema       string               `json:"schema"`
-	ID           string               `json:"id"`
-	Backend      string               `json:"backend"`
-	Capabilities sandbox.Capabilities `json:"capabilities"`
-	PolicySHA256 string               `json:"policy_sha256"`
-	Policy       json.RawMessage      `json:"policy"`
-	Image        ImageRef             `json:"image"`
-	Argv         []string             `json:"argv"`
-	ExitCode     int                  `json:"exit_code"`
-	Killed       string               `json:"killed"`
+	Schema       string          `json:"schema"`
+	ID           string          `json:"id"`
+	Backend      string          `json:"backend"`
+	Capabilities CapabilitiesV1  `json:"capabilities"`
+	PolicySHA256 string          `json:"policy_sha256"`
+	Policy       json.RawMessage `json:"policy"`
+	Image        ImageRef        `json:"image"`
+	Argv         []string        `json:"argv"`
+	ExitCode     int             `json:"exit_code"`
+	Killed       string          `json:"killed"`
 
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
@@ -62,10 +65,10 @@ type Receipt struct {
 	StdoutTruncated bool   `json:"stdout_truncated"`
 	StderrTruncated bool   `json:"stderr_truncated"`
 
-	Diff        Diff                 `json:"diff"`
-	Connections []sandbox.Connection `json:"connections"`
-	Cgroup      sandbox.CgroupStats  `json:"cgroup"`
-	Host        Host                 `json:"host"`
+	Diff        Diff           `json:"diff"`
+	Connections []ConnectionV1 `json:"connections"`
+	Cgroup      CgroupStatsV1  `json:"cgroup"`
+	Host        Host           `json:"host"`
 }
 
 // Diff is the change set of a writable overlay layer.
@@ -133,35 +136,21 @@ func Canonical(r Receipt) ([]byte, error) {
 //
 // A nested struct is converted whole wherever its two shapes agree type for
 // type, on purpose: the day the live one gains, loses, renames or retypes a
-// field, the conversion stops compiling. Three structs cannot be converted
-// whole and are copied field by field: the receipt itself, the capabilities
-// (their network modes have a type of their own) and the diff (so have its
-// entries). The declarations under the two functions do for those three what
-// the conversions do for the others. Either way, what a v1 receipt holds for
-// a new shape has to be decided here instead of happening by accident.
+// field, the conversion stops compiling. The capabilities, the connections
+// and the counters need no conversion: the live receipt holds them in their
+// frozen shapes. Two structs cannot be converted whole and are copied field
+// by field: the receipt itself and the diff (its entries have a type of their
+// own). The declarations under the two functions do for those two what the
+// conversions do for the others. Either way, what a v1 receipt holds for a
+// new shape has to be decided here instead of happening by accident.
 
 // fromV1 gives a decoded v1 receipt the type the rest of the code works with.
 func fromV1(r ReceiptV1) Receipt {
-	caps := r.Capabilities
 	return Receipt{
-		Schema:  r.Schema,
-		ID:      r.ID,
-		Backend: r.Backend,
-		Capabilities: sandbox.Capabilities{
-			Backend:      caps.Backend,
-			Isolation:    caps.Isolation,
-			CPULimit:     caps.CPULimit,
-			MemoryLimit:  caps.MemoryLimit,
-			PIDsLimit:    caps.PIDsLimit,
-			WallTimeout:  caps.WallTimeout,
-			Networks:     mapSlice(caps.Networks, func(m string) sandbox.NetworkMode { return sandbox.NetworkMode(m) }),
-			ReadOnlyRoot: caps.ReadOnlyRoot,
-			Seccomp:      caps.Seccomp,
-			DropCaps:     caps.DropCaps,
-			Snapshot:     caps.Snapshot,
-			NeedsRoot:    caps.NeedsRoot,
-			Notes:        caps.Notes,
-		},
+		Schema:          r.Schema,
+		ID:              r.ID,
+		Backend:         r.Backend,
+		Capabilities:    r.Capabilities,
 		PolicySHA256:    r.PolicySHA256,
 		Policy:          r.Policy,
 		Image:           ImageRef(r.Image),
@@ -180,34 +169,19 @@ func fromV1(r ReceiptV1) Receipt {
 			Truncated: r.Diff.Truncated,
 			Entries:   mapSlice(r.Diff.Entries, func(e EntryV1) Entry { return Entry(e) }),
 		},
-		Connections: mapSlice(r.Connections, func(c ConnectionV1) sandbox.Connection { return sandbox.Connection(c) }),
-		Cgroup:      sandbox.CgroupStats(r.Cgroup),
+		Connections: r.Connections,
+		Cgroup:      r.Cgroup,
 		Host:        Host(r.Host),
 	}
 }
 
 // toV1 gives a receipt its frozen v1 form, the one Canonical encodes.
 func toV1(r Receipt) ReceiptV1 {
-	caps := r.Capabilities
 	return ReceiptV1{
-		Schema:  r.Schema,
-		ID:      r.ID,
-		Backend: r.Backend,
-		Capabilities: CapabilitiesV1{
-			Backend:      caps.Backend,
-			Isolation:    caps.Isolation,
-			CPULimit:     caps.CPULimit,
-			MemoryLimit:  caps.MemoryLimit,
-			PIDsLimit:    caps.PIDsLimit,
-			WallTimeout:  caps.WallTimeout,
-			Networks:     mapSlice(caps.Networks, func(m sandbox.NetworkMode) string { return string(m) }),
-			ReadOnlyRoot: caps.ReadOnlyRoot,
-			Seccomp:      caps.Seccomp,
-			DropCaps:     caps.DropCaps,
-			Snapshot:     caps.Snapshot,
-			NeedsRoot:    caps.NeedsRoot,
-			Notes:        caps.Notes,
-		},
+		Schema:          r.Schema,
+		ID:              r.ID,
+		Backend:         r.Backend,
+		Capabilities:    r.Capabilities,
 		PolicySHA256:    r.PolicySHA256,
 		Policy:          r.Policy,
 		Image:           ImageRefV1(r.Image),
@@ -226,15 +200,15 @@ func toV1(r Receipt) ReceiptV1 {
 			Truncated: r.Diff.Truncated,
 			Entries:   mapSlice(r.Diff.Entries, func(e Entry) EntryV1 { return EntryV1(e) }),
 		},
-		Connections: mapSlice(r.Connections, func(c sandbox.Connection) ConnectionV1 { return ConnectionV1(c) }),
-		Cgroup:      CgroupStatsV1(r.Cgroup),
+		Connections: r.Connections,
+		Cgroup:      r.Cgroup,
 		Host:        HostV1(r.Host),
 	}
 }
 
-// The three live structs that fromV1 and toV1 copy field by field have
-// exactly the fields listed here, in this order and with these types (tags
-// do not count): the conversions below do not compile otherwise.
+// The two live structs that fromV1 and toV1 copy field by field have exactly
+// the fields listed here, in this order and with these types (tags do not
+// count): the conversions below do not compile otherwise.
 //
 // A keyed literal alone does not notice a new field. It would compile, and
 // the field would silently be zero in every v1 receipt that Verify returns
@@ -246,7 +220,7 @@ var (
 		Schema          string
 		ID              string
 		Backend         string
-		Capabilities    sandbox.Capabilities
+		Capabilities    CapabilitiesV1
 		PolicySHA256    string
 		Policy          json.RawMessage
 		Image           ImageRef
@@ -261,25 +235,10 @@ var (
 		StdoutTruncated bool
 		StderrTruncated bool
 		Diff            Diff
-		Connections     []sandbox.Connection
-		Cgroup          sandbox.CgroupStats
+		Connections     []ConnectionV1
+		Cgroup          CgroupStatsV1
 		Host            Host
 	}(Receipt{})
-	_ = struct {
-		Backend      string
-		Isolation    string
-		CPULimit     bool
-		MemoryLimit  bool
-		PIDsLimit    bool
-		WallTimeout  bool
-		Networks     []sandbox.NetworkMode
-		ReadOnlyRoot bool
-		Seccomp      bool
-		DropCaps     bool
-		Snapshot     bool
-		NeedsRoot    bool
-		Notes        []string
-	}(sandbox.Capabilities{})
 	_ = struct {
 		SHA256    string
 		Truncated bool
