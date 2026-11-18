@@ -85,12 +85,16 @@ func replayPolicy(rec receipt.Receipt) (policy.Policy, error) {
 	return policyFromV1(signed), nil
 }
 
+// policyFromV1 and policyToV1 carry a policy between the form a v1 receipt
+// signs and the policy type of this build. Each part is converted whole on
+// purpose: when a part of policy.Policy gains, loses, renames or retypes a
+// field, its conversion stops compiling. The declaration under the two
+// functions does the same for the list of parts. Either way, what a v1
+// receipt means for the new shape is then decided here rather than left to
+// a zero value.
+
 // policyFromV1 maps the policy of a v1 receipt onto the policy type of this
-// build. Each part is converted whole on purpose: when a part of
-// policy.Policy gains, loses, renames or retypes a field, its conversion
-// stops compiling. The declaration under this function does the same for
-// the list of parts. Either way, what a v1 receipt means for the new shape
-// is then decided here rather than left to a zero value.
+// build.
 func policyFromV1(p receipt.PolicyV1) policy.Policy {
 	return policy.Policy{
 		Limits:     policy.Limits(p.Limits),
@@ -100,11 +104,21 @@ func policyFromV1(p receipt.PolicyV1) policy.Policy {
 	}
 }
 
-// policy.Policy has exactly the parts policyFromV1 fills, in this order: the
-// conversion does not compile otherwise. The keyed literal above would
-// compile with a part added to policy.Policy, and a replayed v1 receipt
-// would then run with that part at its zero value without anyone having
-// decided that zero is what v1 meant.
+// policyToV1 gives a policy the form a v1 receipt signs.
+func policyToV1(p policy.Policy) receipt.PolicyV1 {
+	return receipt.PolicyV1{
+		Limits:     receipt.PolicyLimitsV1(p.Limits),
+		Network:    receipt.PolicyNetworkV1(p.Network),
+		Filesystem: receipt.PolicyFilesystemV1(p.Filesystem),
+		Syscalls:   receipt.PolicySyscallsV1(p.Syscalls),
+	}
+}
+
+// policy.Policy has exactly the parts the two functions above carry, in this
+// order: the conversion does not compile otherwise. Their keyed literals
+// would compile with a part added to policy.Policy. A replayed v1 receipt
+// would then run with that part at its zero value, and a signed one would
+// leave it out, without anyone having decided that this is what v1 means.
 var _ = struct {
 	Limits     policy.Limits
 	Network    policy.Network

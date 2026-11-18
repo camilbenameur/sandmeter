@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"syscall"
@@ -497,6 +498,7 @@ func TestEngineEmitsTheRecordedV1Receipts(t *testing.T) {
 				t.Fatalf("the engine emitted a receipt that does not verify: %v", err)
 			}
 			payload := envelopePayload(t, out.Envelope)
+			checkSignedV1(t, payload, sc.policy)
 
 			if *updateV1Fixtures {
 				writeFixture(t, sc.name+".json", out.Envelope)
@@ -513,6 +515,47 @@ func TestEngineEmitsTheRecordedV1Receipts(t *testing.T) {
 					"If the engine is meant to emit another schema, delete this test; do not rewrite the recordings.", got, want)
 			}
 		})
+	}
+}
+
+// checkSignedV1 holds what the engine signs to the frozen v1 form, read back
+// with the frozen decoders only, in the places the recordings pin for four
+// commands and nothing pins in general: the policy and the two hashes that
+// are taken over other signed bytes.
+func checkSignedV1(t *testing.T, payload []byte, ran policy.Policy) {
+	t.Helper()
+	signed, err := receipt.DecodeV1(payload)
+	if err != nil {
+		t.Fatalf("the engine signed something the v1 decoder refuses: %v", err)
+	}
+
+	// The policy is the one the command ran under, and its hash is the hash
+	// of the policy bytes as signed.
+	if got := receipt.PolicyHashV1(signed.Policy); got != signed.PolicySHA256 {
+		t.Errorf("policy_sha256 is %s, the signed policy bytes hash to %s", signed.PolicySHA256, got)
+	}
+	p, err := receipt.DecodePolicyV1(signed.Policy)
+	if err != nil {
+		t.Fatalf("the engine signed a policy the v1 decoder refuses: %v\n%s", err, signed.Policy)
+	}
+	if got := policyFromV1(p); !reflect.DeepEqual(got, ran) {
+		t.Errorf("the signed policy reads back as %+v, the command ran under %+v", got, ran)
+	}
+	// That hash is also the one "sandmeter check" prints for the policy
+	// file. This holds for as long as policy.Policy encodes the way the v1
+	// policy does; what the two commands tell the user has to be decided
+	// again the day it does not.
+	if signed.PolicySHA256 != ran.Hash() {
+		t.Errorf("policy_sha256 is %s, the policy the command ran under hashes to %s", signed.PolicySHA256, ran.Hash())
+	}
+
+	// The diff hash is the hash of the entries as signed.
+	entries, err := json.Marshal(signed.Diff.Entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sha(entries); got != signed.Diff.SHA256 {
+		t.Errorf("diff.sha256 is %s, the signed entries hash to %s", signed.Diff.SHA256, got)
 	}
 }
 

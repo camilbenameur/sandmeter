@@ -124,8 +124,16 @@ func DiffUpper(upper string, lowers []string, limit int) (receipt.Diff, error) {
 	return receipt.Diff{SHA256: sum, Truncated: truncated || d.truncated, Entries: entries}, nil
 }
 
+// entriesHash is the diff hash a receipt signs. It is taken over the entries
+// in their frozen v1 form, not over receipt.Entry as it stands: a replay
+// compares this hash with the one in a receipt signed earlier, so it has to
+// stay the same function of the entries whatever receipt.Entry becomes.
 func entriesHash(entries []receipt.Entry) (string, error) {
-	b, err := json.Marshal(entries)
+	frozen := make([]receipt.EntryV1, len(entries))
+	for i, e := range entries {
+		frozen[i] = receipt.EntryV1(e)
+	}
+	b, err := json.Marshal(frozen)
 	if err != nil {
 		return "", fmt.Errorf("encode diff entries: %w", err)
 	}

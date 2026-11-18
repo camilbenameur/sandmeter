@@ -153,11 +153,12 @@ func TestPolicyRoundTripKeepsZeroFields(t *testing.T) {
 	p := policy.Default()
 	p.Limits.CPU = 0
 	p.Limits.Wall = ""
-	b, err := json.Marshal(p)
+	// The policy field and its hash, the way Session.receipt writes them.
+	b, err := json.Marshal(policyToV1(p))
 	if err != nil {
 		t.Fatal(err)
 	}
-	q, err := replayPolicy(receipt.Receipt{Policy: b, PolicySHA256: p.Hash()})
+	q, err := replayPolicy(receipt.Receipt{Policy: b, PolicySHA256: receipt.PolicyHashV1(b)})
 	if err != nil {
 		t.Fatal(err)
 	}

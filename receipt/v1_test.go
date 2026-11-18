@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/camilbenameur/sandmeter/internal/sandbox"
 )
 
 // The tests in this file hold schema v1 in place. They read the recordings
@@ -769,6 +771,51 @@ func TestVerifyKeepsEachV1Capability(t *testing.T) {
 	}
 }
 
+// backendCapabilitySetters sets each capability flag by its Go field on the
+// type the backends declare them with, under the key a v1 receipt records it
+// under.
+var backendCapabilitySetters = map[string]func(*sandbox.Capabilities){
+	"cpu_limit":         func(c *sandbox.Capabilities) { c.CPULimit = true },
+	"memory_limit":      func(c *sandbox.Capabilities) { c.MemoryLimit = true },
+	"pids_limit":        func(c *sandbox.Capabilities) { c.PIDsLimit = true },
+	"wall_timeout":      func(c *sandbox.Capabilities) { c.WallTimeout = true },
+	"read_only_root":    func(c *sandbox.Capabilities) { c.ReadOnlyRoot = true },
+	"seccomp":           func(c *sandbox.Capabilities) { c.Seccomp = true },
+	"drop_capabilities": func(c *sandbox.Capabilities) { c.DropCaps = true },
+	"snapshot":          func(c *sandbox.Capabilities) { c.Snapshot = true },
+	"needs_root":        func(c *sandbox.Capabilities) { c.NeedsRoot = true },
+}
+
+// TestSigningKeepsEachCapability is the same check on the way out, through
+// toV1: a control the backend declared is signed under its own key and under
+// no other. Here too the recordings would not notice two flags swapped.
+func TestSigningKeepsEachCapability(t *testing.T) {
+	for key := range v1CapabilitySetters {
+		if backendCapabilitySetters[key] == nil {
+			t.Errorf("no backend capability is checked against the v1 key %q", key)
+		}
+	}
+	for key, set := range backendCapabilitySetters {
+		r := Receipt{Schema: SchemaV1}
+		set(&r.Capabilities)
+		body, err := Canonical(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signed, err := DecodeV1(body)
+		if err != nil {
+			t.Fatalf("%s: what Canonical returns is not a v1 payload: %v", key, err)
+		}
+		b, err := json.Marshal(signed.Capabilities)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(string(b), "true") != 1 || !strings.Contains(string(b), `"`+key+`":true`) {
+			t.Errorf("the capability %q is signed as %s", key, b)
+		}
+	}
+}
+
 // TestV1KeyFiles checks the two forms of the public key against each other
 // and against the key id the recordings were signed under.
 func TestV1KeyFiles(t *testing.T) {
@@ -791,10 +838,11 @@ func TestV1KeyFiles(t *testing.T) {
 	})
 }
 
-// TestVerifyLosesNothingFromV1 holds for as long as Receipt, the type Verify
-// returns, still has the v1 shape: what Verify hands back encodes to the
-// signed bytes again. When Receipt takes another shape this test goes away
-// with the conversion in fromV1; the tests above stay.
+// TestVerifyLosesNothingFromV1 checks fromV1 and toV1 against each other on
+// real receipts: what Verify hands back encodes to the signed bytes again.
+// It holds for as long as Receipt, the type Verify returns, can hold
+// everything a v1 receipt does. When Receipt takes another shape this test
+// goes away with the two conversions; the tests of the frozen structs stay.
 func TestVerifyLosesNothingFromV1(t *testing.T) {
 	pub := v1Key(t)
 	eachV1(t, func(t *testing.T, _ v1Recording, envelope, payload []byte) {

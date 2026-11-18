@@ -35,10 +35,12 @@ type Host struct {
 	BackendVersion   string `json:"backend_version"`
 }
 
-// Receipt is the record of one command run.
+// Receipt is the record of one command run, in the form the rest of the code
+// works with.
 //
-// Every field is a struct, slice or scalar, never a map, so encoding/json
-// output is deterministic. Keep it that way: Canonical relies on it.
+// It is not the form that is signed. Canonical encodes ReceiptV1, the frozen
+// copy in v1.go, so a change to this struct or to the types it embeds cannot
+// change what a receipt of schema v1 holds.
 type Receipt struct {
 	Schema       string               `json:"schema"`
 	ID           string               `json:"id"`
@@ -103,32 +105,41 @@ type Entry struct {
 	Skipped string `json:"skipped,omitempty"`
 }
 
-// Canonical returns the bytes that get signed: encoding/json of the struct,
-// without indentation. It is deterministic because Receipt holds only
-// structs, slices and scalars (field order is the declaration order, and
-// there are no maps). Policy is a RawMessage, which encoding/json compacts.
+// Canonical returns the bytes that get signed: encoding/json of the frozen
+// v1 form of the receipt, without indentation. It is deterministic because
+// ReceiptV1 holds only structs, slices and scalars (field order is the
+// declaration order, and there are no maps). Policy is a RawMessage, which
+// encoding/json compacts.
+//
+// What is signed goes through the frozen structs so that it is always
+// something DecodeV1 reads back: a field that Receipt or a type it embeds
+// gains later cannot slip into a receipt that says it is v1.
 //
 // Timestamps are converted to UTC first, so the signed bytes do not depend on
 // the host time zone.
 func Canonical(r Receipt) ([]byte, error) {
-	r.StartedAt = r.StartedAt.UTC()
-	r.FinishedAt = r.FinishedAt.UTC()
-	return json.Marshal(r)
+	v := toV1(r)
+	v.StartedAt = v.StartedAt.UTC()
+	v.FinishedAt = v.FinishedAt.UTC()
+	return json.Marshal(v)
 }
 
-// fromV1 gives a decoded v1 receipt the type the rest of the code works
-// with. Nothing is lost on the way while that type still has the v1 shape:
-// Canonical(fromV1(r)) is the payload r was decoded from, which the tests
-// check on the recordings in testdata/v1.
+// fromV1 and toV1 carry a receipt between its frozen v1 form, which is what
+// is signed and decoded, and the type the rest of the code works with. While
+// that type can hold everything a v1 receipt does, the two are inverses and
+// nothing is lost either way: Canonical(fromV1(r)) is the payload r was
+// decoded from, which the tests check on the recordings in testdata/v1.
 //
 // A nested struct is converted whole wherever its two shapes agree type for
 // type, on purpose: the day the live one gains, loses, renames or retypes a
 // field, the conversion stops compiling. Three structs cannot be converted
 // whole and are copied field by field: the receipt itself, the capabilities
 // (their network modes have a type of their own) and the diff (so have its
-// entries). The declarations under this function do for those three what the
-// conversions do for the others. Either way, what a v1 receipt means for a
-// new shape has to be decided here instead of happening by accident.
+// entries). The declarations under the two functions do for those three what
+// the conversions do for the others. Either way, what a v1 receipt holds for
+// a new shape has to be decided here instead of happening by accident.
+
+// fromV1 gives a decoded v1 receipt the type the rest of the code works with.
 func fromV1(r ReceiptV1) Receipt {
 	caps := r.Capabilities
 	return Receipt{
@@ -174,14 +185,61 @@ func fromV1(r ReceiptV1) Receipt {
 	}
 }
 
-// The three live structs that fromV1 copies field by field have exactly the
-// fields listed here, in this order and with these types (tags do not
-// count): the conversions below do not compile otherwise.
+// toV1 gives a receipt its frozen v1 form, the one Canonical encodes.
+func toV1(r Receipt) ReceiptV1 {
+	caps := r.Capabilities
+	return ReceiptV1{
+		Schema:  r.Schema,
+		ID:      r.ID,
+		Backend: r.Backend,
+		Capabilities: CapabilitiesV1{
+			Backend:      caps.Backend,
+			Isolation:    caps.Isolation,
+			CPULimit:     caps.CPULimit,
+			MemoryLimit:  caps.MemoryLimit,
+			PIDsLimit:    caps.PIDsLimit,
+			WallTimeout:  caps.WallTimeout,
+			Networks:     mapSlice(caps.Networks, func(m sandbox.NetworkMode) string { return string(m) }),
+			ReadOnlyRoot: caps.ReadOnlyRoot,
+			Seccomp:      caps.Seccomp,
+			DropCaps:     caps.DropCaps,
+			Snapshot:     caps.Snapshot,
+			NeedsRoot:    caps.NeedsRoot,
+			Notes:        caps.Notes,
+		},
+		PolicySHA256:    r.PolicySHA256,
+		Policy:          r.Policy,
+		Image:           ImageRefV1(r.Image),
+		Argv:            r.Argv,
+		ExitCode:        r.ExitCode,
+		Killed:          r.Killed,
+		StartedAt:       r.StartedAt,
+		FinishedAt:      r.FinishedAt,
+		DurationMS:      r.DurationMS,
+		StdoutSHA256:    r.StdoutSHA256,
+		StderrSHA256:    r.StderrSHA256,
+		StdoutTruncated: r.StdoutTruncated,
+		StderrTruncated: r.StderrTruncated,
+		Diff: DiffV1{
+			SHA256:    r.Diff.SHA256,
+			Truncated: r.Diff.Truncated,
+			Entries:   mapSlice(r.Diff.Entries, func(e Entry) EntryV1 { return EntryV1(e) }),
+		},
+		Connections: mapSlice(r.Connections, func(c sandbox.Connection) ConnectionV1 { return ConnectionV1(c) }),
+		Cgroup:      CgroupStatsV1(r.Cgroup),
+		Host:        HostV1(r.Host),
+	}
+}
+
+// The three live structs that fromV1 and toV1 copy field by field have
+// exactly the fields listed here, in this order and with these types (tags
+// do not count): the conversions below do not compile otherwise.
 //
 // A keyed literal alone does not notice a new field. It would compile, and
-// the field would silently be zero in every v1 receipt that Verify returns.
-// When one of these stops compiling, decide in fromV1 what a v1 receipt
-// holds for the new shape, then bring the list in line.
+// the field would silently be zero in every v1 receipt that Verify returns
+// and absent from every receipt that is signed. When one of these stops
+// compiling, decide in fromV1 and toV1 what a v1 receipt holds for the new
+// shape, then bring the list in line.
 var (
 	_ = struct {
 		Schema          string

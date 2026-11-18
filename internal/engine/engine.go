@@ -211,7 +211,10 @@ func (s *Session) Run(ctx context.Context, argv []string) (Output, error) {
 }
 
 func (s *Session) receipt(argv []string, res sandbox.Result, started, finished time.Time) (receipt.Receipt, error) {
-	pol, err := json.Marshal(s.Policy)
+	// The policy is signed in its frozen v1 form, and its hash below is
+	// taken over those very bytes. What a v1 receipt says about its policy
+	// then stays readable and checkable whatever policy.Policy becomes.
+	pol, err := json.Marshal(policyToV1(s.Policy))
 	if err != nil {
 		return receipt.Receipt{}, err
 	}
@@ -240,7 +243,7 @@ func (s *Session) receipt(argv []string, res sandbox.Result, started, finished t
 		ID:              id,
 		Backend:         s.Backend,
 		Capabilities:    s.Caps,
-		PolicySHA256:    s.Policy.Hash(),
+		PolicySHA256:    receipt.PolicyHashV1(pol),
 		Policy:          pol,
 		Image:           receipt.ImageRef{Ref: s.Image.Ref, Digest: s.Image.Digest},
 		Argv:            argv,
