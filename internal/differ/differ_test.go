@@ -1,4 +1,4 @@
-package receipt
+package differ
 
 import (
 	"golang.org/x/sys/unix"
@@ -7,6 +7,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/camilbenameur/sandmeter/receipt"
 )
 
 func write(t *testing.T, root, rel, content string) {
@@ -20,8 +22,8 @@ func write(t *testing.T, root, rel, content string) {
 	}
 }
 
-func byPath(d Diff) map[string]Entry {
-	m := map[string]Entry{}
+func byPath(d receipt.Diff) map[string]receipt.Entry {
+	m := map[string]receipt.Entry{}
 	for _, e := range d.Entries {
 		m[e.Path+"|"+e.Op] = e
 	}
@@ -104,7 +106,7 @@ func TestDiffUpperFIFODoesNotBlock(t *testing.T) {
 	must(t, syscall.Mkfifo(filepath.Join(upper, "pipe"), 0o600))
 
 	done := make(chan struct{})
-	var d Diff
+	var d receipt.Diff
 	var err error
 	go func() {
 		d, err = DiffUpper(upper, nil, 0)

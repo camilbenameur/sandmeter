@@ -26,7 +26,10 @@ that fails on these files has found a change to a published format.
 
 ## How they were made
 
-    go test ./engine -run TestEngineEmitsTheRecordedV1Receipts -update-v1-fixtures
+By the recorder in the engine's tests (the package was `./engine` at the
+commit they were recorded from):
+
+    go test ./internal/engine -run TestEngineEmitsTheRecordedV1Receipts -update-v1-fixtures
 
 `Engine.Start` and `Session.Run` wrote them. What ran for real: the policy
 validation, the image store lookup, the diff walker over real directories,

@@ -1,4 +1,10 @@
-package receipt
+// Package differ computes the change set of a sandbox's writable overlay
+// layer from the host side: the receipt.Diff that every receipt signs.
+//
+// The directory it reads is controlled by the sandboxed program, so nothing
+// here follows a link, blocks on what it finds, or fails because one entry
+// is hard to read. DiffUpper states the rules.
+package differ
 
 import (
 	"crypto/sha256"
@@ -17,44 +23,9 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/camilbenameur/sandmeter/receipt"
 )
-
-// Diff is the change set of a writable overlay layer.
-type Diff struct {
-	// SHA256 is the hex sha256 of the canonical JSON (encoding/json, no
-	// indentation) of Entries, with a nil slice encoded as [].
-	SHA256    string  `json:"sha256"`
-	Truncated bool    `json:"truncated"`
-	Entries   []Entry `json:"entries"`
-}
-
-// Entry is one changed path. Path is slash separated and relative to the root.
-type Entry struct {
-	Path string `json:"path"`
-	// Op is "add", "modify", "delete" or "opaque".
-	Op string `json:"op"`
-	// Type is "file", "dir", "symlink" or "other".
-	Type   string `json:"type"`
-	Mode   uint32 `json:"mode"`
-	Size   int64  `json:"size"`
-	SHA256 string `json:"sha256"`
-	// Target is a symlink target, verbatim. It is never resolved or opened.
-	Target string `json:"target"`
-
-	// PathEscaped and TargetEscaped are set when the name or link target is
-	// not valid UTF-8. JSON would silently replace the bad bytes, so two
-	// different names could collide in the signed record. The field then holds
-	// the strconv.Quote form (\xff style escapes) instead of the raw bytes.
-	PathEscaped   bool `json:"path_escaped,omitempty"`
-	TargetEscaped bool `json:"target_escaped,omitempty"`
-
-	// Skipped is empty for a normal entry. Otherwise the entry is recorded
-	// without content: "unreadable" (permission error, type swapped during
-	// the walk, I/O error) or "too_large" (over the hashing budget). A
-	// hostile program must not be able to suppress the diff by making one
-	// entry hard to read, so such entries are listed instead of failing.
-	Skipped string `json:"skipped,omitempty"`
-}
 
 // Overlayfs stores the opaque marker as a trusted.* xattr for mounts made by
 // root, and as user.* for mounts made from an unprivileged user namespace
@@ -74,7 +45,7 @@ type differ struct {
 	upper  *os.Root
 	lowers []*os.Root
 	limit  int
-	out    []Entry
+	out    []receipt.Entry
 
 	hashed    int64 // bytes read so far, against maxTotalBytes
 	truncated bool  // set when a hashing budget was exceeded
@@ -111,10 +82,10 @@ type differ struct {
 // Entries are sorted by Path (then Op). Walking stops after limit entries and
 // sets Truncated; the kept set is the first entries in name order, so it is
 // deterministic. A limit <= 0 means no limit.
-func DiffUpper(upper string, lowers []string, limit int) (Diff, error) {
+func DiffUpper(upper string, lowers []string, limit int) (receipt.Diff, error) {
 	u, err := os.OpenRoot(upper)
 	if err != nil {
-		return Diff{}, fmt.Errorf("open upper %q: %w", upper, err)
+		return receipt.Diff{}, fmt.Errorf("open upper %q: %w", upper, err)
 	}
 	defer u.Close()
 
@@ -122,7 +93,7 @@ func DiffUpper(upper string, lowers []string, limit int) (Diff, error) {
 	for _, l := range lowers {
 		r, err := os.OpenRoot(l)
 		if err != nil {
-			return Diff{}, fmt.Errorf("open lower %q: %w", l, err)
+			return receipt.Diff{}, fmt.Errorf("open lower %q: %w", l, err)
 		}
 		defer r.Close()
 		d.lowers = append(d.lowers, r)
@@ -131,14 +102,14 @@ func DiffUpper(upper string, lowers []string, limit int) (Diff, error) {
 	truncated := false
 	if err := d.walkRoot(); err != nil {
 		if !errors.Is(err, errLimit) {
-			return Diff{}, fmt.Errorf("walk upper %q: %w", upper, err)
+			return receipt.Diff{}, fmt.Errorf("walk upper %q: %w", upper, err)
 		}
 		truncated = true
 	}
 
 	entries := d.out
 	if entries == nil {
-		entries = []Entry{}
+		entries = []receipt.Entry{}
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
 		if entries[i].Path != entries[j].Path {
@@ -148,12 +119,12 @@ func DiffUpper(upper string, lowers []string, limit int) (Diff, error) {
 	})
 	sum, err := entriesHash(entries)
 	if err != nil {
-		return Diff{}, err
+		return receipt.Diff{}, err
 	}
-	return Diff{SHA256: sum, Truncated: truncated || d.truncated, Entries: entries}, nil
+	return receipt.Diff{SHA256: sum, Truncated: truncated || d.truncated, Entries: entries}, nil
 }
 
-func entriesHash(entries []Entry) (string, error) {
+func entriesHash(entries []receipt.Entry) (string, error) {
 	b, err := json.Marshal(entries)
 	if err != nil {
 		return "", fmt.Errorf("encode diff entries: %w", err)
@@ -162,7 +133,7 @@ func entriesHash(entries []Entry) (string, error) {
 	return hex.EncodeToString(h[:]), nil
 }
 
-func (d *differ) emit(e Entry) error {
+func (d *differ) emit(e receipt.Entry) error {
 	if d.limit > 0 && len(d.out) >= d.limit {
 		return errLimit
 	}
@@ -224,7 +195,7 @@ func (d *differ) visit(p string) error {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil // removed while walking
 		}
-		return d.emit(Entry{Path: p, Op: "add", Type: "other", Skipped: "unreadable"})
+		return d.emit(receipt.Entry{Path: p, Op: "add", Type: "other", Skipped: "unreadable"})
 	}
 	st, _ := info.Sys().(*syscall.Stat_t)
 	mode := uint32(info.Mode().Perm())
@@ -240,7 +211,7 @@ func (d *differ) visit(p string) error {
 	if err != nil {
 		return err
 	}
-	e := Entry{Path: p, Mode: mode, Type: typeOf(info.Mode()), Op: "add"}
+	e := receipt.Entry{Path: p, Mode: mode, Type: typeOf(info.Mode()), Op: "add"}
 	if lowerInfo != nil {
 		e.Op = "modify"
 	}
@@ -265,10 +236,10 @@ func (d *differ) visitWhiteout(p string, mode uint32) error {
 	if li, err := d.inLowers(p); err == nil && li != nil {
 		t = typeOf(li.Mode())
 	}
-	return d.emit(Entry{Path: p, Op: "delete", Type: t, Mode: mode})
+	return d.emit(receipt.Entry{Path: p, Op: "delete", Type: t, Mode: mode})
 }
 
-func (d *differ) visitDir(p string, e Entry, lowerInfo fs.FileInfo) error {
+func (d *differ) visitDir(p string, e receipt.Entry, lowerInfo fs.FileInfo) error {
 	names, rerr := d.readDir(p)
 	if rerr != nil {
 		// Always list a directory we could not enter, even one that exists

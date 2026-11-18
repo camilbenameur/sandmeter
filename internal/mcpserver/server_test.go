@@ -8,7 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/camilbenameur/sandmeter/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/sandbox"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

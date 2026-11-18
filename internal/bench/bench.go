@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/camilbenameur/sandmeter/engine"
+	"github.com/camilbenameur/sandmeter/internal/engine"
 	"github.com/camilbenameur/sandmeter/policy"
 )
 

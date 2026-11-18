@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/camilbenameur/sandmeter/engine"
-	"github.com/camilbenameur/sandmeter/escape"
+	"github.com/camilbenameur/sandmeter/internal/engine"
+	"github.com/camilbenameur/sandmeter/internal/escape"
 	"github.com/camilbenameur/sandmeter/policy"
 )
 

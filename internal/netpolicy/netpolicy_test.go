@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbenameur/sandmeter/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/sandbox"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")

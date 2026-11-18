@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbenameur/sandmeter/backend/gvisor"
-	"github.com/camilbenameur/sandmeter/backend/native"
-	"github.com/camilbenameur/sandmeter/image"
+	"github.com/camilbenameur/sandmeter/internal/backend/gvisor"
+	"github.com/camilbenameur/sandmeter/internal/backend/native"
+	"github.com/camilbenameur/sandmeter/internal/image"
+	"github.com/camilbenameur/sandmeter/internal/sandbox"
 	"github.com/camilbenameur/sandmeter/policy"
 	"github.com/camilbenameur/sandmeter/receipt"
-	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // testImage is pinned by digest so runs are comparable.

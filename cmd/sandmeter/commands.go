@@ -11,7 +11,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/camilbenameur/sandmeter/mcpserver"
+	"github.com/camilbenameur/sandmeter/internal/mcpserver"
 	"github.com/camilbenameur/sandmeter/receipt"
 )
 

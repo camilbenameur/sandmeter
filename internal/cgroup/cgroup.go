@@ -21,7 +21,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/camilbenameur/sandmeter/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/sandbox"
 )
 
 // DefaultParent is the cgroup under which sandbox groups are created.

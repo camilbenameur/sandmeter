@@ -22,10 +22,10 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/camilbenameur/sandmeter/image"
+	"github.com/camilbenameur/sandmeter/internal/image"
+	"github.com/camilbenameur/sandmeter/internal/sandbox"
 	"github.com/camilbenameur/sandmeter/policy"
 	"github.com/camilbenameur/sandmeter/receipt"
-	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // The files under receipt/testdata/v1 are recordings of what this engine

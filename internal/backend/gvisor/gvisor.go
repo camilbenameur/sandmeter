@@ -33,10 +33,10 @@ import (
 	"github.com/camilbenameur/sandmeter/internal/cgroup"
 	"github.com/camilbenameur/sandmeter/internal/iox"
 	"github.com/camilbenameur/sandmeter/internal/layers"
+	"github.com/camilbenameur/sandmeter/internal/netpolicy"
+	"github.com/camilbenameur/sandmeter/internal/sandbox"
 	"github.com/camilbenameur/sandmeter/internal/seccomp"
 	"github.com/camilbenameur/sandmeter/internal/vnet"
-	"github.com/camilbenameur/sandmeter/netpolicy"
-	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // Options configure the backend.

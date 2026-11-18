@@ -1,6 +1,6 @@
 //go:build integration
 
-package receipt
+package differ
 
 import (
 	"errors"

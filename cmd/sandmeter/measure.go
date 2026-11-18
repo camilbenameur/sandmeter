@@ -14,11 +14,11 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 
-	"github.com/camilbenameur/sandmeter/agenteval"
-	"github.com/camilbenameur/sandmeter/bench"
-	"github.com/camilbenameur/sandmeter/engine"
-	"github.com/camilbenameur/sandmeter/escape"
-	"github.com/camilbenameur/sandmeter/escape/harness"
+	"github.com/camilbenameur/sandmeter/internal/agenteval"
+	"github.com/camilbenameur/sandmeter/internal/bench"
+	"github.com/camilbenameur/sandmeter/internal/engine"
+	"github.com/camilbenameur/sandmeter/internal/escape"
+	"github.com/camilbenameur/sandmeter/internal/escape/harness"
 	"github.com/camilbenameur/sandmeter/policy"
 )
 
@@ -26,7 +26,7 @@ func cmdEscape(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("escape", flag.ContinueOnError)
 	backendsFlag := fs.String("backends", "native,gvisor", "comma-separated backends")
 	img := fs.String("image", "docker.io/library/alpine:3.20", "image reference")
-	probe := fs.String("probe", "", "static rfprobe binary (build: CGO_ENABLED=0 go build ./escape/probe)")
+	probe := fs.String("probe", "", "static rfprobe binary (build: CGO_ENABLED=0 go build ./internal/escape/probe)")
 	out := fs.String("out", "", "write the verdicts as JSON to this file")
 	if err := parse(fs, args); err != nil {
 		return err

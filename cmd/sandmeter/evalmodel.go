@@ -9,7 +9,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 
-	"github.com/camilbenameur/sandmeter/agenteval"
+	"github.com/camilbenameur/sandmeter/internal/agenteval"
 )
 
 // evalModelFlags are the eval-agent flags that choose the attacker.

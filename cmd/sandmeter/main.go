@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/camilbenameur/sandmeter/backend/native"
+	"github.com/camilbenameur/sandmeter/internal/backend/native"
 )
 
 var version = "dev"

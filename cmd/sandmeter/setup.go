@@ -7,13 +7,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/camilbenameur/sandmeter/backend/gvisor"
-	"github.com/camilbenameur/sandmeter/backend/native"
-	"github.com/camilbenameur/sandmeter/engine"
-	"github.com/camilbenameur/sandmeter/image"
+	"github.com/camilbenameur/sandmeter/internal/backend/gvisor"
+	"github.com/camilbenameur/sandmeter/internal/backend/native"
+	"github.com/camilbenameur/sandmeter/internal/engine"
+	"github.com/camilbenameur/sandmeter/internal/image"
+	"github.com/camilbenameur/sandmeter/internal/sandbox"
 	"github.com/camilbenameur/sandmeter/policy"
 	"github.com/camilbenameur/sandmeter/receipt"
-	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // idShift is the host uid/gid of root inside every sandbox. Image layers

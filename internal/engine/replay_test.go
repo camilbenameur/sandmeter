@@ -18,7 +18,7 @@ import (
 
 // v1FixtureDir holds the v1 receipts recorded from this engine; see the
 // README there.
-const v1FixtureDir = "../receipt/testdata/v1"
+const v1FixtureDir = "../../receipt/testdata/v1"
 
 // recordedReceipt loads a recorded v1 receipt the way the replay command
 // does: through receipt.Verify, with the public key of the recordings.

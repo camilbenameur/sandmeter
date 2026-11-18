@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/camilbenameur/sandmeter/engine"
-	"github.com/camilbenameur/sandmeter/mcpserver"
+	"github.com/camilbenameur/sandmeter/internal/engine"
+	"github.com/camilbenameur/sandmeter/internal/mcpserver"
 	"github.com/camilbenameur/sandmeter/policy"
 	"github.com/camilbenameur/sandmeter/receipt"
 )

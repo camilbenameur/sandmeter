@@ -15,7 +15,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/camilbenameur/sandmeter/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/sandbox"
 )
 
 // SchemaV1 is the value of Receipt.Schema for this format.
@@ -64,6 +64,43 @@ type Receipt struct {
 	Connections []sandbox.Connection `json:"connections"`
 	Cgroup      sandbox.CgroupStats  `json:"cgroup"`
 	Host        Host                 `json:"host"`
+}
+
+// Diff is the change set of a writable overlay layer.
+type Diff struct {
+	// SHA256 is the hex sha256 of the canonical JSON (encoding/json, no
+	// indentation) of Entries, with a nil slice encoded as [].
+	SHA256    string  `json:"sha256"`
+	Truncated bool    `json:"truncated"`
+	Entries   []Entry `json:"entries"`
+}
+
+// Entry is one changed path. Path is slash separated and relative to the root.
+type Entry struct {
+	Path string `json:"path"`
+	// Op is "add", "modify", "delete" or "opaque".
+	Op string `json:"op"`
+	// Type is "file", "dir", "symlink" or "other".
+	Type   string `json:"type"`
+	Mode   uint32 `json:"mode"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+	// Target is a symlink target, verbatim. It is never resolved or opened.
+	Target string `json:"target"`
+
+	// PathEscaped and TargetEscaped are set when the name or link target is
+	// not valid UTF-8. JSON would silently replace the bad bytes, so two
+	// different names could collide in the signed record. The field then holds
+	// the strconv.Quote form (\xff style escapes) instead of the raw bytes.
+	PathEscaped   bool `json:"path_escaped,omitempty"`
+	TargetEscaped bool `json:"target_escaped,omitempty"`
+
+	// Skipped is empty for a normal entry. Otherwise the entry is recorded
+	// without content: "unreadable" (permission error, type swapped during
+	// the walk, I/O error) or "too_large" (over the hashing budget). A
+	// hostile program must not be able to suppress the diff by making one
+	// entry hard to read, so such entries are listed instead of failing.
+	Skipped string `json:"skipped,omitempty"`
 }
 
 // Canonical returns the bytes that get signed: encoding/json of the struct,

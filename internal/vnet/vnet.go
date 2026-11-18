@@ -18,7 +18,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 
-	"github.com/camilbenameur/sandmeter/netpolicy"
+	"github.com/camilbenameur/sandmeter/internal/netpolicy"
 )
 
 // maxNetIndex matches the /30 pool of netpolicy.Allocate.

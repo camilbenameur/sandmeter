@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/camilbenameur/sandmeter/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/sandbox"
 )
 
 // Conn is one flow seen by the firewall.

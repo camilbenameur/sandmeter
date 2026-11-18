@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbenameur/sandmeter/agenteval"
+	"github.com/camilbenameur/sandmeter/internal/agenteval"
 )
 
 func runCLI(args ...string) (int, string, string) {

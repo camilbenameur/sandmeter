@@ -23,10 +23,11 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/camilbenameur/sandmeter/image"
+	"github.com/camilbenameur/sandmeter/internal/differ"
+	"github.com/camilbenameur/sandmeter/internal/image"
+	"github.com/camilbenameur/sandmeter/internal/sandbox"
 	"github.com/camilbenameur/sandmeter/policy"
 	"github.com/camilbenameur/sandmeter/receipt"
-	"github.com/camilbenameur/sandmeter/sandbox"
 )
 
 // DiffLimit caps the number of entries in a receipt diff.
@@ -217,7 +218,7 @@ func (s *Session) receipt(argv []string, res sandbox.Result, started, finished t
 	var diff receipt.Diff
 	if l, ok := s.sb.(sandbox.Layered); ok {
 		upper, lowers := l.Layers()
-		diff, err = receipt.DiffUpper(upper, lowers, DiffLimit)
+		diff, err = differ.DiffUpper(upper, lowers, DiffLimit)
 		if err != nil {
 			return receipt.Receipt{}, fmt.Errorf("diff: %w", err)
 		}
