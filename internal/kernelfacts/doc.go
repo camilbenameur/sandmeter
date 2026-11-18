@@ -226,9 +226,11 @@
 //
 // Two rules keep the host safe. A helper that mounts or configures a
 // network first checks that it is not in the namespace of the test process,
-// so a forgotten clone flag cannot touch the host. And a helper that waits
-// does so on its standard input, whose other end only the test holds: when
-// the test dies, the helper ends, and its namespaces with it.
+// so a forgotten clone flag cannot touch the host; a self-test starts each
+// of them without its flags, and without privilege, to see it refuse. And a
+// helper that waits does so on its standard input, whose other end only the
+// test holds: when the test dies, the helper ends, and its namespaces with
+// it.
 //
 // Where half of a mechanism needs no privilege (the socket passing of K1,
 // the path resolution of T-mnt, the crash of K7), a self-test next to the

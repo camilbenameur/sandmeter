@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -64,8 +65,8 @@ func TestSelfDocListsEveryFact(t *testing.T) {
 	}
 }
 
-// The guard of every helper that mounts or configures a network: in the
-// namespaces of the test process it refuses.
+// The guard that a helper calls before it mounts or configures a network:
+// in the namespaces of the test process it refuses.
 func TestSelfHelpersRefuseTheHost(t *testing.T) {
 	for kind, env := range map[string]string{"mnt": hostMntEnv, "net": hostNetEnv} {
 		t.Setenv(env, nsLink(kind))
@@ -81,6 +82,45 @@ func TestSelfHelpersRefuseTheHost(t *testing.T) {
 		if err := outsideHost(kind, env); err != nil {
 			t.Errorf("a helper in another %s namespace is refused: %v", kind, err)
 		}
+	}
+}
+
+// Every helper that mounts or configures a network is started here the way
+// a forgotten clone flag would start it, in the namespaces of the test
+// process. Each must stop at its guard, before it creates anything.
+//
+// Under root the helpers run as nobody: a guard that came to be missing
+// then meets a refusal of the kernel, and never the host.
+func TestSelfHelpersStopAtTheGuard(t *testing.T) {
+	dir := t.TempDir()
+	work := filepath.Join(dir, "work")
+	for _, argv := range [][]string{
+		{"k1netns", "3128", "3129", "nonce"},
+		{"k2userns", "write"},
+		{"k2binotify", "4", ""},
+		{"k3", work, "replace"},
+		{"k4worker", work},
+		{"k4probe", work},
+		{"k6worker", work, "/nonexistent/runsc", "id"},
+		{"k9tmpfs", work, ""},
+		{"k11idmap", work, "1000", "1000"},
+		{"tloop", work, "/nonexistent/mkfs.ext4", "unmount"},
+		{"tmnt", work, work + "-outside"},
+		{"tsyncfs", work},
+	} {
+		var nothing struct{}
+		err := runChild(t, spawn{name: argv[0], args: argv[1:], nobody: os.Geteuid() == 0}, &nothing)
+		if errors.Is(err, fs.ErrPermission) {
+			t.Fatalf("a helper that is not root could not be started (%v): the test binary must leave r-x to others. Until it does, every fact measured in a user namespace reads \"no\" for that reason alone", err)
+		}
+		// The stand-in for the init checks that it is PID 1 before anything
+		// else, which it is not here.
+		if err == nil || !(strings.Contains(err.Error(), "refusing to go on") || strings.Contains(err.Error(), "expected to be PID 1")) {
+			t.Errorf("helper %s, started in the namespaces of the test process, did not stop at its guard: %v", argv[0], err)
+		}
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Errorf("the refused helpers left %d entries in their directory (%v)", len(entries), err)
 	}
 }
 

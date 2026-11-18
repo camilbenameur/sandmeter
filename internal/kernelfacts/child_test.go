@@ -177,10 +177,15 @@ type spawn struct {
 	args   []string   // its arguments
 	clone  uintptr    // CLONE_NEW* flags
 	userns bool       // also a new user namespace: 0 is idShift, the helper runs as 0:0
+	nobody bool       // run as nobodyID without any privilege; for a root test, not with userns
 	cgroup string     // cgroup directory to clone into (CLONE_INTO_CGROUP)
 	files  []*os.File // inherited as descriptors 3, 4, ...
 	wrap   []string   // command that runs the helper, such as systemd-run --scope
 }
+
+// nobodyID is the uid and gid of a helper that must be able to do nothing:
+// the overflow id, which owns no file of the tests.
+const nobodyID = 65534
 
 // child is a running helper, seen from the test.
 type child struct {
@@ -244,6 +249,9 @@ func startChild(dir string, s spawn) (*child, error) {
 	cmd.ExtraFiles = s.files
 	cmd.Env = append(os.Environ(), hostMntEnv+"="+nsLink("mnt"), hostNetEnv+"="+nsLink("net"))
 	attr := &syscall.SysProcAttr{Cloneflags: s.clone}
+	if s.nobody {
+		attr.Credential = &syscall.Credential{Uid: nobodyID, Gid: nobodyID, Groups: []uint32{}}
+	}
 	if s.userns {
 		usernsAttr(attr)
 	}
