@@ -23,7 +23,18 @@ var catalogue = []def{
 	{"K2b-unbounded", "host root can still create an inotify instance while a sandbox user namespace holds as many as the kernel lets it create", false},
 	{"K2b-lowered", "host root can still create an inotify instance once the sandbox lowered user/max_inotify_instances in its own user namespace", false},
 
+	{"K3-replace", "lower files replaced while the overlay was unmounted are seen at the next mount, and an upper copy wins until it is dropped", true},
+	{"K3-delete-file", "lower files deleted while the overlay was unmounted are gone at the next mount, and an upper copy stays until it is dropped", true},
+	{"K3-delete-dir", "a lower directory deleted while the overlay was unmounted leaves only its upper counterpart at the next mount", true},
+
+	{"K9-whiteouts", "an overlay whose upper and work directories are on a size-capped tmpfs handles whiteouts and opaque directories, across a remount", true},
+	{"K9-size", "that overlay returns ENOSPC when the tmpfs reaches size=", true},
+	{"K9-inodes", "that overlay returns ENOSPC when the tmpfs reaches nr_inodes=", true},
+	{"K9-memcg", "the pages written to the tmpfs upper layer are charged to the cgroup of the writer", false},
+
 	{"K10", "this runner ran the kernel-facts tests", false},
+
+	{"T-syncfs", "unmounting an overlay stays under one second after 50 MiB and after 5,000 small files were written", false},
 
 	{"T-host-kernel", "kernel release", false},
 	{"T-host-arch", "architecture", false},

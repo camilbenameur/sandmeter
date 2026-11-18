@@ -88,6 +88,27 @@
 // barrier, and the profile "off" is documented as removing it. A "no" to
 // K2b-lowered publishes the limit as not enforced, in the threat model too.
 //
+// The workspace overlay. It is mounted for one command at a time; between
+// two commands the lower tree is refreshed from the host while nothing is
+// mounted, and the upper entries of the changed paths are dropped. The
+// opt-in disk quota puts the upper layer on a tmpfs.
+//
+//	K3-replace      required  a lower file replaced between two mounts
+//	K3-delete-file  required  a lower file deleted between two mounts
+//	K3-delete-dir   required  a lower directory deleted that has an upper
+//	                          counterpart
+//	K9-whiteouts    required  overlayfs works with its upper layer on a tmpfs
+//	K9-size         required  size= answers ENOSPC through the overlay
+//	K9-inodes       required  nr_inodes= answers ENOSPC through the overlay
+//	K9-memcg        recorded  the quota is charged to the memory of the writer's
+//	                          cgroup, as the documentation is about to say
+//	T-syncfs        recorded  what an unmount per command costs: a benchmark row
+//
+// A "no" to a K3 fact replaces the refresh in place by a new lower directory
+// per refresh, built as a hard-link farm of the previous one. A "no" to a
+// required K9 fact cuts the tmpfs quota: a disk limit is refused and the
+// free-space floor is the only guard.
+//
 // The runner. Every fact is a fact about one kernel on one image; these say
 // which, so that "tested" is claimed for exactly what ran.
 //

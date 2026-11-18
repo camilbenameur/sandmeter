@@ -16,4 +16,8 @@ var children = map[string]func(args []string) error{
 
 	"k2userns":   childK2,
 	"k2binotify": childK2b,
+
+	"k3":      childK3,
+	"k9tmpfs": childK9,
+	"tsyncfs": childSyncfs,
 }
