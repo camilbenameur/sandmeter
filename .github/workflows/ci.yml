@@ -44,11 +44,11 @@ jobs:
         include:
           - { name: cgroup, pkg: ./internal/cgroup, run: "." }
           - { name: seccomp, pkg: ./internal/seccomp, run: "." }
-          - { name: image, pkg: ./image, run: "." }
-          - { name: receipt, pkg: ./receipt, run: "." }
-          - { name: netpolicy, pkg: ./netpolicy, run: "." }
-          - { name: engine-native, pkg: ./engine, run: "/native$" }
-          - { name: engine-gvisor, pkg: ./engine, run: "/gvisor$" }
+          - { name: image, pkg: ./internal/image, run: "." }
+          - { name: differ, pkg: ./internal/differ, run: "." }
+          - { name: netpolicy, pkg: ./internal/netpolicy, run: "." }
+          - { name: engine-native, pkg: ./internal/engine, run: "/native$" }
+          - { name: engine-gvisor, pkg: ./internal/engine, run: "/gvisor$" }
     env:
       SANDMETER_NET_TESTS: "1"
     steps:

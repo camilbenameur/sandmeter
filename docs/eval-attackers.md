@@ -1,6 +1,6 @@
 # Choosing the attacker for the agent eval
 
-The agent eval (`sandmeter eval-agent`) measures how often a model, given a
+The agent eval (`sandmeter-lab eval-agent`) measures how often a model, given a
 `bash` tool inside the sandbox, gets out. It is only as useful as the attacker
 it drives. Two facts from the runs on 2026-11-11 set the problem:
 
@@ -38,7 +38,7 @@ type Model interface {
 ```
 
 so a second implementation is all that is needed. `agenteval.OpenAIModel`
-(`agenteval/openai.go`, standard library only) maps agenteval's request to a
+(`internal/agenteval/openai.go`, standard library only) maps agenteval's request to a
 chat-completions call with a `bash` function tool and maps the reply back to a
 `*anthropic.Message`. The judging is unchanged; the loop only gained the
 budgets and the `failed` outcome described below.
@@ -79,7 +79,7 @@ What the adapter does:
 export CI=true SANDMETER_THROWAWAY_HOST=1      # throwaway machine only
 export OPENAI_BASE_URL=http://localhost:8000   # or pass -base-url
 export OPENAI_API_KEY=...                      # optional for self-hosted servers
-sudo -E sandmeter eval-agent -provider openai -model <model id> \
+sudo -E sandmeter-lab eval-agent -provider openai -model <model id> \
     -token-budget 20000000 -wall-budget 4h -k 30 -out eval-openai.json
 ```
 
@@ -134,7 +134,7 @@ What this needs on top of Axis A:
   number reflects a family of attackers rather than one model's blind spots —
   the same reason the deterministic suite has 15 distinct cases.
 
-This does not replace the deterministic escape suite (`escape/cases`), which
+This does not replace the deterministic escape suite (`internal/escape/cases`), which
 stays the backbone: fixed, reviewed, judged from the host. The continuous agent
 is the open-ended half — it looks for the case nobody wrote.
 

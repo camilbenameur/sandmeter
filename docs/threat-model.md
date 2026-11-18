@@ -39,8 +39,9 @@ content is trusted), and the hardware.
 
 ## What sandmeter aims to stop (and measures)
 
-Each line is covered by at least one case of the escape suite in `escape/cases`;
-the result table in the README says which cases were blocked on which backend.
+Each line is covered by at least one case of the escape suite in
+`internal/escape/cases`; the result table in the README says which cases were
+blocked on which backend.
 
 - Reading host files through `/proc/<pid>/root`, `/proc/<pid>/cwd`, file handles
   (`open_by_handle_at`), or direct paths.

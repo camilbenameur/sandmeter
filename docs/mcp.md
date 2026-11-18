@@ -1,7 +1,7 @@
 # MCP server
 
 `sandmeter mcp` runs an MCP server on stdin/stdout, so a coding agent can run
-commands in a sandbox through tool calls. The code is in `mcpserver/`.
+commands in a sandbox through tool calls. The code is in `internal/mcpserver/`.
 
 This is an educational prototype. Do not rely on it to contain hostile code.
 
@@ -70,11 +70,12 @@ when `session_id` is set.
 `argv` is an argument vector, not a shell string. To use shell syntax, pass
 `["sh", "-c", "..."]`.
 
-## Library use
+## Inside the module
 
 ```go
 err := mcpserver.Serve(ctx, svc, version)
 ```
 
 `svc` implements `mcpserver.Service`. The server depends on nothing else, which
-is how the tests drive it with a fake.
+is how the tests drive it with a fake. The package is internal: other modules
+cannot import it.

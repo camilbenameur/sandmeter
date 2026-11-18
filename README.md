@@ -42,7 +42,7 @@ It is not affiliated with any model vendor or with the gVisor project.
   and compares exit code, stdout hash and diff hash.
 - **Snapshots** freeze the writable layer by turning it into a read-only layer
   (a rename, no copy). Restoring rebuilds the layer stack.
-- **Escape suite.** 15 cases (`escape/cases`), each imitating a known technique,
+- **Escape suite.** 15 cases (`internal/escape/cases`), each imitating a known technique,
   run on every backend. Verdicts come from host-side evidence (a canary token on
   the host, a marker file, host sysctls before and after, TCP listeners, the
   firewall log, cgroup peaks), not from what the script prints.
@@ -61,7 +61,7 @@ It is not affiliated with any model vendor or with the gVisor project.
 
 These numbers come from one run of the `measure` workflow on a GitHub-hosted
 `ubuntu-latest` runner (2 vCPU, ~8 GB, kernel 7.0.0-azure) on 2026-11-11.
-Reproduce them with `sudo sandmeter escape` and `sudo sandmeter bench`; the
+Reproduce them with `sudo sandmeter escape` and `sudo sandmeter-lab bench`; the
 raw JSON is in that workflow's artifacts, and [docs/escape.md](docs/escape.md)
 and [docs/bench.md](docs/bench.md) hold the full tables. Numbers from other
 hardware are not comparable.
@@ -149,7 +149,7 @@ honest ratio to show.
 | No network (`none`), or TCP only to listed `ip:port` (`allowlist`), never to the host itself, no IPv6 | Following DNS changes: names are resolved once, IP-based rules after that |
 | A receipt that shows if the file changed after signing, and which key signed it | Proof that the host ran the command honestly (no attestation) |
 | Host tools never follow symlinks planted in the writable layer | A micro-VM boundary: there is no Firecracker backend (see [docs/kvm.md](docs/kvm.md)) |
-| Results replayable with one command (`bench/`, `escape/`) | Any guarantee beyond the cases in `escape/cases`, which were written by the author |
+| Results replayable with one command (`internal/bench/`, `internal/escape/`) | Any guarantee beyond the cases in `internal/escape/cases`, which were written by the author |
 
 Full threat model: [docs/threat-model.md](docs/threat-model.md).
 
@@ -163,8 +163,9 @@ go build -o sandmeter ./cmd/sandmeter
 sudo ./sandmeter run -- sh -c 'echo hello > /workspace/out.txt; cat /etc/os-release'
 sudo ./sandmeter verify /var/lib/sandmeter/receipts/<id>-1.json
 sudo ./sandmeter run -backend gvisor -policy examples/allowlist.toml -- wget -qO- http://example.com
-sudo ./sandmeter escape -probe "$(CGO_ENABLED=0 go build -o /tmp/rfprobe ./escape/probe && echo /tmp/rfprobe)"
-sudo ./sandmeter bench
+sudo ./sandmeter escape -probe "$(CGO_ENABLED=0 go build -o /tmp/sandmeter-probe ./cmd/sandmeter-probe && echo /tmp/sandmeter-probe)"
+go build -o sandmeter-lab ./cmd/sandmeter-lab
+sudo ./sandmeter-lab bench
 ```
 
 `sandmeter caps -backend native` prints what a backend enforces on this host;
@@ -174,22 +175,29 @@ sudo ./sandmeter bench
 
 | Path | What |
 |---|---|
-| `sandbox/` | `Backend` and `Sandbox` interfaces, `Capabilities` |
+| `cmd/sandmeter/` | the CLI and the MCP server command |
+| `cmd/sandmeter-lab/` | the benchmark and the agent escape eval commands |
+| `cmd/sandmeter-probe/` | the probe helper the escape cases call inside the sandbox |
 | `policy/` | TOML policy, validation against capabilities |
-| `backend/native/` | the hand-written backend and its in-sandbox init |
-| `backend/gvisor/` | runsc backend (OCI bundle on the shared host side) |
+| `receipt/` | receipt format, DSSE signing, verification |
+| `internal/sandbox/` | `Backend` and `Sandbox` interfaces, `Capabilities` |
+| `internal/backend/native/` | the hand-written backend and its in-sandbox init |
+| `internal/backend/gvisor/` | runsc backend (OCI bundle on the shared host side) |
+| `internal/hidden/` | the hidden entry points of the binaries (the sandbox init) |
 | `internal/layers/` | overlay stack, snapshots |
 | `internal/seccomp/` | seccomp-BPF assembled by hand (amd64, arm64) |
 | `internal/cgroup/` | cgroup v2 groups, limits, counters |
-| `internal/vnet/`, `netpolicy/` | veth pair, addressing, nftables ruleset and flow log |
-| `image/` | OCI pull, safe layer extraction, layer cache |
-| `receipt/` | diff of the writable layer, DSSE signing, verification |
-| `engine/` | glue, replay |
-| `escape/` | escape cases, probe helper, judge, harness |
-| `bench/` | benchmark |
-| `agenteval/` | the agent escape eval |
-| `mcpserver/`, `skill/` | MCP server and agent skill |
+| `internal/vnet/`, `internal/netpolicy/` | veth pair, addressing, nftables ruleset and flow log |
+| `internal/image/` | OCI pull, safe layer extraction, layer cache |
+| `internal/differ/` | diff of the writable layer |
+| `internal/engine/` | glue, replay |
+| `internal/escape/` | escape cases, judge, harness |
+| `internal/bench/` | benchmark |
+| `internal/agenteval/` | the agent escape eval |
+| `internal/mcpserver/`, `skill/` | MCP server and agent skill |
 | `docs/` | threat model, KVM verdict, MCP setup |
+
+Only `policy/` and `receipt/` can be imported from another module.
 
 ## Related
 

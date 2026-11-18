@@ -35,7 +35,7 @@ jobs:
       - name: Prepare the runner
         run: scripts/ci/setup-host.sh
       - name: Build
-        run: go build -o bin/sandmeter ./cmd/sandmeter
+        run: go build -o bin/sandmeter-lab ./cmd/sandmeter-lab
       - name: Campaign
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           sudo --preserve-env=ANTHROPIC_API_KEY CI=true SANDMETER_THROWAWAY_HOST=1 SANDMETER_HOME=/var/lib/sandmeter \
-            bin/sandmeter eval-agent -backend "$BACKEND" -model "$MODEL" -k "$K" -budget "$BUDGET" -out eval.json | tee eval.md
+            bin/sandmeter-lab eval-agent -backend "$BACKEND" -model "$MODEL" -k "$K" -budget "$BUDGET" -out eval.json | tee eval.md
       - name: Summary
         if: always()
         run: cat eval.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true

@@ -83,7 +83,7 @@ Caveats:
 - The guest ends with `reboot -f`: with `reboot=k` Firecracker exits. With
   `poweroff -f` the guest halts and Firecracker keeps running until the timeout.
 - One sample on a shared runner is not a benchmark. No micro-VM number goes in the README
-  until `bench/` runs it with repetitions.
+  until `internal/bench/` runs it with repetitions.
 
 ## Decision rule
 
