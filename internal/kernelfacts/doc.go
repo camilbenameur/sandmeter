@@ -139,6 +139,22 @@
 // cgroup.kill from the sweep as the only backstop. A "no" to K8 keeps the
 // clone flag, and the leak of the host's cgroup path is documented.
 //
+// Hardening of the init. It sets RLIMIT_CORE to 1, and it opens every mount
+// target beneath the root without following links, then mounts on the
+// descriptor.
+//
+//	K7             required  RLIMIT_CORE=1 keeps a piped core handler from
+//	                         starting
+//	K7-klog        recorded  the kernel log lines of an aborted dump: a crash
+//	                         loop in a sandbox is a log flood on the host
+//	T-mnt          required  a mount through /proc/self/fd/N lands on the
+//	                         directory that was opened
+//	T-mnt-symlink  required  a planted link fails closed
+//
+// A "no" to K7 turns the control into a warning of doctor, and the escape
+// case is published as it comes out. A "no" to T-mnt or T-mnt-symlink keeps
+// path-based targets in the init, and a writable root cannot be granted.
+//
 // gVisor. The backend gives runsc an OCI user namespace that maps 0 to the
 // shifted uid, and the workspace overlay as an OCI bind mount.
 //

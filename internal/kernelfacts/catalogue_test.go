@@ -39,6 +39,9 @@ var catalogue = []def{
 	{"K6-uids", "the Sentry and the gofer run as the shifted uid on the host", false},
 	{"K6-submount", "a mount placed under the root path before runsc starts is visible inside the sandbox", false},
 
+	{"K7", "with a piped core handler, a crash under RLIMIT_CORE=1 does not start the handler while RLIMIT_CORE=0 and unlimited do", true},
+	{"K7-klog", "the kernel log names the dump it aborted because of RLIMIT_CORE=1", false},
+
 	{"K8", "unshare(CLONE_NEWCGROUP) from inside the target cgroup makes /proc/self/cgroup read 0::/", true},
 	{"K8-cloneflag", "CLONE_NEWCGROUP given to the clone that uses CLONE_INTO_CGROUP also makes /proc/self/cgroup read 0::/", false},
 
@@ -52,6 +55,8 @@ var catalogue = []def{
 	{"T-syncfs", "unmounting an overlay stays under one second after 50 MiB and after 5,000 small files were written", false},
 	{"T-pids-leaf", "with pids.max on the session group and on the leaf, a fork refused by the leaf limit is counted in the leaf's pids.events", true},
 	{"T-pids-session", "a fork refused by the session limit is also counted in the leaf's pids.events", false},
+	{"T-mnt", "inside a user namespace, a mount target opened with openat2(RESOLVE_IN_ROOT|RESOLVE_NO_SYMLINKS|RESOLVE_NO_MAGICLINKS) and mounted through /proc/self/fd/N lands on that directory", true},
+	{"T-mnt-symlink", "a symbolic link planted at or above the target makes that open fail with ELOOP and nothing is mounted", true},
 
 	{"T-host-kernel", "kernel release", false},
 	{"T-host-arch", "architecture", false},

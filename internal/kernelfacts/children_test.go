@@ -32,4 +32,7 @@ var children = map[string]func(args []string) error{
 
 	"k6worker": childK6Worker,
 	"k6probe":  childK6Probe,
+
+	"k7crash": childK7Crash,
+	"tmnt":    childMnt,
 }
