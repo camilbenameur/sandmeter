@@ -15,7 +15,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/camilbenameur/sandmeter/internal/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/prototype/sandbox"
 )
 
 // SchemaV1 is the value of Receipt.Schema for this format.

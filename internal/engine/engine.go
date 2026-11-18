@@ -25,8 +25,8 @@ import (
 
 	"github.com/camilbenameur/sandmeter/internal/differ"
 	"github.com/camilbenameur/sandmeter/internal/image"
-	"github.com/camilbenameur/sandmeter/internal/sandbox"
-	"github.com/camilbenameur/sandmeter/policy"
+	"github.com/camilbenameur/sandmeter/internal/prototype/policy"
+	"github.com/camilbenameur/sandmeter/internal/prototype/sandbox"
 	"github.com/camilbenameur/sandmeter/receipt"
 )
 

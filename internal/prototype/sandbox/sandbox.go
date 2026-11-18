@@ -1,4 +1,11 @@
-// Package sandbox defines the contract every isolation backend implements.
+// Package sandbox is the backend contract of the prototype: the types the
+// first engine and the first two backends were written against.
+//
+// It is kept, unchanged, for as long as that engine and those backends run
+// the commands of the sandmeter binary. The contract that replaces it is
+// package internal/sandbox. Nothing new may import this package: a test of
+// the import graph lists the packages that still do, and the list only
+// shrinks. When it is empty the whole internal/prototype tree goes.
 //
 // A backend declares what it can enforce through Capabilities. The policy
 // package refuses a policy that asks for something the chosen backend cannot

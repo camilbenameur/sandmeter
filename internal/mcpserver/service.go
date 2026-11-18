@@ -3,7 +3,7 @@ package mcpserver
 import (
 	"context"
 
-	"github.com/camilbenameur/sandmeter/internal/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/prototype/sandbox"
 )
 
 // Service is everything the MCP server needs from the rest of sandmeter.

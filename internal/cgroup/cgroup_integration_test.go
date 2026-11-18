@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/camilbenameur/sandmeter/internal/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/prototype/sandbox"
 )
 
 // testParent creates a throwaway parent under the cgroup v2 root and removes

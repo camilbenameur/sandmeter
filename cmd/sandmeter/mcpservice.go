@@ -11,7 +11,7 @@ import (
 
 	"github.com/camilbenameur/sandmeter/internal/engine"
 	"github.com/camilbenameur/sandmeter/internal/mcpserver"
-	"github.com/camilbenameur/sandmeter/policy"
+	"github.com/camilbenameur/sandmeter/internal/prototype/policy"
 	"github.com/camilbenameur/sandmeter/receipt"
 )
 

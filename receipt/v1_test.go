@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbenameur/sandmeter/internal/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/prototype/sandbox"
 )
 
 // The tests in this file hold schema v1 in place. They read the recordings

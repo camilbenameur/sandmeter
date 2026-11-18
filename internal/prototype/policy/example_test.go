@@ -3,7 +3,7 @@ package policy
 import "testing"
 
 func TestExampleFileIsTheDefault(t *testing.T) {
-	p, err := Load("../examples/default.toml")
+	p, err := Load("../../../examples/default.toml")
 	if err != nil {
 		t.Fatal(err)
 	}

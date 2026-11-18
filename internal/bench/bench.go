@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/camilbenameur/sandmeter/internal/engine"
-	"github.com/camilbenameur/sandmeter/policy"
+	"github.com/camilbenameur/sandmeter/internal/prototype/policy"
 )
 
 // Options select how much to measure.

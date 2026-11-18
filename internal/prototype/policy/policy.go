@@ -1,5 +1,13 @@
-// Package policy loads a sandbox policy and checks it against what a backend
-// can enforce.
+// Package policy is the policy of the prototype: schema v1 of the policy
+// file, and its check against what a prototype backend declares.
+//
+// It is kept, unchanged, for as long as the first engine runs the commands of
+// the sandmeter binary, so that a policy file and the receipts written for it
+// mean today what they meant before. The package that replaces it is the
+// importable package policy at the root of the module, which reads schema v2
+// and maps a v1 file onto it. Nothing new may import this package: a test of
+// the import graph lists the packages that still do, and the list only
+// shrinks.
 package policy
 
 import (
@@ -16,7 +24,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/camilbenameur/sandmeter/internal/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/prototype/sandbox"
 )
 
 // Policy is the on-disk policy format (TOML).

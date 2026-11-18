@@ -23,7 +23,7 @@ import (
 
 	"github.com/camilbenameur/sandmeter/internal/engine"
 	"github.com/camilbenameur/sandmeter/internal/escape"
-	"github.com/camilbenameur/sandmeter/policy"
+	"github.com/camilbenameur/sandmeter/internal/prototype/policy"
 )
 
 // Harness runs cases.

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbenameur/sandmeter/internal/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/prototype/sandbox"
 )
 
 func sample() Receipt {

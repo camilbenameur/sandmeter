@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/camilbenameur/sandmeter/internal/sandbox"
+	"github.com/camilbenameur/sandmeter/internal/prototype/sandbox"
 )
 
 // Evidence is everything the harness collected about one case run: what the

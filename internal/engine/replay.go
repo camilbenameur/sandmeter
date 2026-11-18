@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/camilbenameur/sandmeter/policy"
+	"github.com/camilbenameur/sandmeter/internal/prototype/policy"
 	"github.com/camilbenameur/sandmeter/receipt"
 )
 

@@ -18,7 +18,7 @@ import (
 	"github.com/camilbenameur/sandmeter/internal/bench"
 	"github.com/camilbenameur/sandmeter/internal/engine"
 	"github.com/camilbenameur/sandmeter/internal/escape"
-	"github.com/camilbenameur/sandmeter/policy"
+	"github.com/camilbenameur/sandmeter/internal/prototype/policy"
 )
 
 func cmdBench(ctx context.Context, args []string, stdout io.Writer) error {
