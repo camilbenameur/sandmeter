@@ -9,6 +9,21 @@
 // honest, that the sandbox held, or that the recorded facts are true. There
 // is no attestation of the host or the backend here. This is an educational
 // prototype.
+//
+// # Schema versions
+//
+// The payload of an envelope starts with its schema string, and a receipt is
+// decoded by the structs of that schema and by no others. Each schema has a
+// file of its own (v1.go, v2types.go) that holds every struct the schema
+// signs.
+//
+// Within a schema version no field is added. None is removed, renamed,
+// re-tagged or given another type either: a change of any kind is a new
+// schema version with a new schema string, in a new file. Decoding is strict
+// for the same reason: a payload with a field its schema does not have is
+// refused, because a reader that skipped it could pass over the one field
+// that says "this list is incomplete". A build verifies every schema version
+// that was ever published, and refuses a version it does not know.
 package receipt
 
 import (

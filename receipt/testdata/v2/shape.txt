@@ -1,0 +1,184 @@
+RecordV2
+	Schema string `json:"schema"`
+	Kind string `json:"kind"`
+	ID string `json:"id"`
+	Chain receipt.ChainV2 `json:"chain"`
+	Time time.Time `json:"time"`
+	Host receipt.HostV2 `json:"host"`
+	Command *receipt.CommandV2 `json:"command,omitempty"`
+	Snapshot *receipt.SnapshotV2 `json:"snapshot,omitempty"`
+	Restore *receipt.RestoreV2 `json:"restore,omitempty"`
+	Export *receipt.ExportV2 `json:"export,omitempty"`
+	Stop *receipt.StopV2 `json:"stop,omitempty"`
+	Interrupted *receipt.InterruptedV2 `json:"interrupted,omitempty"`
+ChainV2
+	Session string `json:"session"`
+	Seq uint64 `json:"seq"`
+	PrevSHA256 string `json:"prev_sha256"`
+HostV2
+	Kernel string `json:"kernel"`
+	Arch string `json:"arch"`
+	SandmeterVersion string `json:"sandmeter_version"`
+	Commit string `json:"commit"`
+	Backend string `json:"backend"`
+	BackendVersion string `json:"backend_version"`
+CommandV2
+	Argv []string `json:"argv"`
+	EnvNames []string `json:"env_names"`
+	Workdir string `json:"workdir"`
+	Policy json.RawMessage `json:"policy"`
+	PolicySHA256 string `json:"policy_sha256"`
+	CeilingSHA256 string `json:"ceiling_sha256"`
+	Image receipt.ImageV2 `json:"image"`
+	Outcome receipt.OutcomeV2 `json:"outcome"`
+	StartedAt time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
+	DurationMS int64 `json:"duration_ms"`
+	Stdout receipt.StreamV2 `json:"stdout"`
+	Stderr receipt.StreamV2 `json:"stderr"`
+	Counters receipt.CountersV2 `json:"counters"`
+	Network receipt.NetworkV2 `json:"network"`
+	Enforcement receipt.EnforcementV2 `json:"enforcement"`
+	Storage receipt.StorageV2 `json:"storage"`
+	Workspace *receipt.WorkspaceV2 `json:"workspace"`
+	Diff receipt.DiffV2 `json:"diff"`
+	Errors []string `json:"errors"`
+ImageV2
+	RequestedRef string `json:"requested_ref"`
+	Digest string `json:"digest"`
+OutcomeV2
+	Status string `json:"status"`
+	ExitCode *int `json:"exit_code"`
+	Signal *int `json:"signal"`
+	KillReason string `json:"kill_reason"`
+	Error string `json:"error"`
+StreamV2
+	SHA256 string `json:"sha256"`
+	Bytes int64 `json:"bytes"`
+	Delivered int64 `json:"delivered"`
+CountersV2
+	Scope string `json:"scope"`
+	MemoryPeakBytes *int64 `json:"memory_peak_bytes"`
+	OOMKills *int64 `json:"oom_kills"`
+	CPUUsageUsec *int64 `json:"cpu_usage_usec"`
+	PIDsPeak *int64 `json:"pids_peak"`
+	PIDsMaxHits *int64 `json:"pids_max_hits"`
+	Error string `json:"error"`
+NetworkV2
+	Mode string `json:"mode"`
+	Recorded bool `json:"recorded"`
+	Complete bool `json:"complete"`
+	Incomplete string `json:"incomplete"`
+	Flows []receipt.FlowV2 `json:"flows"`
+FlowV2
+	Name string `json:"name"`
+	Port uint16 `json:"port"`
+	InvalidBytes int64 `json:"invalid_bytes"`
+	InvalidSHA256 string `json:"invalid_sha256"`
+	Address string `json:"address"`
+	Verdict string `json:"verdict"`
+	Reason string `json:"reason"`
+	BytesUp int64 `json:"bytes_up"`
+	BytesDown int64 `json:"bytes_down"`
+EnforcementV2
+	Controls []receipt.ControlV2 `json:"controls"`
+	SyscallProfile string `json:"syscall_profile"`
+	SeccompSHA256 string `json:"seccomp_sha256"`
+	Observed receipt.ObservedV2 `json:"observed"`
+ControlV2
+	ID string `json:"id"`
+	Enforced bool `json:"enforced"`
+	Reason string `json:"reason"`
+ObservedV2
+	Tasks *int `json:"tasks"`
+	SeccompMode *int `json:"seccomp_mode"`
+	NoNewPrivs *bool `json:"no_new_privs"`
+	CapEff string `json:"cap_eff"`
+	CapPrm string `json:"cap_prm"`
+	CapInh string `json:"cap_inh"`
+	CapBnd string `json:"cap_bnd"`
+	CapAmb string `json:"cap_amb"`
+	UIDMap string `json:"uid_map"`
+	GIDMap string `json:"gid_map"`
+	CPUMax string `json:"cpu_max"`
+	MemoryMax string `json:"memory_max"`
+	MemorySwapMax string `json:"memory_swap_max"`
+	PIDsMax string `json:"pids_max"`
+	MountOptions string `json:"mount_options"`
+StorageV2
+	Upper string `json:"upper"`
+	QuotaBytes *int64 `json:"quota_bytes"`
+	QuotaInodes *int64 `json:"quota_inodes"`
+	UsedBytes *int64 `json:"used_bytes"`
+	UsedInodes *int64 `json:"used_inodes"`
+WorkspaceV2
+	ManifestSHA256 string `json:"manifest_sha256"`
+	Entries int64 `json:"entries"`
+	Bytes int64 `json:"bytes"`
+	Superseded []receipt.SupersededV2 `json:"superseded"`
+SupersededV2
+	Path string `json:"path"`
+	PathEscaped bool `json:"path_escaped"`
+	Type string `json:"type"`
+	SHA256 string `json:"sha256"`
+DiffV2
+	Base receipt.DiffBaseV2 `json:"base"`
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+	Counts receipt.DiffCountsV2 `json:"counts"`
+	Budget receipt.DiffBudgetV2 `json:"budget"`
+	Entries []receipt.DiffEntryV2 `json:"entries"`
+DiffBaseV2
+	Kind string `json:"kind"`
+	Snapshot string `json:"snapshot"`
+DiffCountsV2
+	Added int64 `json:"added"`
+	Modified int64 `json:"modified"`
+	Deleted int64 `json:"deleted"`
+	Opaque int64 `json:"opaque"`
+DiffBudgetV2
+	Entries int64 `json:"entries"`
+	Bytes int64 `json:"bytes"`
+	Depth int64 `json:"depth"`
+DiffEntryV2
+	Path string `json:"path"`
+	PathEscaped bool `json:"path_escaped"`
+	TargetEscaped bool `json:"target_escaped"`
+	Op string `json:"op"`
+	Type string `json:"type"`
+	Mode uint32 `json:"mode"`
+	UID uint32 `json:"uid"`
+	GID uint32 `json:"gid"`
+	Size int64 `json:"size"`
+	SHA256 string `json:"sha256"`
+	Target string `json:"target"`
+	SinceSeq uint64 `json:"since_seq"`
+	Skipped string `json:"skipped"`
+SnapshotV2
+	Snapshot string `json:"snapshot"`
+	Parent receipt.DiffBaseV2 `json:"parent"`
+RestoreV2
+	To receipt.DiffBaseV2 `json:"to"`
+ExportV2
+	ManifestSHA256 string `json:"manifest_sha256"`
+	WorkspaceManifestSHA256 string `json:"workspace_manifest_sha256"`
+	Entries int64 `json:"entries"`
+	Bytes int64 `json:"bytes"`
+	Skipped int64 `json:"skipped"`
+StopV2
+	Reason string `json:"reason"`
+	Error string `json:"error"`
+InterruptedV2
+	Argv []string `json:"argv"`
+	EnvNames []string `json:"env_names"`
+	Workdir string `json:"workdir"`
+	PolicySHA256 string `json:"policy_sha256"`
+	IntentTime time.Time `json:"intent_time"`
+IntentV2
+	Schema string `json:"schema"`
+	Chain receipt.ChainV2 `json:"chain"`
+	Time time.Time `json:"time"`
+	Argv []string `json:"argv"`
+	EnvNames []string `json:"env_names"`
+	Workdir string `json:"workdir"`
+	PolicySHA256 string `json:"policy_sha256"`
