@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
@@ -119,5 +120,29 @@ func TestLinksNoModelSDK(t *testing.T) {
 		if strings.HasPrefix(dep.Path, "github.com/anthropics/") {
 			t.Errorf("sandmeter links %s: model clients belong in sandmeter-lab", dep.Path)
 		}
+	}
+}
+
+// TestLinksNoProbeCode holds the other split: the escape probe is a binary of
+// its own, built to be copied into a sandbox and try the way out from inside,
+// and sandmeter carries none of its code. The probe's code is a package that
+// can be imported, next to the escape harness that sandmeter does link, so
+// the build does not rule this out by itself.
+func TestLinksNoProbeCode(t *testing.T) {
+	out, err := exec.Command("go", "list", "-deps", ".").Output()
+	if err != nil {
+		t.Fatalf("go list -deps: %v", err)
+	}
+	harness := false
+	for _, pkg := range strings.Fields(string(out)) {
+		switch {
+		case strings.HasSuffix(pkg, "/internal/escape/harness"):
+			harness = true
+		case strings.HasSuffix(pkg, "/internal/escape/probe"):
+			t.Errorf("sandmeter links %s: the probe's code belongs in sandmeter-probe alone", pkg)
+		}
+	}
+	if !harness {
+		t.Fatal("go list does not report the escape harness among the packages of sandmeter: the check above would pass on nothing")
 	}
 }
