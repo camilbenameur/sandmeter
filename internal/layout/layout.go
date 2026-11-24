@@ -69,6 +69,25 @@ const (
 	EnvLog = "SANDMETER_LOG"
 )
 
+// The default image.
+const (
+	// DefaultImage is the image a session gets when it names none and the
+	// operator file names no other: one small image, pinned by the digest of
+	// its multi-architecture index, on a branch its publisher still supports.
+	// The tag in the reference is for the reader; the digest is what is
+	// pulled.
+	//
+	// The digest was read from the registry on 2026-11-24 (Alpine 3.24.4). It
+	// changes only together with DefaultImageSupportEnds, in a commit that
+	// says where the new value was read.
+	DefaultImage = "docker.io/library/alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf"
+	// DefaultImageSupportEnds is the day the publisher stops supporting the
+	// branch of DefaultImage, as it announced it, in the form 2006-01-02. A
+	// scheduled check fails well before that day, so that the default is
+	// moved to a supported branch before it stops receiving fixes.
+	DefaultImageSupportEnds = "2028-06-01"
+)
+
 // Modes of what the root side creates under the home.
 const (
 	// DirMode is the mode of every directory under the home, the home

@@ -1,0 +1,69 @@
+# The root service of sandmeter.
+#
+# It is started by sandmeter.socket on the first connection. It is a small
+# acceptor: for each connection it reads the caller's uid from the kernel and
+# starts one worker process, which serves that connection in a mount
+# namespace of its own and exits with it. The service keeps no session
+# between connections, so stopping or restarting it ends every session and
+# leaves nothing mounted.
+#
+# Draft. The lines of the last section harden the unit; each one is marked
+# "to be proven": it stays only if the end-to-end tests and the escape suite
+# pass with it on the supported distributions, and it is removed, with a
+# note in the operator documentation, if they do not.
+
+[Unit]
+Description=sandmeter root service
+Requires=sandmeter.socket
+After=sandmeter.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sandmeterd serve
+
+# The service creates one cgroup per session below its own and sets the
+# limits of the policy there: it needs the subtree for itself.
+Delegate=yes
+# Stopping the unit kills everything in that subtree, sandboxes included.
+KillMode=control-group
+# A sandbox that exceeds its memory limit is killed by the kernel inside its
+# own cgroup. That must not stop the service and every other session.
+OOMPolicy=continue
+# The tasks of every sandbox are counted in this unit. Each session has the
+# limit of its policy; the unit itself sets none. To bound all sandboxes of
+# the host together, set TasksMax= and MemoryMax= on sandmeter.slice.
+TasksMax=infinity
+Slice=sandmeter.slice
+
+# Where the root side keeps its state: created by systemd, root only.
+StateDirectory=sandmeter
+StateDirectoryMode=0700
+
+# Never add SystemCallFilter=, RestrictAddressFamilies=, RestrictNamespaces=,
+# MemoryDenyWriteExecute= or any other option that installs a system call
+# filter here (systemd.exec(5) says which do: PrivateDevices=, ProtectClock=,
+# ProtectKernelModules= and LockPersonality= are among them). A filter on the
+# service is inherited by every sandbox it starts: the syscall profile a
+# receipt records would then not be the one that was in force.
+
+# --- Hardening, to be proven -----------------------------------------------
+# The service never opens a file of a user: a project reaches it as a stream
+# of bytes that the client packed. It can therefore run without the home
+# directories at all.
+# to be proven
+ProtectHome=yes
+# The file system is read-only for the service except its state directory.
+# An operator who moves the home or the state directory in the operator file
+# adds the new path with a drop-in.
+# to be proven
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sandmeter
+# to be proven
+PrivateTmp=yes
+# The service holds the signing key: it leaves no core dump.
+# to be proven
+LimitCORE=0
+# Capabilities the root side has no use for. Sandboxes are not affected: a
+# new user namespace starts with a full bounding set of its own.
+# to be proven
+CapabilityBoundingSet=~CAP_NET_ADMIN CAP_SYS_PTRACE CAP_SYS_MODULE CAP_SYS_BOOT CAP_SYS_TIME CAP_SYS_RAWIO

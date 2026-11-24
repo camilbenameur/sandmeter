@@ -1,0 +1,138 @@
+# /etc/sandmeter/config.toml: the operator file of sandmeter.
+#
+# This file belongs to root. It decides what the members of group "sandmeter"
+# may ask the service for; nothing a client sends can widen it. The service
+# refuses to start unless this file, and every directory above it, is owned by
+# root and not writable by group or others.
+#
+# Every key is written out below with its built-in value: deleting this file,
+# or any key of it, changes nothing. An unknown key is an error, so that a
+# typing mistake cannot switch a protection off.
+#
+# Sizes are written "512MiB", "2GiB"; durations "60s", "10m". A limit is a
+# value or the word "unlimited", which has to be written: no key means "no
+# limit" by being absent or zero.
+
+# Version of this file's format.
+version = 1
+
+[paths]
+# Where the root side keeps images, receipts and keys. Root only (0700).
+home = "/var/lib/sandmeter"
+# Where the writable layers of sessions live. It may be put on another
+# filesystem; it is never on /run. The free-space floor below watches the
+# filesystem of this directory.
+state = "/var/lib/sandmeter/state"
+
+[ids]
+# Host id that root of every sandbox maps to. A sandbox uses 65,536 ids from
+# here, and the two ids above them run the image fetcher and the egress
+# proxy. The whole range must overlap no entry of /etc/subuid or /etc/subgid
+# and no account: the service refuses to run otherwise.
+base = 1879048192
+
+[backends]
+# Backends that may run sessions, the default first. "native" shares the
+# kernel of this host. "gvisor" is a preview: no network, and its limit on
+# the number of tasks is not enforced, so a policy that sets one is refused.
+enabled = ["native"]
+
+[backends.gvisor]
+# Absolute path of the runsc binary, used only when "gvisor" is enabled. The
+# file and every directory above it must be owned by root and not writable
+# by group or others. PATH is never searched.
+runsc = "/usr/local/bin/runsc"
+# gVisor platform.
+platform = "systrap"
+
+[images]
+# Image of a session that names none, pinned by digest. Any member may use
+# it, and it is pulled on first use.
+default = "docker.io/library/alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf"
+# Other images members may use, as patterns over the full reference, in
+# which "*" matches within one path segment: "docker.io/library/*",
+# "ghcr.io/example/build:*". Empty: the default image only. Root can always
+# pull any image with "sandmeterd image pull".
+allow = []
+# Whether a session may trigger the pull of an allowed image that is not in
+# the store yet. When false, members use only what root pulled beforehand.
+pull = false
+
+[budgets]
+# Limits for each user, counted across all of that user's connections.
+# Sessions alive at once.
+sessions = 8
+# Commands running at once.
+commands = 4
+# Connections to the service at once.
+connections = 16
+# Size and number of entries of one imported project. A project beyond
+# either is refused whole, with a message that names --exclude.
+workspace_bytes = "2GiB"
+workspace_entries = 200000
+# Receipts kept for the user. When the budget is spent new commands are
+# refused; a receipt is never deleted to make room.
+receipt_bytes = "1GiB"
+
+[floor]
+# Free space and free inodes that must remain on the filesystem of the state
+# directory. Under the floor no command starts, and a running command that
+# crosses it is killed. This is a guard for the host, not a quota for a
+# sandbox: without a tmpfs writable layer (see the ceiling) nothing bounds
+# what one session writes, only what is left for everybody else.
+min_free_bytes = "1GiB"
+min_free_inodes = 10000
+
+[network]
+# Address prefixes the egress proxy must never connect to, on top of the
+# loopback, link-local, private, shared, reserved and multicast ranges and of
+# this host's own addresses, which are always refused. Use it for the
+# addresses of your provider's platform services: "168.63.129.16/32".
+# Nothing can shorten the built-in list.
+deny_extra = []
+
+# The ceiling: the largest policy a member may ask for. A policy is accepted
+# only if every one of its keys is within the ceiling, and a key the policy
+# leaves out takes the built-in default lowered to the ceiling. With the
+# values below a member can make a sandbox smaller and nothing else.
+
+[ceiling.limits]
+# Cores, memory, tasks, and the longest one command may run.
+cpu = 1
+memory = "512MiB"
+pids = 256
+wall = "60s"
+# Largest quota of a tmpfs writable layer. It is memory: keep it within the
+# memory limit.
+disk = "512MiB"
+
+[ceiling.storage]
+# "tmpfs" lets a policy put its writable layer in memory, under a hard quota
+# (limits.disk), as well as on disk. "disk" allows the disk only.
+upper = "tmpfs"
+
+[ceiling.network]
+# "none": no sandbox has any network. "proxy" lets a policy reach the names
+# listed in allow, and only those, through the egress proxy.
+mode = "none"
+# Destinations a policy may list: "pypi.org", "files.pythonhosted.org:443",
+# "*.example.org:443". A registry that accepts uploads is a way out for
+# whatever a sandbox can read.
+allow = []
+
+[ceiling.filesystem]
+# true: every sandbox has a read-only root filesystem, except /tmp and
+# /workspace. false lets a policy ask for a writable root.
+read_only_root = true
+
+[ceiling.syscalls]
+# Weakest syscall profile a policy may ask for: "default" (allow list),
+# "compat" (deny list, for tools the default breaks) or "off" (no filter).
+profile = "compat"
+
+[ceiling.process]
+# Names of environment variables a policy may pass from the client's
+# environment into a sandbox, each written in full. Their values then leave
+# the client's process: list a secret here only if the network ceiling
+# cannot carry it out.
+env_pass = []

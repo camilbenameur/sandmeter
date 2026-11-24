@@ -1,0 +1,27 @@
+# The control socket of sandmeter.
+#
+# Members of group "sandmeter" connect to it; nobody else can. systemd creates
+# the socket, so its owner, group and mode are in place before the first
+# connection, and it starts the service on that connection.
+#
+# If group "sandmeter" does not exist this unit fails and no socket is
+# created. That is intended: there is no fallback to a wider mode.
+
+[Unit]
+Description=sandmeter control socket
+
+[Socket]
+ListenStream=/run/sandmeter/sandmeter.sock
+SocketUser=root
+SocketGroup=sandmeter
+SocketMode=0660
+# The directory of the socket. Anyone may look into it; the socket's own
+# mode decides who connects.
+DirectoryMode=0755
+# One service for all connections: it accepts them itself and starts one
+# worker process per connection.
+Accept=no
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
