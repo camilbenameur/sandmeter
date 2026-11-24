@@ -18,11 +18,12 @@ import (
 
 // mountEntry is one line of /proc/self/mountinfo, as far as the tests need it.
 type mountEntry struct {
-	point     string // mount point, unescaped
-	options   string // per-mount options
-	fstype    string
-	source    string
-	superOpts string // per-superblock options
+	point       string // mount point, unescaped
+	options     string // per-mount options
+	propagation string // the optional fields: "shared:1", "master:1", "" for a private mount
+	fstype      string
+	source      string
+	superOpts   string // per-superblock options
 }
 
 // parseMountinfo reads the format of proc_pid_mountinfo(5): six fixed
@@ -38,7 +39,7 @@ func parseMountinfo(data string) []mountEntry {
 		if len(l) < 6 || len(r) < 2 {
 			continue
 		}
-		e := mountEntry{point: unescapeMount(l[4]), options: l[5], fstype: r[0], source: r[1]}
+		e := mountEntry{point: unescapeMount(l[4]), options: l[5], propagation: strings.Join(l[6:], " "), fstype: r[0], source: r[1]}
 		if len(r) > 2 {
 			e.superOpts = r[2]
 		}

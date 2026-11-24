@@ -88,6 +88,15 @@ func sayResult(v any) error { return say("result ", v) }
 // that waits here never outlives the test.
 func waitRelease() { _, _ = io.Copy(io.Discard, os.Stdin) }
 
+// waitNudge blocks until the test sends one byte on the helper's standard
+// input (child.nudge). It reports false when the test closed it instead, or
+// died.
+func waitNudge() bool {
+	var b [1]byte
+	n, _ := os.Stdin.Read(b[:])
+	return n == 1
+}
+
 // childIdle stays alive until the test lets go of it or kills it.
 func childIdle([]string) error {
 	waitRelease()
@@ -304,6 +313,15 @@ func (c *child) release() {
 		c.hold.Close()
 		c.hold = nil
 	}
+}
+
+// nudge lets a helper blocked in waitNudge take its next step.
+func (c *child) nudge() error {
+	if c.hold == nil {
+		return errors.New("the helper's standard input is closed already")
+	}
+	_, err := c.hold.Write([]byte{'.'})
+	return err
 }
 
 // kill sends SIGKILL and waits for the helper to be reaped.

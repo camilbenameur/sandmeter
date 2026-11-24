@@ -101,7 +101,10 @@ func TestSelfHelpersStopAtTheGuard(t *testing.T) {
 		{"inotify", "4", ""},
 		{"standin-init", "pid1", "signaller", "all"},
 		{"refresh", work, "replace", "tmpfs"},
+		{"overlaylimits", work, "tmpfs"},
 		{"worker", work},
+		{"latemount", work},
+		{"workerstart"},
 		{"upperprobe", work},
 		{"runscworker", work, "/nonexistent/runsc", "id"},
 		{"tmpfsupper", work, ""},
@@ -162,6 +165,8 @@ func TestSelfDetails(t *testing.T) {
 		{valueOr("ext4", nil), "ext4"},
 		{valueOr("", unix.ENOENT), "not readable: ENOENT"},
 		{millis(1500 * time.Microsecond), "1.5 ms"},
+		{largeRow(unmountReport{Large: 2345.6}), "2345.6 ms"},
+		{largeRow(unmountReport{Large: -1, NoLarge: "only 100 MiB are free on the filesystem"}), "not measured (only 100 MiB are free on the filesystem)"},
 	} {
 		if c.got != c.want {
 			t.Errorf("got %q, want %q", c.got, c.want)
@@ -260,12 +265,18 @@ const sampleMountinfo = `22 28 0:21 / /sys rw,nosuid,nodev,noexec,relatime share
 90 28 0:44 / /mnt/with\040space rw,relatime - tmpfs tmpfs rw,size=1024k
 95 28 0:50 / /var/lib/x/merged rw,nosuid,nodev,relatime - overlay overlay rw,lowerdir=/var/lib/x/lower,upperdir=/var/lib/x/upper,workdir=/var/lib/x/work,redirect_dir=nofollow,uuid=on
 96 95 0:51 / /var/lib/x/merged rw,relatime - tmpfs tmpfs rw
+97 28 0:52 / /mnt/slave rw,relatime master:1 propagate_from:3 - tmpfs tmpfs rw
 `
 
 func TestSelfMountinfo(t *testing.T) {
 	entries := parseMountinfo(sampleMountinfo)
-	if len(entries) != 6 {
-		t.Fatalf("%d entries parsed, want 6", len(entries))
+	if len(entries) != 7 {
+		t.Fatalf("%d entries parsed, want 7", len(entries))
+	}
+	for point, want := range map[string]string{"/": "shared:1", "/mnt/with space": "", "/mnt/slave": "master:1 propagate_from:3"} {
+		if e, ok := mountAt(entries, point); !ok || e.propagation != want {
+			t.Errorf("propagation of the mount at %s = %q (found: %v), want %q", point, e.propagation, ok, want)
+		}
 	}
 	if e, ok := mountAt(entries, "/mnt/with space"); !ok || e.fstype != "tmpfs" {
 		t.Errorf("escaped mount point: found %v %+v", ok, e)

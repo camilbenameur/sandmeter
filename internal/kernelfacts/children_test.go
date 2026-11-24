@@ -17,11 +17,14 @@ var children = map[string]func(args []string) error{
 	"userns":  childUserns,
 	"inotify": childInotify,
 
-	"refresh":    childRefresh,
-	"tmpfsupper": childTmpfsUpper,
-	"unmount":    childUnmount,
+	"refresh":       childRefresh,
+	"overlaylimits": childOverlayLimits,
+	"tmpfsupper":    childTmpfsUpper,
+	"unmount":       childUnmount,
 
 	"worker":            childWorker,
+	"latemount":         childLateMount,
+	"workerstart":       childWorkerStart,
 	"upperprobe":        childUpperProbe,
 	"scope":             childScope,
 	"switch-supervisor": childSwitchSupervisor,

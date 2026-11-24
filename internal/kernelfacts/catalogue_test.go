@@ -32,6 +32,8 @@ var catalogue = []def{
 
 	{"worker-mounts-private", "mounts made by a CLONE_NEWNS child after MS_REC|MS_SLAVE on / never appear in the host's /proc/self/mountinfo", true},
 	{"worker-kill-unmounts", "after SIGKILL of that child nothing is left mounted: its mount namespace has no member and its upper directory can be mounted again", true},
+	{"worker-sees-host-mounts", "a mount made on the host after a worker started, whose mount namespace is a slave of the host's, is visible to the worker, and gone for it when the host unmounts it", false},
+	{"worker-start-time", "a worker in a cgroup and a mount namespace of its own is ready within 100 ms of its clone, at the 95th percentile of 40 starts", false},
 	{"cgroup-session-leaf", "a cgroup subtree with cpu, memory and pids can be created under a parent group and a process cloned into its leaf with CLONE_INTO_CGROUP", true},
 	{"cgroup-systemd-delegate", "a systemd-run scope with Delegate=yes gives a subtree where cpu, memory and pids can be enabled", false},
 
@@ -61,6 +63,8 @@ var catalogue = []def{
 	{"idmap-overlay", "an overlay over the ID-mapped lower shows the owner's files as uid 0 in the sandbox namespace and copies them up owned by the shifted uid", false},
 	{"idmap-owners", "through that overlay a file of a mapped group can be modified, a foreign file can be read and not modified, and a foreign 0600 file cannot be read", false},
 
+	{"overlay-dir-rename", "with redirect_dir=nofollow, rename(2) of a directory that comes from a lower layer answers EXDEV, while files and the directories a command created rename", false},
+	{"overlay-device-numbers", "every file of the overlay reports the device of the overlay, with the upper directory on the filesystem of the lower layers and on another one", false},
 	{"overlay-unmount-time", "unmounting an overlay stays under one second after 50 MiB and after 5,000 small files were written", false},
 	{"pids-events-leaf", "with pids.max on the session group and on the leaf, a fork refused by the leaf limit is counted in the leaf's pids.events", true},
 	{"pids-events-session", "a fork refused by the session limit is also counted in the leaf's pids.events", false},

@@ -126,6 +126,12 @@
 //	tmpfs-upper-memory         recorded  the quota is charged to the memory of
 //	                                     the writer's cgroup, as the
 //	                                     documentation is about to say
+//	overlay-dir-rename         recorded  the price of redirect_dir=nofollow: a
+//	                                     directory of the project cannot be
+//	                                     renamed, only copied
+//	overlay-device-numbers     recorded  whether find -xdev and its like see
+//	                                     every file when the layers are on two
+//	                                     filesystems
 //	overlay-unmount-time       recorded  what an unmount per command costs: a
 //	                                     benchmark row
 //
@@ -142,6 +148,11 @@
 //	worker-mounts-private    required  what a worker mounts never shows in the
 //	                                   host's mount table
 //	worker-kill-unmounts     required  after SIGKILL nothing of it is left mounted
+//	worker-sees-host-mounts  recorded  what the host mounts later still reaches
+//	                                   the worker: why its namespace is a slave
+//	                                   and not a private copy
+//	worker-start-time        recorded  what a worker per connection costs before
+//	                                   it can serve
 //	cgroup-session-leaf      required  the session and leaf groups can be built
 //	                                   and a command cloned into the leaf
 //	cgroup-systemd-delegate  recorded  what a systemd unit with Delegate=yes
