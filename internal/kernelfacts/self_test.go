@@ -65,10 +65,10 @@ func TestSelfDocListsEveryFact(t *testing.T) {
 	}
 }
 
-// The guard that a helper calls before it mounts or configures a network:
-// in the namespaces of the test process it refuses.
+// The guard that a helper calls before it mounts, configures a network or
+// signals PID 1: in the namespaces of the test process it refuses.
 func TestSelfHelpersRefuseTheHost(t *testing.T) {
-	for kind, env := range map[string]string{"mnt": hostMntEnv, "net": hostNetEnv} {
+	for kind, env := range map[string]string{"mnt": hostMntEnv, "net": hostNetEnv, "pid": hostPidEnv} {
 		t.Setenv(env, nsLink(kind))
 		if err := outsideHost(kind, env); err == nil || !strings.Contains(err.Error(), "refusing") {
 			t.Errorf("a helper in the %s namespace of the test process is not refused: %v", kind, err)
@@ -85,9 +85,10 @@ func TestSelfHelpersRefuseTheHost(t *testing.T) {
 	}
 }
 
-// Every helper that mounts or configures a network is started here the way
-// a forgotten clone flag would start it, in the namespaces of the test
-// process. Each must stop at its guard, before it creates anything.
+// Every helper that mounts, configures a network or acts as PID 1 is
+// started here the way a forgotten clone flag would start it, in the
+// namespaces of the test process. Each must stop at its guard, before it
+// creates anything.
 //
 // Under root the helpers run as nobody: a guard that came to be missing
 // then meets a refusal of the kernel, and never the host.
@@ -98,6 +99,7 @@ func TestSelfHelpersStopAtTheGuard(t *testing.T) {
 		{"netns", "3128", "3129", "nonce"},
 		{"userns", "write"},
 		{"inotify", "4", ""},
+		{"standin-init", "pid1", "signaller", "all"},
 		{"refresh", work, "replace", "tmpfs"},
 		{"worker", work},
 		{"upperprobe", work},

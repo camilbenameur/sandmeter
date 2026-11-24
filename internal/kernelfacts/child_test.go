@@ -33,10 +33,12 @@ const (
 )
 
 // Every helper receives the namespaces of the test process, so that it can
-// refuse to mount or to configure a network when a clone flag is missing.
+// refuse to mount, to configure a network or to signal PID 1 when a clone
+// flag is missing.
 const (
 	hostMntEnv = "KERNELFACTS_HOST_MNTNS"
 	hostNetEnv = "KERNELFACTS_HOST_NETNS"
+	hostPidEnv = "KERNELFACTS_HOST_PIDNS"
 )
 
 // Bounds on how long a test waits for a helper.
@@ -250,7 +252,7 @@ func startChild(dir string, s spawn) (*child, error) {
 	// What TestMain read before the first test, not what /proc/self says
 	// now. Empty values, as in a process that did not go through TestMain,
 	// make every guard refuse.
-	cmd.Env = append(os.Environ(), hostMntEnv+"="+hostMntNS, hostNetEnv+"="+hostNetNS)
+	cmd.Env = append(os.Environ(), hostMntEnv+"="+hostMntNS, hostNetEnv+"="+hostNetNS, hostPidEnv+"="+hostPidNS)
 	attr := &syscall.SysProcAttr{Cloneflags: s.clone}
 	if s.nobody {
 		attr.Credential = &syscall.Credential{Uid: nobodyID, Gid: nobodyID, Groups: []uint32{}}

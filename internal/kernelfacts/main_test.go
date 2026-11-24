@@ -24,12 +24,12 @@ var (
 	scratchRoot string
 	// baseline is the state of the host before the first test.
 	baseline hostState
-	// hostMntNS and hostNetNS are the mount and network namespaces of the
-	// test process, read once before the first test. Helpers are told them
-	// so that they can refuse to work there (outsideHost); read at each
-	// start of a helper, they would follow whatever a test did to the
-	// thread that /proc/self names.
-	hostMntNS, hostNetNS string
+	// hostMntNS, hostNetNS and hostPidNS are the mount, network and pid
+	// namespaces of the test process, read once before the first test.
+	// Helpers are told them so that they can refuse to work there
+	// (outsideHost); read at each start of a helper, they would follow
+	// whatever a test did to the thread that /proc/self names.
+	hostMntNS, hostNetNS, hostPidNS string
 )
 
 // The main goroutine stays on the main thread, in the test process and in
@@ -59,7 +59,7 @@ func runTests(m *testing.M) int {
 	// their "other" permission bits: the modes the tests ask for must be
 	// the modes they get, whatever umask root has here.
 	unix.Umask(0o022)
-	hostMntNS, hostNetNS = nsLink("mnt"), nsLink("net")
+	hostMntNS, hostNetNS, hostPidNS = nsLink("mnt"), nsLink("net"), nsLink("pid")
 	baseline = snapshotHost()
 	if os.Geteuid() != 0 {
 		// Every test that creates something skips itself, or fails when

@@ -30,6 +30,11 @@ var children = map[string]func(args []string) error{
 	"sleep":             childSleep,
 	"cgroupns":          childCgroupns,
 
+	"standin-supervisor": childStandInSupervisor,
+	"standin-init":       childStandInInit,
+	"forkbomb":           childForkBomb,
+	"signaller":          childSignaller,
+
 	"runscworker": childRunscWorker,
 	"runscprobe":  childRunscProbe,
 

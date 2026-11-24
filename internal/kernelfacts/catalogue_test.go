@@ -36,6 +36,8 @@ var catalogue = []def{
 	{"cgroup-systemd-delegate", "a systemd-run scope with Delegate=yes gives a subtree where cpu, memory and pids can be enabled", false},
 
 	{"init-kill-switch", "when the supervisor is killed, PID 1 reads end-of-file and exits, the kernel kills its pid namespace and the leaf cgroup.procs is empty within 2 s", true},
+	{"init-fork-bomb", "a Go PID 1 with GOMAXPROCS=1 that shares its leaf with the workload stays within the 16 pids reserved for it and outlives a fork bomb that holds the leaf at pids.max: it then stops what is left, reaps it, and exits only when its supervisor lets go", true},
+	{"init-signals", "a Go PID 1 that asked for every signal survives each of the 64 signals its workload sends it with kill(2), SIGKILL and SIGSTOP included", true},
 
 	{"gvisor-file-owner", "under runsc with an OCI user namespace that maps 0 to the shifted uid, a file written on a bind-mounted directory is owned by the shifted uid on the host", true},
 	{"gvisor-overlay-bind", "an rbind OCI mount of an overlay path works under runsc: the lower content is read and a write lands in the upper directory, owned by the shifted uid", true},

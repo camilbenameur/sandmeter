@@ -149,6 +149,10 @@
 //	init-kill-switch         required  the supervisor dies, PID 1 reads
 //	                                   end-of-file and exits, the kernel kills
 //	                                   the pid namespace
+//	init-fork-bomb           required  a Go PID 1 that shares the leaf with a
+//	                                   fork bomb is not ended by its own
+//	                                   runtime when the leaf is at pids.max
+//	init-signals             required  nor by a signal of the workload
 //	cgroupns-unshare         required  unshare(CLONE_NEWCGROUP) from inside the
 //	                                   leaf hides the host's cgroup path
 //	cgroupns-clone-flag      recorded  what CLONE_NEWCGROUP in the clone itself
@@ -164,8 +168,12 @@
 // than a directory. A "no" to cgroup-session-leaf or pids-events-leaf means
 // the cgroup layout has to change: the receipt and the fork-bomb case read
 // the leaf. A "no" to init-kill-switch leaves cgroup.kill from the sweep as
-// the only backstop. A "no" to cgroupns-unshare keeps the clone flag, and
-// the leak of the host's cgroup path is documented.
+// the only backstop. A "no" to init-fork-bomb takes the init out of the
+// leaf of its workload, into a group of its own, before the cgroup layer is
+// built on the shared leaf; a "no" to init-signals means that asking for
+// every signal does not protect the init, and the sandbox with it. A "no"
+// to cgroupns-unshare keeps the clone flag, and the leak of the host's
+// cgroup path is documented.
 //
 // Hardening of the init. It sets RLIMIT_CORE to 1, and it opens every mount
 // target beneath the root without following links, then mounts on the
