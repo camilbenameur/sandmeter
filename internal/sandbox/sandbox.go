@@ -553,6 +553,9 @@ type Enforcement struct {
 	Init Posture
 	// UIDMap and GIDMap are the lines of the uid_map and gid_map files of
 	// the workload, fields separated by one space and lines by a newline.
+	// A backend whose workload is not a process of the host's kernel leaves
+	// them empty: the mapping it asked its runtime for is an intention, not
+	// something it read back.
 	UIDMap, GIDMap string
 	// Settings lists the kernel settings written for the sandbox's user
 	// namespace, each read back through the descriptor it was written

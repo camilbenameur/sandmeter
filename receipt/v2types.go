@@ -491,6 +491,9 @@ type ObservedV2 struct {
 	Init PostureV2 `json:"init"`
 	// UIDMap and GIDMap are the lines of /proc/<pid>/uid_map and gid_map of
 	// the workload, fields separated by one space and lines by a newline.
+	// They are empty on a backend whose workload is not a process of the
+	// host's kernel: what such a backend was configured to map is not an
+	// observation, and is not recorded as one.
 	UIDMap string `json:"uid_map"`
 	GIDMap string `json:"gid_map"`
 	// Settings lists the kernel settings the backend wrote for the sandbox's
