@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/camilbenameur/sandmeter/internal/layout"
 	"github.com/camilbenameur/sandmeter/policy"
 	"github.com/camilbenameur/sandmeter/receipt"
 )
@@ -161,6 +162,14 @@ func TestExitStatus(t *testing.T) {
 		if got := tc.r.ExitStatus(); got != tc.want {
 			t.Errorf("%s: ExitStatus() = %d, want %d", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestIDCountIsTheLayouts keeps the two statements of how many ids a sandbox
+// has, the contract's and the installation's, equal.
+func TestIDCountIsTheLayouts(t *testing.T) {
+	if IDCount != layout.IDCount {
+		t.Errorf("a sandbox maps %d ids and the layout reserves %d", IDCount, layout.IDCount)
 	}
 }
 
