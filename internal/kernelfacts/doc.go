@@ -37,7 +37,7 @@
 // A fact is printed as a line that starts with "FACT " and carries a JSON
 // object, and the same object is appended to SANDMETER_FACTS_OUT:
 //
-//	{"id":"K5","name":"...","required":true,"outcome":"yes","detail":"...","kernel":"6.8.0-1070-azure"}
+//	{"id":"init-kill-switch","name":"...","required":true,"outcome":"yes","detail":"...","kernel":"6.8.0-1070-azure"}
 //
 // The name is a statement and the outcome says whether it holds on this
 // host: "yes", "no", or "skipped" with the reason in the detail. A required
@@ -57,162 +57,180 @@
 // it to the supervisor with SCM_RIGHTS. Nothing is created in the host's
 // network namespace.
 //
-//	K1          required  the passed listener accepts, in the host namespace, a
-//	                      connection made from inside
-//	K1-unreach  required  a direct connect from inside gets ENETUNREACH
-//	K1-host     required  links, addresses, routes, forwarding and nft ruleset
-//	                      of the host do not move
-//	K1-links    recorded  a fresh network namespace holds lo and nothing else
-//	K1-setns    recorded  a supervisor thread can create the listener itself
-//	                      after setns
+//	egress-listener        required  the passed listener accepts, in the host
+//	                                 namespace, a connection made from inside
+//	egress-no-route        required  a direct connect from inside gets ENETUNREACH
+//	egress-host-untouched  required  links, addresses, routes, forwarding and nft
+//	                                 ruleset of the host do not move
+//	egress-loopback-only   recorded  a fresh network namespace holds lo and
+//	                                 nothing else
+//	egress-listener-setns  recorded  a supervisor thread can create the listener
+//	                                 itself after setns
 //
-// A "no" to K1 moves the creation of the listener to a supervisor thread
-// (K1-setns); if that is "no" as well, proxy mode does not ship. A "no" to
-// K1-unreach or K1-host withdraws the claim it states.
+// A "no" to egress-listener moves the creation of the listener to a
+// supervisor thread (egress-listener-setns); if that is "no" as well, proxy
+// mode does not ship. A "no" to egress-no-route or egress-host-untouched
+// withdraws the claim it states.
 //
 // Nested user namespaces without the syscall filter. The init writes 0 to
 // user/max_user_namespaces through a procfs it mounted itself, and lowers
 // the inotify maxima of the sandbox's user namespace at the same time.
 //
-//	K2             required  unshare(CLONE_NEWUSER) then fails with ENOSPC
-//	K2-control     required  without the write it does not: the write is the cause
-//	K2-raise       required  the workload cannot write the value back
-//	K2-lsm         recorded  what the image's LSM does to a nested user namespace
-//	                         when the init wrote nothing: a second barrier or none
-//	K2b-unbounded  recorded  host root can still create an inotify instance while
-//	                         a sandbox takes all it can; "no" is the flaw, as read
-//	                         in the kernel source
-//	K2b-lowered    recorded  it can once the init lowered the sandbox's maximum
+//	userns-nested-refused       required  unshare(CLONE_NEWUSER) then fails with
+//	                                      ENOSPC
+//	userns-nested-control       required  without the write it does not: the
+//	                                      write is the cause
+//	userns-limit-sealed         required  the workload cannot write the value back
+//	userns-nested-unprivileged  recorded  what the host's LSM does to a nested
+//	                                      user namespace when the init wrote
+//	                                      nothing: a second barrier or none
+//	inotify-charge-default      recorded  host root can still create an inotify
+//	                                      instance while a sandbox takes all it
+//	                                      can; "no" is the flaw, as read in the
+//	                                      kernel source
+//	inotify-charge-lowered      recorded  it can once the init lowered the
+//	                                      sandbox's maximum
 //
-// A "no" to K2, K2-control or K2-raise leaves the syscall filter as the only
-// barrier, and the profile "off" is documented as removing it. A "no" to
-// K2b-lowered publishes the limit as not enforced, in the threat model too.
+// A "no" to one of the three required facts leaves the syscall filter as the
+// only barrier, and the profile "off" is documented as removing it. A "no"
+// to inotify-charge-lowered publishes the limit as not enforced, in the
+// threat model too.
 //
 // The workspace overlay. It is mounted for one command at a time; between
 // two commands the lower tree is refreshed from the host while nothing is
 // mounted, and the upper entries of the changed paths are dropped. The
 // opt-in disk quota puts the upper layer on a tmpfs.
 //
-//	K3-replace      required  a lower file replaced between two mounts
-//	K3-delete-file  required  a lower file deleted between two mounts
-//	K3-delete-dir   required  a lower directory deleted that has an upper
-//	                          counterpart
-//	K9-whiteouts    required  overlayfs works with its upper layer on a tmpfs
-//	K9-size         required  size= answers ENOSPC through the overlay
-//	K9-inodes       required  nr_inodes= answers ENOSPC through the overlay
-//	K9-memcg        recorded  the quota is charged to the memory of the writer's
-//	                          cgroup, as the documentation is about to say
-//	T-syncfs        recorded  what an unmount per command costs: a benchmark row
+//	refresh-replace        required  a lower file replaced between two mounts
+//	refresh-delete-file    required  a lower file deleted between two mounts
+//	refresh-delete-dir     required  a lower directory deleted that has an upper
+//	                                 counterpart
+//	tmpfs-upper-whiteouts  required  overlayfs works with its upper layer on a
+//	                                 tmpfs
+//	tmpfs-upper-size       required  size= answers ENOSPC through the overlay
+//	tmpfs-upper-inodes     required  nr_inodes= answers ENOSPC through the overlay
+//	tmpfs-upper-memory     recorded  the quota is charged to the memory of the
+//	                                 writer's cgroup, as the documentation is
+//	                                 about to say
+//	overlay-unmount-time   recorded  what an unmount per command costs: a
+//	                                 benchmark row
 //
-// A "no" to a K3 fact replaces the refresh in place by a new lower directory
-// per refresh, built as a hard-link farm of the previous one. A "no" to a
-// required K9 fact cuts the tmpfs quota: a disk limit is refused and the
-// free-space floor is the only guard.
+// A "no" to a refresh fact replaces the refresh in place by a new lower
+// directory per refresh, built as a hard-link farm of the previous one. A
+// "no" to a required tmpfs-upper fact cuts the tmpfs quota: a disk limit is
+// refused and the free-space floor is the only guard.
 //
 // The worker and its commands. A worker serves one connection in its own
 // mount namespace and cgroup subtree. A command runs in a leaf group of its
 // session, under an init that is PID 1 of a new pid namespace and exits
 // when its supervisor is gone.
 //
-//	K4-mounts       required  what a worker mounts never shows in the host's
-//	                          mount table
-//	K4-kill         required  after SIGKILL nothing of it is left mounted
-//	K4-cgroup       required  the session and leaf groups can be built and a
-//	                          command cloned into the leaf
-//	K4-scope        recorded  what a systemd unit with Delegate=yes gives, for
-//	                          the unit file of the service
-//	K5              required  the supervisor dies, PID 1 reads end-of-file and
-//	                          exits, the kernel kills the pid namespace
-//	K8              required  unshare(CLONE_NEWCGROUP) from inside the leaf
-//	                          hides the host's cgroup path
-//	K8-cloneflag    recorded  what CLONE_NEWCGROUP in the clone itself shows
-//	T-pids-leaf     required  a fork refused by the leaf's own pids.max is
-//	                          counted on the leaf
-//	T-pids-session  recorded  where a fork refused by the session's limit is
-//	                          counted; the two hosted kernels are expected to
-//	                          differ
+//	worker-mounts-private    required  what a worker mounts never shows in the
+//	                                   host's mount table
+//	worker-kill-unmounts     required  after SIGKILL nothing of it is left mounted
+//	cgroup-session-leaf      required  the session and leaf groups can be built
+//	                                   and a command cloned into the leaf
+//	cgroup-systemd-delegate  recorded  what a systemd unit with Delegate=yes
+//	                                   gives, for the unit file of the service
+//	init-kill-switch         required  the supervisor dies, PID 1 reads
+//	                                   end-of-file and exits, the kernel kills
+//	                                   the pid namespace
+//	cgroupns-unshare         required  unshare(CLONE_NEWCGROUP) from inside the
+//	                                   leaf hides the host's cgroup path
+//	cgroupns-clone-flag      recorded  what CLONE_NEWCGROUP in the clone itself
+//	                                   shows
+//	pids-events-leaf         required  a fork refused by the leaf's own pids.max
+//	                                   is counted on the leaf
+//	pids-events-session      recorded  where a fork refused by the session's
+//	                                   limit is counted; the two hosted kernels
+//	                                   are expected to differ
 //
-// A "no" to K4-mounts or K4-kill means mounts have to be swept after a
-// crash, and that between two commands a session is more than a directory.
-// A "no" to K4-cgroup or T-pids-leaf means the cgroup layout has to change:
-// the receipt and the fork-bomb case read the leaf. A "no" to K5 leaves
-// cgroup.kill from the sweep as the only backstop. A "no" to K8 keeps the
-// clone flag, and the leak of the host's cgroup path is documented.
+// A "no" to worker-mounts-private or worker-kill-unmounts means mounts have
+// to be swept after a crash, and that between two commands a session is more
+// than a directory. A "no" to cgroup-session-leaf or pids-events-leaf means
+// the cgroup layout has to change: the receipt and the fork-bomb case read
+// the leaf. A "no" to init-kill-switch leaves cgroup.kill from the sweep as
+// the only backstop. A "no" to cgroupns-unshare keeps the clone flag, and
+// the leak of the host's cgroup path is documented.
 //
 // Hardening of the init. It sets RLIMIT_CORE to 1, and it opens every mount
 // target beneath the root without following links, then mounts on the
 // descriptor.
 //
-//	K7             required  RLIMIT_CORE=1 keeps a piped core handler from
-//	                         starting
-//	K7-klog        recorded  the kernel log lines of an aborted dump: a crash
-//	                         loop in a sandbox is a log flood on the host
-//	T-mnt          required  a mount through /proc/self/fd/N lands on the
-//	                         directory that was opened
-//	T-mnt-symlink  required  a planted link fails closed
+//	core-limit-one       required  RLIMIT_CORE=1 keeps a piped core handler from
+//	                               starting
+//	core-kernel-log      recorded  the kernel log lines of an aborted dump: a
+//	                               crash loop in a sandbox is a log flood on the
+//	                               host
+//	mount-by-descriptor  required  a mount through /proc/self/fd/N lands on the
+//	                               directory that was opened
+//	mount-link-refused   required  a planted link fails closed
 //
-// A "no" to K7 turns the control into a warning of doctor, and the escape
-// case is published as it comes out. A "no" to T-mnt or T-mnt-symlink keeps
-// path-based targets in the init, and a writable root cannot be granted.
+// A "no" to core-limit-one turns the control into a warning of doctor, and
+// the escape case is published as it comes out. A "no" to
+// mount-by-descriptor or mount-link-refused keeps path-based targets in the
+// init, and a writable root cannot be granted.
 //
 // gVisor. The backend gives runsc an OCI user namespace that maps 0 to the
 // shifted uid, and the workspace overlay as an OCI bind mount.
 //
-//	K6-owner     required  what the workload writes belongs to the shifted uid
-//	                       on the host
-//	K6-bind      required  the workspace overlay works as an rbind OCI mount
-//	K6-uids      recorded  the host uids of the Sentry and the gofer, for the
-//	                       sentence of the threat model about their privilege
-//	K6-submount  recorded  runsc shows a mount under the root path; the design
-//	                       does not rely on it
+//	gvisor-file-owner     required  what the workload writes belongs to the
+//	                                shifted uid on the host
+//	gvisor-overlay-bind   required  the workspace overlay works as an rbind OCI
+//	                                mount
+//	gvisor-process-uids   recorded  the host uids of the Sentry and the gofer,
+//	                                for the sentence of the threat model about
+//	                                their privilege
+//	gvisor-root-submount  recorded  runsc shows a mount under the root path; the
+//	                                design does not rely on it
 //
-// A "no" to K6-owner or K6-bind makes gVisor a preview backend with network
-// none and no project, outside the claims.
+// A "no" to gvisor-file-owner or gvisor-overlay-bind makes gVisor a preview
+// backend with network none and no project, outside the claims.
 //
 // Left for a later release, and measured now so that the next design starts
 // from facts: the project as a live, ID-mapped lower layer, and a disk quota
 // made of an ext4 image on a loop device.
 //
-//	K11-idmap    recorded  mount_setattr(MOUNT_ATTR_IDMAP) with the map line
-//	                       "owner shifted 1", per filesystem
-//	K11-overlay  recorded  an overlay over the ID-mapped lower: uid 0 inside,
-//	                       copy-up owned by the shifted uid
-//	K11-owners   recorded  what the sandbox can do with files of other owners
-//	                       and groups
-//	T-loop       recorded  what the loop image costs, and whether the kernel
-//	                       takes the device back after the unmount
-//	T-loop-kill  recorded  and after the death of the process that held it
+//	idmap-mount        recorded  mount_setattr(MOUNT_ATTR_IDMAP) with the map
+//	                             line "owner shifted 1", per filesystem
+//	idmap-overlay      recorded  an overlay over the ID-mapped lower: uid 0
+//	                             inside, copy-up owned by the shifted uid
+//	idmap-owners       recorded  what the sandbox can do with files of other
+//	                             owners and groups
+//	loop-image         recorded  what the loop image costs, and whether the
+//	                             kernel takes the device back after the unmount
+//	loop-kill-release  recorded  and after the death of the process that held it
 //
 // The runner. Every fact is a fact about one kernel on one image; these say
 // which, so that "tested" is claimed for exactly what ran.
 //
-//	K10                     recorded  the runner exists and ran the tests
-//	T-host-kernel           recorded  kernel release
-//	T-host-arch             recorded  architecture
-//	T-host-distro           recorded  distribution
-//	T-host-cgroup           recorded  cgroup v2 at /sys/fs/cgroup
-//	T-host-controllers      recorded  cpu, memory and pids in the root group
-//	T-host-lsm              recorded  LSMs in force
-//	T-host-apparmor-userns  recorded  kernel.apparmor_restrict_unprivileged_userns
-//	T-host-max-userns       recorded  user.max_user_namespaces
-//	T-host-inotify          recorded  fs.inotify.max_user_instances
-//	T-host-core-pattern     recorded  kernel.core_pattern is a pipe handler
-//	T-host-fs-var-lib       recorded  filesystem of /var/lib
-//	T-host-fs-tmp           recorded  filesystem of /tmp
-//	T-host-loop-control     recorded  /dev/loop-control
-//	T-host-mkfs-ext4        recorded  mkfs.ext4
-//	T-host-nft              recorded  nft
-//	T-host-runsc            recorded  runsc and its version
-//	T-host-systemd          recorded  systemd and its version
+//	host-runner           recorded  the runner exists and ran the tests
+//	host-kernel           recorded  kernel release
+//	host-arch             recorded  architecture
+//	host-distro           recorded  distribution
+//	host-cgroup2          recorded  cgroup v2 at /sys/fs/cgroup
+//	host-controllers      recorded  cpu, memory and pids in the root group
+//	host-lsm              recorded  LSMs in force
+//	host-apparmor-userns  recorded  kernel.apparmor_restrict_unprivileged_userns
+//	host-max-userns       recorded  user.max_user_namespaces
+//	host-inotify          recorded  fs.inotify.max_user_instances
+//	host-core-pattern     recorded  kernel.core_pattern is a pipe handler
+//	host-fs-var-lib       recorded  filesystem of /var/lib
+//	host-fs-tmp           recorded  filesystem of /tmp
+//	host-loop-control     recorded  /dev/loop-control
+//	host-mkfs-ext4        recorded  mkfs.ext4
+//	host-nft              recorded  nft
+//	host-runsc            recorded  runsc and its version
+//	host-systemd          recorded  systemd and its version
 //
 // The tests themselves. A root test that leaves something behind is a
 // defect of the test, and of whatever it shows to be leaking.
 //
-//	Z-mounts     required  the mount table of the host is as it was found
-//	Z-cgroups    required  no cgroup is left
-//	Z-loops      required  no loop device is left attached
-//	Z-processes  required  no helper process is left, and so no namespace
-//	Z-sysctls    required  the sysctls the tests touch are as they were found
+//	clean-mounts     required  the mount table of the host is as it was found
+//	clean-cgroups    required  no cgroup is left
+//	clean-loops      required  no loop device is left attached
+//	clean-processes  required  no helper process is left, and so no namespace
+//	clean-sysctls    required  the sysctls the tests touch are as they were found
 //
 // # How a test is built
 //
@@ -232,11 +250,11 @@
 // test holds: when the test dies, the helper ends, and its namespaces with
 // it.
 //
-// Where half of a mechanism needs no privilege (the socket passing of K1,
-// the path resolution of T-mnt, the crash of K7, the clone into a cgroup),
-// a self-test next to the root test runs that half on any host, so that a
-// "no" on a runner is a fact about the kernel and not a defect of the
-// instrument.
+// Where half of a mechanism needs no privilege (the socket passing of the
+// egress listener, the path resolution of a mount target, the crash under
+// RLIMIT_CORE=1, the clone into a cgroup), a self-test next to the root test
+// runs that half on any host, so that a "no" on a runner is a fact about the
+// kernel and not a defect of the instrument.
 //
 // To add a fact: add it to the catalogue, give it a line here in the group
 // of the decision it gates, declare it in the test that records it. The

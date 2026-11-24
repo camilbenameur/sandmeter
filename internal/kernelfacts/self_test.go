@@ -95,18 +95,18 @@ func TestSelfHelpersStopAtTheGuard(t *testing.T) {
 	dir := t.TempDir()
 	work := filepath.Join(dir, "work")
 	for _, argv := range [][]string{
-		{"k1netns", "3128", "3129", "nonce"},
-		{"k2userns", "write"},
-		{"k2binotify", "4", ""},
-		{"k3", work, "replace"},
-		{"k4worker", work},
-		{"k4probe", work},
-		{"k6worker", work, "/nonexistent/runsc", "id"},
-		{"k9tmpfs", work, ""},
-		{"k11idmap", work, "1000", "1000"},
-		{"tloop", work, "/nonexistent/mkfs.ext4", "unmount"},
-		{"tmnt", work, work + "-outside"},
-		{"tsyncfs", work},
+		{"netns", "3128", "3129", "nonce"},
+		{"userns", "write"},
+		{"inotify", "4", ""},
+		{"refresh", work, "replace"},
+		{"worker", work},
+		{"upperprobe", work},
+		{"runscworker", work, "/nonexistent/runsc", "id"},
+		{"tmpfsupper", work, ""},
+		{"idmap", work, "1000", "1000"},
+		{"loop", work, "/nonexistent/mkfs.ext4", "unmount"},
+		{"mounttarget", work, work + "-outside"},
+		{"unmount", work},
 	} {
 		var nothing struct{}
 		err := runChild(t, spawn{name: argv[0], args: argv[1:], nobody: os.Geteuid() == 0}, &nothing)
@@ -126,15 +126,15 @@ func TestSelfHelpersStopAtTheGuard(t *testing.T) {
 
 func TestSelfScratch(t *testing.T) {
 	for path, want := range map[string]bool{
-		"/var/lib":                   true,
-		"/var/lib/sandmeter-kf-1234": true,
-		"/tmp/a.b_c":                 true,
-		"relative":                   false,
-		"/":                          false,
-		"/with space":                false,
-		"/with,comma":                false,
-		"/with:colon":                false,
-		"/with'quote":                false,
+		"/var/lib":                      true,
+		"/var/lib/sandmeter-facts-1234": true,
+		"/tmp/a.b_c":                    true,
+		"relative":                      false,
+		"/":                             false,
+		"/with space":                   false,
+		"/with,comma":                   false,
+		"/with:colon":                   false,
+		"/with'quote":                   false,
 	} {
 		if got := plainPath.MatchString(path); got != want {
 			t.Errorf("plainPath accepts %q: %v, want %v", path, got, want)

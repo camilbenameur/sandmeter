@@ -30,13 +30,15 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
     env:
       CI: "true"
-      # The runner is thrown away after the job: the two tests that change a
-      # host-wide setting for a moment (K7, half of K2b) may run.
+      # The runner is thrown away after the job: the tests that change a
+      # host-wide setting for a moment (the core handler, the inotify
+      # instances of root) may run.
       SANDMETER_THROWAWAY_HOST: "1"
       # A missing prerequisite is a broken job, not a skipped test.
       SANDMETER_REQUIRE: root,cgroup2,runsc
       SANDMETER_FACTS_OUT: ${{ github.workspace }}/out/facts.jsonl
-      # A static test binary: it is also the process K6 runs inside gVisor.
+      # A static test binary: it is also the process the gVisor test runs
+      # inside the sandbox.
       CGO_ENABLED: "0"
       # The release of scripts/ci/setup-host.sh. The checksums are pinned
       # here, not fetched next to the archive, so a replaced archive fails.
@@ -54,7 +56,8 @@ jobs:
           go-version-file: go.mod
 
       # Not scripts/ci/setup-host.sh: that script also turns on IP forwarding
-      # and changes the FORWARD policy, and K1 must find the host untouched.
+      # and changes the FORWARD policy, and the egress test must find the
+      # host's network untouched.
       - name: Install gVisor (pinned release, pinned checksum)
         shell: bash
         run: |

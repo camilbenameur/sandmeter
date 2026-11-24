@@ -30,7 +30,7 @@ var kernelRelease = sync.OnceValue(func() string {
 	return unix.ByteSliceToString(u.Release[:])
 })
 
-// corePattern is the setting K7 replaces for a moment.
+// corePattern is the setting the core-handler test replaces for a moment.
 const corePattern = "/proc/sys/kernel/core_pattern"
 
 // readTrim reads a small file without its surrounding white space.
@@ -300,9 +300,10 @@ func (base hostState) cgroupsDiff(afterTeardown bool) string {
 // it; after the teardown it may not.
 //
 // The controllers the root hands down are not part of the verdict: a
-// transient unit with Delegate=yes, which K4 starts, makes systemd turn
-// controllers on and off there on its own schedule. subtreeNote reports
-// them, and removeCgParent answers for the ones this run enabled itself.
+// transient unit with Delegate=yes, which the worker test starts, makes
+// systemd turn controllers on and off there on its own schedule.
+// subtreeNote reports them, and removeCgParent answers for the ones this
+// run enabled itself.
 func (base hostState) cgroupsDiffNow(afterTeardown bool) string {
 	own := ownCgroupName()
 	var out []string

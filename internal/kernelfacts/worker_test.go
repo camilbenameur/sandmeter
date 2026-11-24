@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// K4: the worker.
+// The worker.
 //
 // A worker serves one connection. It runs in its own mount namespace
 // (CLONE_NEWNS, then MS_REC|MS_SLAVE on /) and in its own cgroup subtree.
@@ -30,20 +30,20 @@ import (
 // is required here. What a systemd scope with Delegate=yes gives is
 // recorded, for the unit the service itself runs in.
 
-// k4Ready is what the worker holds while the test looks at the host.
-type k4Ready struct {
+// workerReady is what the worker holds while the test looks at the host.
+type workerReady struct {
 	MountNS string   `json:"mount_ns"` // its mount namespace
 	Mounts  []string `json:"mounts"`   // its own mounts, as its mountinfo lists them
 	Marker  string   `json:"marker"`   // a lower file read through its overlay
 }
 
-const k4Marker = "from the lower layer"
+const workerMarker = "from the lower layer"
 
-// childK4Worker mounts an overlay and a tmpfs in a private mount namespace
+// childWorker mounts an overlay and a tmpfs in a private mount namespace
 // and waits to be killed. args: directory.
-func childK4Worker(args []string) error {
+func childWorker(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: k4worker DIR")
+		return errors.New("usage: worker DIR")
 	}
 	if err := privateMounts(); err != nil {
 		return err
@@ -52,7 +52,7 @@ func childK4Worker(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeTree(o.lower, tree{"marker": "f:" + k4Marker}); err != nil {
+	if err := writeTree(o.lower, tree{"marker": "f:" + workerMarker}); err != nil {
 		return err
 	}
 	if err := o.mount(overlayOpts); err != nil {
@@ -69,7 +69,7 @@ func childK4Worker(args []string) error {
 		return err
 	}
 
-	rdy := k4Ready{MountNS: nsLink("mnt")}
+	rdy := workerReady{MountNS: nsLink("mnt")}
 	entries := parseMountinfo(mountinfoText())
 	for _, p := range []string{o.merged, tmp} {
 		if e, ok := mountAt(entries, p); ok {
@@ -85,13 +85,13 @@ func childK4Worker(args []string) error {
 	return nil
 }
 
-// childK4Probe tells whether the upper directory of the worker's overlay is
+// childUpperProbe tells whether the upper directory of the worker's overlay is
 // still in use by a live mount. With index=on the kernel refuses such an
 // upper directory with EBUSY; with index=off it would only warn in its log.
 // args: directory.
-func childK4Probe(args []string) error {
+func childUpperProbe(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: k4probe DIR")
+		return errors.New("usage: upperprobe DIR")
 	}
 	if err := privateMounts(); err != nil {
 		return err
@@ -107,32 +107,32 @@ func childK4Probe(args []string) error {
 	return sayResult(map[string]string{"mount": errnoName(err)})
 }
 
-// k4UpperInUse runs the probe and returns "ok", an errno name, or the reason
+// upperInUse runs the probe and returns "ok", an errno name, or the reason
 // the probe itself did not run.
-func k4UpperInUse(t *testing.T, dir string) string {
+func upperInUse(t *testing.T, dir string) string {
 	t.Helper()
 	var rep struct {
 		Mount string `json:"mount"`
 	}
-	if err := runChild(t, spawn{name: "k4probe", args: []string{dir}, clone: unix.CLONE_NEWNS}, &rep); err != nil {
+	if err := runChild(t, spawn{name: "upperprobe", args: []string{dir}, clone: unix.CLONE_NEWNS}, &rep); err != nil {
 		return "probe failed: " + err.Error()
 	}
 	return rep.Mount
 }
 
-// k4Mounts records K4-mounts and K4-kill.
-func k4Mounts(t *testing.T, r *recorder) {
+// workerMounts records worker-mounts-private and worker-kill-unmounts.
+func workerMounts(t *testing.T, r *recorder) {
 	t.Helper()
-	dir := scratch(t, "k4")
+	dir := scratch(t, "worker")
 	before := mountinfoText()
-	c, err := spawnChild(t, spawn{name: "k4worker", args: []string{dir}, clone: unix.CLONE_NEWNS})
+	c, err := spawnChild(t, spawn{name: "worker", args: []string{dir}, clone: unix.CLONE_NEWNS})
 	if err != nil {
-		r.no("K4-mounts", "a helper in a new mount namespace did not start: %v", err)
+		r.no("worker-mounts-private", "a helper in a new mount namespace did not start: %v", err)
 		return
 	}
-	var rdy k4Ready
+	var rdy workerReady
 	if err := c.ready(&rdy); err != nil {
-		r.no("K4-mounts", "the worker did not mount its overlay and its tmpfs: %v", err)
+		r.no("worker-mounts-private", "the worker did not mount its overlay and its tmpfs: %v", err)
 		return
 	}
 	during := mountinfoText()
@@ -140,16 +140,16 @@ func k4Mounts(t *testing.T, r *recorder) {
 	// the same paths.
 	hostSees := exists(filepath.Join(dir, "ovl", "merged", "marker")) || exists(filepath.Join(dir, "tmp", "marker"))
 	own := nsLink("mnt")
-	workerOK := len(rdy.Mounts) == 2 && rdy.Marker == k4Marker && rdy.MountNS != "" && rdy.MountNS != own
+	workerOK := len(rdy.Mounts) == 2 && rdy.Marker == workerMarker && rdy.MountNS != "" && rdy.MountNS != own
 	// While the worker lives, its upper directory is in use.
-	busy := k4UpperInUse(t, dir)
+	busy := upperInUse(t, dir)
 
 	killed := time.Now()
 	c.kill()
 	after := mountinfoText()
 
 	d1, d2 := lineDiff(before, during), lineDiff(before, after)
-	r.judge("K4-mounts", workerOK && !hostSees && before == during && before == after,
+	r.judge("worker-mounts-private", workerOK && !hostSees && before == during && before == after,
 		"the worker, in %s (the host is in %s), lists %v and reads %q through its overlay; the host sees the worker's files at those paths: %v; host mountinfo changed while they were mounted: %s; changed after SIGKILL: %s",
 		rdy.MountNS, own, rdy.Mounts, rdy.Marker, hostSees, orNothing(d1), orNothing(d2))
 
@@ -163,27 +163,27 @@ func k4Mounts(t *testing.T, r *recorder) {
 	if busy != "EBUSY" {
 		// The probe cannot tell on this filesystem: say so, and judge on
 		// the namespace alone.
-		r.judge("K4-kill", empty,
+		r.judge("worker-kill-unmounts", empty,
 			"processes left in %s 2 s after SIGKILL: %v; the in-use probe (overlay with index=on on the same upper directory) answered %q while the worker was alive, where EBUSY was expected, so it proves nothing here",
 			rdy.MountNS, members, busy)
 		return
 	}
 	last := ""
 	released := poll(2*time.Second, func() bool {
-		last = k4UpperInUse(t, dir)
+		last = upperInUse(t, dir)
 		return last == "ok"
 	})
-	r.judge("K4-kill", empty && released,
+	r.judge("worker-kill-unmounts", empty && released,
 		"processes left in %s after SIGKILL: %v; mounting an overlay with index=on on the worker's upper directory answered EBUSY while it lived and %s within %s of the kill (each probe is a new process; limit 2 s)",
 		rdy.MountNS, members, last, millis(time.Since(killed)))
 }
 
-// k4Cgroup records K4-cgroup.
-func k4Cgroup(t *testing.T, r *recorder) {
+// cgroupLayout records cgroup-session-leaf.
+func cgroupLayout(t *testing.T, r *recorder) {
 	t.Helper()
-	tr, err := newCgTree(t, "k4")
+	tr, err := newCgTree(t, "worker")
 	if err != nil {
-		r.no("K4-cgroup", "the layout parent/session/leaf could not be created under %s: %v", cgroupRoot, err)
+		r.no("cgroup-session-leaf", "the layout parent/session/leaf could not be created under %s: %v", cgroupRoot, err)
 		return
 	}
 	// The limits of the design: memory and pids on the session, pids again
@@ -199,28 +199,28 @@ func k4Cgroup(t *testing.T, r *recorder) {
 
 	c, err := spawnChild(t, spawn{name: "cgreport", cgroup: tr.leaf})
 	if err != nil {
-		r.no("K4-cgroup", "clone3 with CLONE_INTO_CGROUP into %s failed: %v; controllers of the leaf: %v", tr.leaf, err, cgFields(tr.leaf, "cgroup.controllers"))
+		r.no("cgroup-session-leaf", "clone3 with CLONE_INTO_CGROUP into %s failed: %v; controllers of the leaf: %v", tr.leaf, err, cgFields(tr.leaf, "cgroup.controllers"))
 		return
 	}
 	var rdy struct {
 		Cgroup string `json:"cgroup"`
 	}
 	if err := c.ready(&rdy); err != nil {
-		r.no("K4-cgroup", "the process cloned into the leaf did not report: %v", err)
+		r.no("cgroup-session-leaf", "the process cloned into the leaf did not report: %v", err)
 		return
 	}
 	procs := cgProcs(tr.leaf)
 	want := "0::" + strings.TrimPrefix(tr.leaf, cgroupRoot)
 	missing := missingControllers(tr.leaf)
-	r.judge("K4-cgroup", len(missing) == 0 && limits == nil && rdy.Cgroup == want && slices.Equal(procs, []int{c.pid()}),
+	r.judge("cgroup-session-leaf", len(missing) == 0 && limits == nil && rdy.Cgroup == want && slices.Equal(procs, []int{c.pid()}),
 		"controllers of the leaf: %v (missing: %v); limits written: %s; memory.swap.max=0: %s; the cloned process reads %q from /proc/self/cgroup (expected %q); cgroup.procs of the leaf: %v (expected [%d])",
 		cgFields(tr.leaf, "cgroup.controllers"), missing, errOrOK(limits), swap, rdy.Cgroup, want, procs, c.pid())
 	c.stop()
 }
 
-// k4ScopeReport is what a process found inside a systemd scope started
+// scopeReport is what a process found inside a systemd scope started
 // with Delegate=yes.
-type k4ScopeReport struct {
+type scopeReport struct {
 	Path        string            `json:"path"`        // its cgroup
 	Controllers []string          `json:"controllers"` // cgroup.controllers of the scope
 	Move        string            `json:"move"`        // moving itself into a child group
@@ -229,17 +229,17 @@ type k4ScopeReport struct {
 	Undo        string            `json:"undo"`        // putting the scope back as systemd made it
 }
 
-// childK4Scope runs inside the scope. A group that holds processes cannot
+// childScope runs inside the scope. A group that holds processes cannot
 // hand controllers to its children, so it first moves itself into a child
 // group, as the service will.
-func childK4Scope([]string) error {
+func childScope([]string) error {
 	path, err := ownCgroup()
 	if err != nil {
 		return err
 	}
 	dir := filepath.Join(cgroupRoot, path)
 	pid := strconv.Itoa(os.Getpid())
-	rep := k4ScopeReport{Path: path, Controllers: cgFields(dir, "cgroup.controllers"), Enable: map[string]string{}}
+	rep := scopeReport{Path: path, Controllers: cgFields(dir, "cgroup.controllers"), Enable: map[string]string{}}
 
 	supervisor := filepath.Join(dir, "supervisor")
 	if err := os.Mkdir(supervisor, 0o755); err != nil {
@@ -266,27 +266,27 @@ func childK4Scope([]string) error {
 	return sayResult(rep)
 }
 
-// k4Scope records K4-scope.
-func k4Scope(t *testing.T, r *recorder) {
+// systemdScope records cgroup-systemd-delegate.
+func systemdScope(t *testing.T, r *recorder) {
 	t.Helper()
 	run, err := exec.LookPath("systemd-run")
 	if err != nil || !exists("/run/systemd/system") {
-		r.skip("K4-scope", "systemd does not run this host, or systemd-run is not installed")
+		r.skip("cgroup-systemd-delegate", "systemd does not run this host, or systemd-run is not installed")
 		return
 	}
 	version, _, _ := strings.Cut(commandOutput(run, "--version"), "\n")
-	unit := fmt.Sprintf("sandmeter-kf-%d-k4.scope", os.Getpid())
-	var rep k4ScopeReport
+	unit := fmt.Sprintf("sandmeter-facts-%d-delegate.scope", os.Getpid())
+	var rep scopeReport
 	err = runChild(t, spawn{
-		name: "k4scope",
+		name: "scope",
 		wrap: []string{run, "--scope", "--quiet", "--collect", "--unit=" + unit, "--property=Delegate=yes"},
 	}, &rep)
 	if err != nil {
-		r.no("K4-scope", "%s: systemd-run --scope --property=Delegate=yes did not run the helper: %v", version, err)
+		r.no("cgroup-systemd-delegate", "%s: systemd-run --scope --property=Delegate=yes did not run the helper: %v", version, err)
 		return
 	}
 	if !strings.HasSuffix(rep.Path, "/"+unit) {
-		r.no("K4-scope", "%s: the helper ran in %q, not in the scope %s", version, rep.Path, unit)
+		r.no("cgroup-systemd-delegate", "%s: the helper ran in %q, not in the scope %s", version, rep.Path, unit)
 		return
 	}
 	enabled := true
@@ -302,16 +302,16 @@ func k4Scope(t *testing.T, r *recorder) {
 			t.Errorf("the scope %s is still there after systemctl stop: %s", unit, scopeDir)
 		}
 	}
-	r.judge("K4-scope", rep.Move == "ok" && enabled,
+	r.judge("cgroup-systemd-delegate", rep.Move == "ok" && enabled,
 		"%s; scope at %s with cgroup.controllers %v; moving the process into a child group: %s; enabling for the children: cpu %s, memory %s, pids %s; a new child group gets %v; scope put back: %s; scope removed by systemd within 5 s of the exit: %v",
 		version, rep.Path, rep.Controllers, rep.Move, rep.Enable["cpu"], rep.Enable["memory"], rep.Enable["pids"], rep.Child, rep.Undo, gone)
 }
 
-func TestK4WorkerIsolation(t *testing.T) {
-	r := declare(t, "K4-mounts", "K4-kill", "K4-cgroup", "K4-scope")
+func TestWorkerIsolation(t *testing.T) {
+	r := declare(t, "worker-mounts-private", "worker-kill-unmounts", "cgroup-session-leaf", "cgroup-systemd-delegate")
 	r.needRoot()
-	k4Mounts(t, r)
+	workerMounts(t, r)
 	r.needCgroup2()
-	k4Cgroup(t, r)
-	k4Scope(t, r)
+	cgroupLayout(t, r)
+	systemdScope(t, r)
 }

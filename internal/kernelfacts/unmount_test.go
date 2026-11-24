@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// T-syncfs: the price of mounting per command.
+// The price of mounting per command.
 //
 // Unmounting an overlay makes the kernel sync the filesystem of its upper
 // directory, which is the state filesystem of the host with everybody
@@ -21,8 +21,8 @@ import (
 // before it unmounts, and reports the time as its own benchmark row. This
 // test records what the cost is on each runner. It decides nothing.
 
-// syncfsReport holds the time of one unmount per workload, in milliseconds.
-type syncfsReport struct {
+// unmountReport holds the time of one unmount per workload, in milliseconds.
+type unmountReport struct {
 	Idle    float64 `json:"idle"`    // nothing written
 	Bulk    float64 `json:"bulk"`    // after one file of 50 MiB
 	Small   float64 `json:"small"`   // after 5,000 files of 128 bytes
@@ -30,14 +30,14 @@ type syncfsReport struct {
 }
 
 const (
-	syncfsBulk  = 50 << 20
-	syncfsSmall = 5000
+	unmountBulk  = 50 << 20
+	unmountSmall = 5000
 )
 
-// childSyncfs runs in a private mount namespace. args: directory.
-func childSyncfs(args []string) error {
+// childUnmount runs in a private mount namespace. args: directory.
+func childUnmount(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: tsyncfs DIR")
+		return errors.New("usage: unmount DIR")
 	}
 	if err := privateMounts(); err != nil {
 		return err
@@ -63,15 +63,15 @@ func childSyncfs(args []string) error {
 		return o, since(start), nil
 	}
 
-	var rep syncfsReport
+	var rep unmountReport
 	var err error
 	if _, rep.Idle, err = unmountAfter("idle", func(string) error { return nil }); err != nil {
 		return err
 	}
 	if _, rep.Bulk, err = unmountAfter("bulk", func(merged string) error {
-		n, how := fill(filepath.Join(merged, "bulk"), syncfsBulk)
-		if n < syncfsBulk {
-			return fmt.Errorf("wrote %d of %d bytes: %s", n, syncfsBulk, how)
+		n, how := fill(filepath.Join(merged, "bulk"), unmountBulk)
+		if n < unmountBulk {
+			return fmt.Errorf("wrote %d of %d bytes: %s", n, unmountBulk, how)
 		}
 		return nil
 	}); err != nil {
@@ -79,7 +79,7 @@ func childSyncfs(args []string) error {
 	}
 	last, small, err := unmountAfter("small", func(merged string) error {
 		content := make([]byte, 128)
-		for i := range syncfsSmall {
+		for i := range unmountSmall {
 			if err := os.WriteFile(filepath.Join(merged, fmt.Sprintf("f-%05d", i)), content, 0o644); err != nil {
 				return err
 			}
@@ -100,17 +100,17 @@ func childSyncfs(args []string) error {
 	return sayResult(rep)
 }
 
-func TestSyncfsOnUnmount(t *testing.T) {
-	r := declare(t, "T-syncfs")
+func TestUnmountTime(t *testing.T) {
+	r := declare(t, "overlay-unmount-time")
 	r.needRoot()
 
-	dir := scratch(t, "tsyncfs")
-	var rep syncfsReport
-	if err := runChild(t, spawn{name: "tsyncfs", args: []string{dir}, clone: unix.CLONE_NEWNS}, &rep); err != nil {
-		r.skip("T-syncfs", "the measurement did not complete on %s: %v", fsTypeOf(dir), err)
+	dir := scratch(t, "unmount")
+	var rep unmountReport
+	if err := runChild(t, spawn{name: "unmount", args: []string{dir}, clone: unix.CLONE_NEWNS}, &rep); err != nil {
+		r.skip("overlay-unmount-time", "the measurement did not complete on %s: %v", fsTypeOf(dir), err)
 		return
 	}
-	r.judge("T-syncfs", rep.Bulk < 1000 && rep.Small < 1000,
+	r.judge("overlay-unmount-time", rep.Bulk < 1000 && rep.Small < 1000,
 		"on %s, umount of an overlay took %.1f ms with nothing written, %.1f ms after one file of 50 MiB, %.1f ms after 5,000 files of 128 bytes; mounting the same directories again at once: %s",
 		fsTypeOf(dir), rep.Idle, rep.Bulk, rep.Small, rep.Remount)
 }

@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// K11: the ID-mapped lower layer, which v0.1.0 leaves out.
+// The ID-mapped lower layer, which v0.1.0 leaves out.
 //
 // Nothing of v0.1.0 depends on it: the project comes in as a copy. This
 // test only records, per filesystem and kernel, what the live variant would
@@ -36,24 +36,24 @@ import (
 
 // Group ids of the test files. They need no entry in any group database.
 const (
-	k11TeamGID  = 4242 // a second group of the owner, mapped
-	k11StrayGID = 4343 // a group left out of the map
+	teamGID  = 4242 // a second group of the owner, mapped
+	strayGID = 4343 // a group left out of the map
 )
 
-// k11Files are the files of the project, in the order they are reported.
-var k11Files = []string{"own.txt", "team.txt", "stray.txt", "foreign.txt", "open.txt", "private.txt"}
+// idmapFiles are the files of the project, in the order they are reported.
+var idmapFiles = []string{"own.txt", "team.txt", "stray.txt", "foreign.txt", "open.txt", "private.txt"}
 
-// k11Entry is how one file looks from the sandbox's user namespace.
-type k11Entry struct {
+// idmapEntry is how one file looks from the sandbox's user namespace.
+type idmapEntry struct {
 	Owner string `json:"owner"` // uid:gid
 	Read  string `json:"read"`  // "ok" or an errno
 	Write string `json:"write"` // "ok" or an errno, for an append
 }
 
-// k11ViewReport is what the process in the sandbox's user namespace saw.
-type k11ViewReport struct {
-	Entries map[string]k11Entry `json:"entries"`
-	Create  string              `json:"create"` // creating a new file
+// idmapViewReport is what the process in the sandbox's user namespace saw.
+type idmapViewReport struct {
+	Entries map[string]idmapEntry `json:"entries"`
+	Create  string                `json:"create"` // creating a new file
 }
 
 // appendTo opens a file for appending and writes one byte.
@@ -67,36 +67,36 @@ func appendTo(path string) string {
 	return errnoName(err)
 }
 
-// childK11View runs in a user namespace that maps 0 to the shifted uid.
+// childIDMapView runs in a user namespace that maps 0 to the shifted uid.
 // args: the merged directory.
-func childK11View(args []string) error {
+func childIDMapView(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: k11view DIR")
+		return errors.New("usage: idmapview DIR")
 	}
-	rep := k11ViewReport{Entries: map[string]k11Entry{}}
-	for _, name := range k11Files {
+	rep := idmapViewReport{Entries: map[string]idmapEntry{}}
+	for _, name := range idmapFiles {
 		p := filepath.Join(args[0], name)
 		_, err := os.ReadFile(p)
-		rep.Entries[name] = k11Entry{Owner: ownerOf(p), Read: errnoName(err), Write: appendTo(p)}
+		rep.Entries[name] = idmapEntry{Owner: ownerOf(p), Read: errnoName(err), Write: appendTo(p)}
 	}
 	rep.Create = errnoName(os.WriteFile(filepath.Join(args[0], "new.txt"), []byte("new"), 0o644))
 	return sayResult(rep)
 }
 
-// k11Report is what the stand-in for the worker measured.
-type k11Report struct {
-	FS         string         `json:"fs"`          // filesystem of the project directory
-	Map        string         `json:"map"`         // uid map of the mount
-	Mount      string         `json:"mount"`       // "ok", or the call that failed and its errno
-	MappedOwn  string         `json:"mapped_own"`  // owner of own.txt through the mapped mount, for host root
-	MappedTeam string         `json:"mapped_team"` // owner of team.txt there
-	MappedRoot string         `json:"mapped_root"` // owner of foreign.txt there
-	Overlay    string         `json:"overlay"`     // mounting an overlay over the mapped clone
-	View       *k11ViewReport `json:"view"`        // nil when the view did not run
-	ViewErr    string         `json:"view_err"`
-	UpperOwn   string         `json:"upper_own"`   // owner of the copy of own.txt in the upper directory
-	UpperNew   string         `json:"upper_new"`   // owner of the new file there
-	ProjectOwn string         `json:"project_own"` // owner and content of the project's own.txt at the end
+// idmapReport is what the stand-in for the worker measured.
+type idmapReport struct {
+	FS         string           `json:"fs"`          // filesystem of the project directory
+	Map        string           `json:"map"`         // uid map of the mount
+	Mount      string           `json:"mount"`       // "ok", or the call that failed and its errno
+	MappedOwn  string           `json:"mapped_own"`  // owner of own.txt through the mapped mount, for host root
+	MappedTeam string           `json:"mapped_team"` // owner of team.txt there
+	MappedRoot string           `json:"mapped_root"` // owner of foreign.txt there
+	Overlay    string           `json:"overlay"`     // mounting an overlay over the mapped clone
+	View       *idmapViewReport `json:"view"`        // nil when the view did not run
+	ViewErr    string           `json:"view_err"`
+	UpperOwn   string           `json:"upper_own"`   // owner of the copy of own.txt in the upper directory
+	UpperNew   string           `json:"upper_new"`   // owner of the new file there
+	ProjectOwn string           `json:"project_own"` // owner and content of the project's own.txt at the end
 }
 
 // mappingNamespace returns a descriptor of a user namespace that carries
@@ -144,11 +144,11 @@ func idmapMount(src, dst string, userns int) string {
 	return "ok"
 }
 
-// childK11 runs as root in a private mount namespace.
+// childIDMap runs as root in a private mount namespace.
 // args: directory, uid and gid of the project's owner.
-func childK11(args []string) error {
+func childIDMap(args []string) error {
 	if len(args) != 3 {
-		return errors.New("usage: k11idmap DIR UID GID")
+		return errors.New("usage: idmap DIR UID GID")
 	}
 	dir := args[0]
 	uid, err := strconv.Atoi(args[1])
@@ -184,8 +184,8 @@ func childK11(args []string) error {
 		mode     os.FileMode
 	}{
 		{"own.txt", uid, gid, 0o644},
-		{"team.txt", uid, k11TeamGID, 0o640},
-		{"stray.txt", uid, k11StrayGID, 0o640},
+		{"team.txt", uid, teamGID, 0o640},
+		{"stray.txt", uid, strayGID, 0o640},
 		{"foreign.txt", 0, 0, 0o644},
 		{"open.txt", 0, 0, 0o666},
 		{"private.txt", 0, 0, 0o600},
@@ -203,12 +203,12 @@ func childK11(args []string) error {
 		return err
 	}
 
-	rep := k11Report{FS: fsTypeOf(proj), Map: fmt.Sprintf("%d %d 1", uid, idShift)}
+	rep := idmapReport{FS: fsTypeOf(proj), Map: fmt.Sprintf("%d %d 1", uid, idShift)}
 	// uid: "owner shifted 1". gid: the owner's group to the shifted gid,
 	// the second group to its own place in the sandbox's range.
 	ns, err := mappingNamespace(
 		[]syscall.SysProcIDMap{{ContainerID: uid, HostID: idShift, Size: 1}},
-		[]syscall.SysProcIDMap{{ContainerID: gid, HostID: idShift, Size: 1}, {ContainerID: k11TeamGID, HostID: idShift + k11TeamGID, Size: 1}},
+		[]syscall.SysProcIDMap{{ContainerID: gid, HostID: idShift, Size: 1}, {ContainerID: teamGID, HostID: idShift + teamGID, Size: 1}},
 	)
 	if err != nil {
 		return err
@@ -232,13 +232,13 @@ func childK11(args []string) error {
 
 	// The sandbox's side: a process in a user namespace where 0 is the
 	// shifted uid, in this mount namespace.
-	view := exec.Command("/proc/self/exe", childArg, "k11view", o.merged)
+	view := exec.Command("/proc/self/exe", childArg, "idmapview", o.merged)
 	attr := &syscall.SysProcAttr{}
 	usernsAttr(attr)
 	view.SysProcAttr = attr
 	out, err := view.Output()
 	if p, ok := findLine(out, "result "); ok && err == nil {
-		rep.View = &k11ViewReport{}
+		rep.View = &idmapViewReport{}
 		if err := json.Unmarshal(p, rep.View); err != nil {
 			rep.View, rep.ViewErr = nil, err.Error()
 		}
@@ -265,26 +265,26 @@ func projectOwner() (uid, gid int) {
 	if n, err := strconv.Atoi(os.Getenv("SUDO_GID")); err == nil && n > 0 {
 		gid = n
 	}
-	if gid == k11TeamGID || gid == k11StrayGID {
+	if gid == teamGID || gid == strayGID {
 		gid += 1000 // keep the three groups distinct
 	}
 	return uid, gid
 }
 
-func TestK11IDMappedLower(t *testing.T) {
-	r := declare(t, "K11-idmap", "K11-overlay", "K11-owners")
+func TestIDMappedLower(t *testing.T) {
+	r := declare(t, "idmap-mount", "idmap-overlay", "idmap-owners")
 	r.needRoot()
 
-	dir := scratch(t, "k11")
+	dir := scratch(t, "idmap")
 	uid, gid := projectOwner()
-	var rep k11Report
-	if err := runChild(t, spawn{name: "k11idmap", args: []string{dir, strconv.Itoa(uid), strconv.Itoa(gid)}, clone: unix.CLONE_NEWNS}, &rep); err != nil {
+	var rep idmapReport
+	if err := runChild(t, spawn{name: "idmap", args: []string{dir, strconv.Itoa(uid), strconv.Itoa(gid)}, clone: unix.CLONE_NEWNS}, &rep); err != nil {
 		r.skipRest("the experiment did not complete: %v", err)
 		return
 	}
 
 	shifted := fmt.Sprintf("%d:%d", idShift, idShift)
-	r.judge("K11-idmap", rep.Mount == "ok" && rep.MappedOwn == shifted,
+	r.judge("idmap-mount", rep.Mount == "ok" && rep.MappedOwn == shifted,
 		"project on %s, owned by %d:%d, uid map %q; open_tree, mount_setattr(MOUNT_ATTR_IDMAP), move_mount: %s; through the mapped mount host root sees own.txt as %s (expected %s), team.txt as %s, the root-owned file as %s",
 		rep.FS, uid, gid, rep.Map, rep.Mount, rep.MappedOwn, shifted, rep.MappedTeam, rep.MappedRoot)
 	if rep.Mount != "ok" {
@@ -292,23 +292,23 @@ func TestK11IDMappedLower(t *testing.T) {
 		return
 	}
 	if rep.Overlay != "ok" || rep.View == nil {
-		r.no("K11-overlay", "overlay over the ID-mapped clone on %s: %s; view from the sandbox's user namespace: %s", rep.FS, rep.Overlay, rep.ViewErr)
+		r.no("idmap-overlay", "overlay over the ID-mapped clone on %s: %s; view from the sandbox's user namespace: %s", rep.FS, rep.Overlay, rep.ViewErr)
 		r.skipRest("no view through an overlay over the ID-mapped clone")
 		return
 	}
 
 	e := rep.View.Entries
 	unchanged := fmt.Sprintf("%d:%d %q", uid, gid, "own")
-	r.judge("K11-overlay", e["own.txt"].Owner == "0:0" && e["own.txt"].Read == "ok" && e["own.txt"].Write == "ok" &&
+	r.judge("idmap-overlay", e["own.txt"].Owner == "0:0" && e["own.txt"].Read == "ok" && e["own.txt"].Write == "ok" &&
 		rep.View.Create == "ok" && rep.UpperOwn == shifted && rep.UpperNew == shifted && rep.ProjectOwn == unchanged,
 		"on %s with %s; in the sandbox's user namespace own.txt is owned by %s (expected 0:0), read: %s, append: %s, create a file: %s; in the upper directory the copy belongs to %s and the new file to %s (expected %s); the project's own.txt is %s (expected %s)",
 		rep.FS, overlayOpts, e["own.txt"].Owner, e["own.txt"].Read, e["own.txt"].Write, rep.View.Create, rep.UpperOwn, rep.UpperNew, shifted, rep.ProjectOwn, unchanged)
 
 	var all []string
-	for _, name := range k11Files {
+	for _, name := range idmapFiles {
 		all = append(all, fmt.Sprintf("%s owner %s read %s append %s", name, e[name].Owner, e[name].Read, e[name].Write))
 	}
-	r.judge("K11-owners",
+	r.judge("idmap-owners",
 		e["team.txt"].Read == "ok" && e["team.txt"].Write == "ok" &&
 			e["foreign.txt"].Read == "ok" && e["foreign.txt"].Write != "ok" &&
 			e["private.txt"].Read != "ok",
@@ -317,7 +317,7 @@ func TestK11IDMappedLower(t *testing.T) {
 }
 
 // The probes of the view, on files that need no privilege.
-func TestSelfK11Probes(t *testing.T) {
+func TestSelfIDMapProbes(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "own.txt")
 	if err := os.WriteFile(file, []byte("own"), 0o644); err != nil {
 		t.Fatal(err)
@@ -333,7 +333,7 @@ func TestSelfK11Probes(t *testing.T) {
 			t.Errorf("appendTo on a read-only file = %q, want EACCES", got)
 		}
 	}
-	if uid, gid := projectOwner(); uid <= 0 || gid <= 0 || gid == k11TeamGID || gid == k11StrayGID {
+	if uid, gid := projectOwner(); uid <= 0 || gid <= 0 || gid == teamGID || gid == strayGID {
 		t.Errorf("projectOwner = %d:%d: the owner must not be root and its group must differ from the two test groups", uid, gid)
 	}
 }

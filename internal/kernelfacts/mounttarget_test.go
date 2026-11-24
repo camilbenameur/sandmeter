@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// T-mnt: the mount targets of the init.
+// The mount targets of the init.
 //
 // The init mounts on directories of a root filesystem that an earlier
 // command may have rewritten. A target replaced by a symbolic link would
@@ -25,14 +25,14 @@ import (
 // become since. A link anywhere in the path is a set-up error.
 
 // The planted paths, relative to the root, and what they are.
-var mntPlanted = []string{
+var plantedLinks = []string{
 	"workspace", // a link to a directory outside the root
 	"alias",     // a link to the honest target, inside the root
 	"via/tmp",   // the honest target behind a link in the middle of the path
 }
 
-// mntReport is what the stand-in for the init found.
-type mntReport struct {
+// mountTargetReport is what the stand-in for the init found.
+type mountTargetReport struct {
 	Open    string            `json:"open"`    // openat2 of the honest target
 	Mount   string            `json:"mount"`   // mount on /proc/self/fd/N
 	Landed  string            `json:"landed"`  // filesystem now mounted on the honest target
@@ -56,7 +56,7 @@ func openBeneath(rootfd int, path string) (int, error) {
 }
 
 // plantLinks puts in root the links a hostile first command could leave
-// where mount targets are expected (see mntPlanted).
+// where mount targets are expected (see plantedLinks).
 func plantLinks(root, outside string) error {
 	return errors.Join(
 		os.Symlink(outside, filepath.Join(root, "workspace")),
@@ -74,11 +74,12 @@ func mountedOn(path string) string {
 	return "nothing"
 }
 
-// childMnt runs in new user, mount and pid namespaces, like the init, with
-// the host's procfs still in place. args: root directory, outside directory.
-func childMnt(args []string) error {
+// childMountTarget runs in new user, mount and pid namespaces, like the
+// init, with the host's procfs still in place. args: root directory, outside
+// directory.
+func childMountTarget(args []string) error {
 	if len(args) != 2 {
-		return errors.New("usage: tmnt ROOT OUTSIDE")
+		return errors.New("usage: mounttarget ROOT OUTSIDE")
 	}
 	root, outside := args[0], args[1]
 	if err := privateMounts(); err != nil {
@@ -90,7 +91,7 @@ func childMnt(args []string) error {
 	}
 	const tmpfs = "size=1m,mode=0755"
 
-	rep := mntReport{Mount: "not tried", Landed: "nothing", Planted: map[string]string{}}
+	rep := mountTargetReport{Mount: "not tried", Landed: "nothing", Planted: map[string]string{}}
 	fd, err := openBeneath(rootfd, "tmp")
 	rep.Open = errnoName(err)
 	if err == nil {
@@ -99,7 +100,7 @@ func childMnt(args []string) error {
 		unix.Close(fd)
 	}
 
-	for _, p := range mntPlanted {
+	for _, p := range plantedLinks {
 		fd, err := openBeneath(rootfd, p)
 		rep.Planted[p] = errnoName(err)
 		if err == nil {
@@ -120,10 +121,10 @@ func childMnt(args []string) error {
 }
 
 func TestMountTargetByDescriptor(t *testing.T) {
-	r := declare(t, "T-mnt", "T-mnt-symlink")
+	r := declare(t, "mount-by-descriptor", "mount-link-refused")
 	r.needRoot()
 
-	dir := scratch(t, "tmnt")
+	dir := scratch(t, "mounttarget")
 	root, outside := filepath.Join(dir, "root"), filepath.Join(dir, "outside")
 	// A root filesystem as a first command could have left it: an honest
 	// target, and links where targets are expected.
@@ -136,31 +137,31 @@ func TestMountTargetByDescriptor(t *testing.T) {
 		t.Fatalf("plant the links: %v", err)
 	}
 
-	var rep mntReport
-	err := runChild(t, spawn{name: "tmnt", args: []string{root, outside}, clone: unix.CLONE_NEWNS | unix.CLONE_NEWPID, userns: true}, &rep)
+	var rep mountTargetReport
+	err := runChild(t, spawn{name: "mounttarget", args: []string{root, outside}, clone: unix.CLONE_NEWNS | unix.CLONE_NEWPID, userns: true}, &rep)
 	if err != nil {
-		r.no("T-mnt", "the stand-in for the init did not complete: %v", err)
+		r.no("mount-by-descriptor", "the stand-in for the init did not complete: %v", err)
 		return
 	}
-	r.judge("T-mnt", rep.Open == "ok" && rep.Mount == "ok" && rep.Landed == "tmpfs",
+	r.judge("mount-by-descriptor", rep.Open == "ok" && rep.Mount == "ok" && rep.Landed == "tmpfs",
 		"openat2 of the target beneath the root: %s; mount of a tmpfs on /proc/self/fd/N: %s; mounted on the target afterwards: %s (expected ok, ok, tmpfs)",
 		rep.Open, rep.Mount, rep.Landed)
 
 	refused := true
 	var planted []string
-	for _, p := range mntPlanted {
+	for _, p := range plantedLinks {
 		refused = refused && rep.Planted[p] == "ELOOP"
 		planted = append(planted, p+": "+rep.Planted[p])
 	}
 	slices.Sort(planted)
-	r.judge("T-mnt-symlink", refused && rep.Outside == "nothing",
+	r.judge("mount-link-refused", refused && rep.Outside == "nothing",
 		"openat2 of the planted paths (workspace: link to a directory outside the root; alias: link to the target; via/tmp: link in the middle): %v (expected ELOOP for each); mounted on the outside directory afterwards: %s (expected nothing); control without the guard: %s",
 		planted, rep.Outside, rep.Naive)
 }
 
-// The open half of T-mnt: openat2 needs no privilege, so the refusals the
-// init relies on are checked on every host, and so is the claim that
-// /proc/self/fd/N names the directory that was opened.
+// The open half of the test above: openat2 needs no privilege, so the
+// refusals the init relies on are checked on every host, and so is the claim
+// that /proc/self/fd/N names the directory that was opened.
 func TestSelfOpenBeneath(t *testing.T) {
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -192,7 +193,7 @@ func TestSelfOpenBeneath(t *testing.T) {
 		}
 		unix.Close(fd)
 	}
-	for _, p := range mntPlanted {
+	for _, p := range plantedLinks {
 		fd, err := openBeneath(rootfd, p)
 		if err == nil {
 			unix.Close(fd)

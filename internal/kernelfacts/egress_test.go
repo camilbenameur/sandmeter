@@ -20,7 +20,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// K1: the egress listener of proxy mode.
+// The egress listener of proxy mode.
 //
 // The sandbox's network namespace has loopback only. The init creates a
 // listener on 127.0.0.1 inside it and hands the descriptor to the
@@ -30,17 +30,17 @@ import (
 // never run: a socket stays in the namespace it was created in, whoever
 // holds it.
 
-// k1Ready is what the helper in the namespace saw up to the moment the test
+// egressReady is what the helper in the namespace saw up to the moment the test
 // may look at the host.
-type k1Ready struct {
+type egressReady struct {
 	Links   []string `json:"links"`   // interfaces of the fresh namespace
 	Echo    string   `json:"echo"`    // reply read over the listener it passed out, or what went wrong
 	Direct4 string   `json:"direct4"` // result of a direct connect to a public IPv4 address
 	Direct6 string   `json:"direct6"` // the same over IPv6
 }
 
-// k1Result is what it saw of the listener the test created with setns.
-type k1Result struct {
+// egressResult is what it saw of the listener the test created with setns.
+type egressResult struct {
 	Setns string `json:"setns"` // reply read, "skipped", or what went wrong
 }
 
@@ -51,13 +51,13 @@ const (
 	publicV6 = "[2606:4700:4700::1111]:443"
 )
 
-// k1Control is the descriptor of the socket pair in the helper.
-const k1Control = 3
+// egressControl is the descriptor of the socket pair in the helper.
+const egressControl = 3
 
-// childK1 plays the init: it runs in a new user and network namespace.
-func childK1(args []string) error {
+// childNetns plays the init: it runs in a new user and network namespace.
+func childNetns(args []string) error {
 	if len(args) != 3 {
-		return errors.New("usage: k1netns PORT SETNS-PORT NONCE")
+		return errors.New("usage: netns PORT SETNS-PORT NONCE")
 	}
 	if err := outsideHost("net", hostNetEnv); err != nil {
 		return err
@@ -72,7 +72,7 @@ func childK1(args []string) error {
 	}
 	nonce := args[2]
 
-	var rdy k1Ready
+	var rdy egressReady
 	ifs, err := net.Interfaces()
 	if err != nil {
 		return fmt.Errorf("list the interfaces: %w", err)
@@ -88,7 +88,7 @@ func childK1(args []string) error {
 		return err
 	}
 	// The descriptor goes to the supervisor and this process keeps no copy.
-	if err := unix.Sendmsg(k1Control, []byte{'L'}, unix.UnixRights(lfd), nil, 0); err != nil {
+	if err := unix.Sendmsg(egressControl, []byte{'L'}, unix.UnixRights(lfd), nil, 0); err != nil {
 		return fmt.Errorf("pass the listener with SCM_RIGHTS: %w", err)
 	}
 	unix.Close(lfd)
@@ -102,9 +102,9 @@ func childK1(args []string) error {
 
 	// One byte from the test: 'S' when it has a second listener, created by
 	// one of its own threads after setns; anything else when it has not.
-	res := k1Result{Setns: "skipped"}
+	res := egressResult{Setns: "skipped"}
 	buf := make([]byte, 1)
-	if n, err := unix.Read(k1Control, buf); err != nil {
+	if n, err := unix.Read(egressControl, buf); err != nil {
 		res.Setns = "read the control socket: " + errnoName(err)
 	} else if n == 1 && buf[0] == 'S' {
 		res.Setns = dialEcho(setnsPort, nonce)
@@ -277,7 +277,7 @@ func adoptListener(fd int) (net.Listener, error) {
 	return net.FileListener(f)
 }
 
-// listenInNetns is the fallback of K1: a thread of this process enters the
+// listenInNetns is the fallback: a thread of this process enters the
 // network namespace of pid and creates the listener there.
 //
 // The thread is locked and never unlocked, so the runtime ends it when the
@@ -396,13 +396,13 @@ func describeNetwork(parts []netPart) string {
 	return s
 }
 
-func TestK1LoopbackListener(t *testing.T) {
-	r := declare(t, "K1", "K1-unreach", "K1-links", "K1-host", "K1-setns")
+func TestEgressListener(t *testing.T) {
+	r := declare(t, "egress-listener", "egress-no-route", "egress-loopback-only", "egress-host-untouched", "egress-listener-setns")
 	r.needRoot()
 
 	// 3128 is the port of the design; the second one is for the fallback.
 	const port, setnsPort = 3128, 3129
-	nonce := fmt.Sprintf("kf-%d-%d", os.Getpid(), time.Now().UnixNano())
+	nonce := fmt.Sprintf("facts-%d-%d", os.Getpid(), time.Now().UnixNano())
 
 	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
@@ -419,7 +419,7 @@ func TestK1LoopbackListener(t *testing.T) {
 	before := snapshotNetwork()
 
 	c, err := spawnChild(t, spawn{
-		name:   "k1netns",
+		name:   "netns",
 		args:   []string{strconv.Itoa(port), strconv.Itoa(setnsPort), nonce},
 		clone:  unix.CLONE_NEWNET,
 		userns: true,
@@ -427,25 +427,25 @@ func TestK1LoopbackListener(t *testing.T) {
 	})
 	theirs.Close()
 	if err != nil {
-		r.no("K1", "a helper in a new user and network namespace did not start: %v", err)
+		r.no("egress-listener", "a helper in a new user and network namespace did not start: %v", err)
 		return
 	}
 
 	// The listener arrives, and what arrives is checked.
 	lfd, err := receiveFD(control)
 	if err != nil {
-		r.no("K1", "no listener arrived over the control socket: %v; helper stderr: %q", err, c.stderr())
+		r.no("egress-listener", "no listener arrived over the control socket: %v; helper stderr: %q", err, c.stderr())
 		return
 	}
 	what, err := checkListener(lfd, port)
 	if err != nil {
 		unix.Close(lfd)
-		r.no("K1", "%s: %v", what, err)
+		r.no("egress-listener", "%s: %v", what, err)
 		return
 	}
 	ln, err := adoptListener(lfd)
 	if err != nil {
-		r.no("K1", "%s, but net.FileListener refused it: %v", what, err)
+		r.no("egress-listener", "%s, but net.FileListener refused it: %v", what, err)
 		return
 	}
 	defer ln.Close()
@@ -453,19 +453,19 @@ func TestK1LoopbackListener(t *testing.T) {
 	// The helper connects from inside; the accept happens here, in the
 	// host's network namespace.
 	served := serveEcho(ln, nonce)
-	var rdy k1Ready
+	var rdy egressReady
 	if err := c.ready(&rdy); err != nil {
-		r.no("K1", "%s; accept in the host namespace: %s; then: %v", what, orOK(served), err)
+		r.no("egress-listener", "%s; accept in the host namespace: %s; then: %v", what, orOK(served), err)
 		return
 	}
 	during := snapshotNetwork()
 
 	want := "ack " + nonce
-	r.judge("K1", served == "" && rdy.Echo == want,
+	r.judge("egress-listener", served == "" && rdy.Echo == want,
 		"%s; accept, read and answer in the host namespace: %s; the helper inside read %q (expected %q)", what, orOK(served), rdy.Echo, want)
-	r.judge("K1-unreach", rdy.Direct4 == "ENETUNREACH",
+	r.judge("egress-no-route", rdy.Direct4 == "ENETUNREACH",
 		"connect from inside to %s: %s (expected ENETUNREACH); to %s: %s", publicV4, rdy.Direct4, publicV6, rdy.Direct6)
-	r.judge("K1-links", slices.Equal(rdy.Links, []string{"lo"}),
+	r.judge("egress-loopback-only", slices.Equal(rdy.Links, []string{"lo"}),
 		"interfaces of the fresh namespace: %v (expected [lo])", rdy.Links)
 
 	// The fallback, recorded and not required: a thread of this process
@@ -473,23 +473,23 @@ func TestK1LoopbackListener(t *testing.T) {
 	fd2, err := listenInNetns(c.pid(), setnsPort)
 	if err != nil {
 		_, _ = unix.Write(control, []byte{'N'})
-		r.no("K1-setns", "a locked thread could not create the listener: %v", err)
+		r.no("egress-listener-setns", "a locked thread could not create the listener: %v", err)
 	} else {
 		ln2, err := adoptListener(fd2)
 		if err != nil {
 			_, _ = unix.Write(control, []byte{'N'})
-			r.no("K1-setns", "net.FileListener refused the listener created after setns: %v", err)
+			r.no("egress-listener-setns", "net.FileListener refused the listener created after setns: %v", err)
 		} else {
 			defer ln2.Close()
 			if _, err := unix.Write(control, []byte{'S'}); err != nil {
 				t.Errorf("write to the control socket: %v", err)
 			}
 			served2 := serveEcho(ln2, nonce)
-			var res k1Result
+			var res egressResult
 			if err := c.result(&res); err != nil {
-				r.no("K1-setns", "accept in the host namespace: %s; then: %v", orOK(served2), err)
+				r.no("egress-listener-setns", "accept in the host namespace: %s; then: %v", orOK(served2), err)
 			} else {
-				r.judge("K1-setns", served2 == "" && res.Setns == want,
+				r.judge("egress-listener-setns", served2 == "" && res.Setns == want,
 					"accept, read and answer in the host namespace: %s; the helper inside read %q (expected %q)", orOK(served2), res.Setns, want)
 			}
 		}
@@ -498,12 +498,12 @@ func TestK1LoopbackListener(t *testing.T) {
 
 	after := snapshotNetwork()
 	d1, d2 := diffNetwork(before, during), diffNetwork(before, after)
-	r.judge("K1-host", d1 == "" && d2 == "",
+	r.judge("egress-host-untouched", d1 == "" && d2 == "",
 		"%s; changed while the namespace existed: %s; changed after it was gone: %s", describeNetwork(before), orNothing(d1), orNothing(d2))
 }
 
-// The socket half of K1: a listener is passed over a socket pair, examined,
-// adopted, and serves one connection.
+// The socket half of the test above: a listener is passed over a socket
+// pair, examined, adopted, and serves one connection.
 func TestSelfListenerPassing(t *testing.T) {
 	lfd, err := listenLoopback(0) // any free port
 	if err != nil {
@@ -575,8 +575,8 @@ func TestSelfListenerPassing(t *testing.T) {
 	}
 }
 
-// The comparison of K1-host: two snapshots of an idle host are equal, and a
-// link that appears is seen.
+// The comparison of egress-host-untouched: two snapshots of an idle host
+// are equal, and a link that appears is seen.
 func TestSelfNetworkSnapshot(t *testing.T) {
 	a, b := snapshotNetwork(), snapshotNetwork()
 	if d := diffNetwork(a, b); d != "" {

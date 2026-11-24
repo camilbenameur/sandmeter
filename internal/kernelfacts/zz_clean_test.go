@@ -26,23 +26,23 @@ func wholeSuite() bool {
 }
 
 func TestZZHostLeftClean(t *testing.T) {
-	r := declare(t, "Z-mounts", "Z-cgroups", "Z-loops", "Z-processes", "Z-sysctls")
+	r := declare(t, "clean-mounts", "clean-cgroups", "clean-loops", "clean-processes", "clean-sysctls")
 
 	d := baseline.mountsDiff()
-	r.judge("Z-mounts", d == "", "lines of /proc/self/mountinfo that differ from the snapshot taken before the first test: %s", orNothing(d))
+	r.judge("clean-mounts", d == "", "lines of /proc/self/mountinfo that differ from the snapshot taken before the first test: %s", orNothing(d))
 
 	d = baseline.cgroupsDiff(false)
-	r.judge("Z-cgroups", d == "", "under %s, against the snapshot: %s; controllers the root hands down, which the service manager changes on its own: %s",
+	r.judge("clean-cgroups", d == "", "under %s, against the snapshot: %s; controllers the root hands down, which the service manager changes on its own: %s",
 		cgroupRoot, orNothing(d), baseline.subtreeNote())
 
 	d = baseline.loopsDiff()
-	r.judge("Z-loops", d == "", "loop devices with a backing file, against the snapshot (%d then): %s", len(baseline.loops), orNothing(d))
+	r.judge("clean-loops", d == "", "loop devices with a backing file, against the snapshot (%d then): %s", len(baseline.loops), orNothing(d))
 
 	d = strayHelpers()
-	r.judge("Z-processes", d == "", "processes that still run the test binary, and with them any namespace a test created: %s", orNothing(d))
+	r.judge("clean-processes", d == "", "processes that still run the test binary, and with them any namespace a test created: %s", orNothing(d))
 
 	d = baseline.sysctlsDiff()
-	r.judge("Z-sysctls", d == "", "of %s: %s", strings.Join(watchedSysctls, ", "), orNothing(d))
+	r.judge("clean-sysctls", d == "", "of %s: %s", strings.Join(watchedSysctls, ", "), orNothing(d))
 
 	// The record has no hole: when the whole suite ran, every fact of the
 	// catalogue was recorded, whatever its outcome.

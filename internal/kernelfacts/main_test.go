@@ -101,7 +101,7 @@ func makeScratchRoot() (string, error) {
 	if !plainPath.MatchString(base) {
 		return "", fmt.Errorf("%s=%q: want an absolute path made of letters, digits, '.', '_', '-' and '/'", scratchEnv, base)
 	}
-	dir, err := os.MkdirTemp(base, "sandmeter-kf-")
+	dir, err := os.MkdirTemp(base, "sandmeter-facts-")
 	if err != nil {
 		return "", fmt.Errorf("scratch directory: %w", err)
 	}

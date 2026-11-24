@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// T-host: what this runner is.
+// What this runner is.
 //
 // Every other fact is a fact about one kernel on one image. These lines say
 // which, so that a result can be read months later, and so that the
@@ -37,11 +37,11 @@ func osRelease(key string) (string, error) {
 
 func TestHostFacts(t *testing.T) {
 	r := declare(t,
-		"K10", "T-host-kernel", "T-host-arch", "T-host-distro",
-		"T-host-cgroup", "T-host-controllers",
-		"T-host-lsm", "T-host-apparmor-userns", "T-host-max-userns", "T-host-inotify", "T-host-core-pattern",
-		"T-host-fs-var-lib", "T-host-fs-tmp",
-		"T-host-loop-control", "T-host-mkfs-ext4", "T-host-nft", "T-host-runsc", "T-host-systemd",
+		"host-runner", "host-kernel", "host-arch", "host-distro",
+		"host-cgroup2", "host-controllers",
+		"host-lsm", "host-apparmor-userns", "host-max-userns", "host-inotify", "host-core-pattern",
+		"host-fs-var-lib", "host-fs-tmp",
+		"host-loop-control", "host-mkfs-ext4", "host-nft", "host-runsc", "host-systemd",
 	)
 
 	var u unix.Utsname
@@ -54,37 +54,37 @@ func TestHostFacts(t *testing.T) {
 	if image == "" {
 		image = "not a hosted runner image, or its variables were not passed on"
 	}
-	r.yes("K10", "%s/%s, kernel %s, as uid %d; runner image: %s", runtime.GOOS, runtime.GOARCH, kernelRelease(), os.Geteuid(), image)
-	r.yes("T-host-kernel", "%s", kernelRelease())
-	r.yes("T-host-arch", "%s (GOARCH %s)", machine, runtime.GOARCH)
+	r.yes("host-runner", "%s/%s, kernel %s, as uid %d; runner image: %s", runtime.GOOS, runtime.GOARCH, kernelRelease(), os.Geteuid(), image)
+	r.yes("host-kernel", "%s", kernelRelease())
+	r.yes("host-arch", "%s (GOARCH %s)", machine, runtime.GOARCH)
 
 	distro, err := osRelease("PRETTY_NAME")
-	r.judge("T-host-distro", err == nil, "%s", valueOr(distro, err))
+	r.judge("host-distro", err == nil, "%s", valueOr(distro, err))
 
 	cgroupFS := "nothing is mounted there"
 	if e, ok := mountAt(parseMountinfo(mountinfoText()), cgroupRoot); ok {
 		cgroupFS = e.fstype
 	}
-	r.judge("T-host-cgroup", haveCgroup2(), "%s is %s", cgroupRoot, cgroupFS)
-	r.judge("T-host-controllers", haveCgroup2() && len(missingControllers(cgroupRoot)) == 0,
+	r.judge("host-cgroup2", haveCgroup2(), "%s is %s", cgroupRoot, cgroupFS)
+	r.judge("host-controllers", haveCgroup2() && len(missingControllers(cgroupRoot)) == 0,
 		"cgroup.controllers of the root: %v; its cgroup.subtree_control: %v",
 		cgFields(cgroupRoot, "cgroup.controllers"), cgFields(cgroupRoot, "cgroup.subtree_control"))
 
 	lsm, err := readTrim("/sys/kernel/security/lsm")
-	r.judge("T-host-lsm", err == nil, "%s", valueOr(lsm, err))
+	r.judge("host-lsm", err == nil, "%s", valueOr(lsm, err))
 	restrict, err := readTrim("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
-	r.judge("T-host-apparmor-userns", err == nil && restrict == "1", "kernel.apparmor_restrict_unprivileged_userns: %s", valueOr(restrict, err))
+	r.judge("host-apparmor-userns", err == nil && restrict == "1", "kernel.apparmor_restrict_unprivileged_userns: %s", valueOr(restrict, err))
 	maxUserns, err := readTrim("/proc/sys/user/max_user_namespaces")
-	r.judge("T-host-max-userns", err == nil, "%s", valueOr(maxUserns, err))
+	r.judge("host-max-userns", err == nil, "%s", valueOr(maxUserns, err))
 	inotify, err := readTrim("/proc/sys/fs/inotify/max_user_instances")
-	r.judge("T-host-inotify", err == nil, "%s", valueOr(inotify, err))
+	r.judge("host-inotify", err == nil, "%s", valueOr(inotify, err))
 	pattern, err := readTrim(corePattern)
-	r.judge("T-host-core-pattern", err == nil && strings.HasPrefix(pattern, "|"), "kernel.core_pattern: %q", valueOr(pattern, err))
+	r.judge("host-core-pattern", err == nil && strings.HasPrefix(pattern, "|"), "kernel.core_pattern: %q", valueOr(pattern, err))
 
-	r.yes("T-host-fs-var-lib", "%s", fsTypeOf("/var/lib"))
-	r.yes("T-host-fs-tmp", "%s", fsTypeOf("/tmp"))
+	r.yes("host-fs-var-lib", "%s", fsTypeOf("/var/lib"))
+	r.yes("host-fs-tmp", "%s", fsTypeOf("/tmp"))
 
-	r.judge("T-host-loop-control", exists("/dev/loop-control"), "/dev/loop-control; loop devices now: %d, of which %d attached", len(loopNames()), len(boundLoops()))
+	r.judge("host-loop-control", exists("/dev/loop-control"), "/dev/loop-control; loop devices now: %d, of which %d attached", len(loopNames()), len(boundLoops()))
 
 	// Tools are looked up in the PATH of the process, which under sudo is
 	// the PATH a root service would get.
@@ -96,14 +96,14 @@ func TestHostFacts(t *testing.T) {
 		}
 		r.yes(id, "%s: %s", path, firstLine(path, versionArgs...))
 	}
-	tool("T-host-mkfs-ext4", "mkfs.ext4", "-V")
-	tool("T-host-nft", "nft", "--version")
-	tool("T-host-runsc", "runsc", "--version")
+	tool("host-mkfs-ext4", "mkfs.ext4", "-V")
+	tool("host-nft", "nft", "--version")
+	tool("host-runsc", "runsc", "--version")
 
 	systemd := "systemctl is not in PATH"
 	if path, err := exec.LookPath("systemctl"); err == nil {
 		systemd = firstLine(path, "--version")
 	}
-	r.judge("T-host-systemd", exists("/run/systemd/system"), "%s; /run/systemd/system exists: %v; PID 1 is %s",
+	r.judge("host-systemd", exists("/run/systemd/system"), "%s; /run/systemd/system exists: %v; PID 1 is %s",
 		systemd, exists("/run/systemd/system"), readOr(filepath.Join("/proc", "1", "comm")))
 }

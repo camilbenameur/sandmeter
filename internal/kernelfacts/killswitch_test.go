@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// K5: the kill switch.
+// The kill switch.
 //
 // Stage 1 of the init stays PID 1 of the sandbox's pid namespace and holds
 // the read end of a pipe whose write end only the supervisor has. When the
@@ -27,13 +27,13 @@ import (
 
 // Descriptors the init receives from the supervisor.
 const (
-	k5Death = 3 // read end of the pipe the supervisor holds
-	k5Ready = 4 // one byte when the workload is running
+	switchDeath = 3 // read end of the pipe the supervisor holds
+	switchReady = 4 // one byte when the workload is running
 )
 
-// k5Processes is how many processes the namespace holds once it is ready:
+// switchProcesses is how many processes the namespace holds once it is ready:
 // the init, two children and one orphan.
-const k5Processes = 4
+const switchProcesses = 4
 
 // childSleep never ends by itself.
 func childSleep([]string) error {
@@ -42,11 +42,11 @@ func childSleep([]string) error {
 	}
 }
 
-// childK5Supervisor starts the init in new user, mount and pid namespaces,
+// childSwitchSupervisor starts the init in new user, mount and pid namespaces,
 // inside the leaf, and then only holds the pipe. args: leaf directory.
-func childK5Supervisor(args []string) error {
+func childSwitchSupervisor(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: k5supervisor LEAF")
+		return errors.New("usage: switch-supervisor LEAF")
 	}
 	death, hold, err := os.Pipe()
 	if err != nil {
@@ -60,7 +60,7 @@ func childK5Supervisor(args []string) error {
 	if err != nil {
 		return fmt.Errorf("open the leaf: %w", err)
 	}
-	cmd := exec.Command("/proc/self/exe", childArg, "k5init")
+	cmd := exec.Command("/proc/self/exe", childArg, "switch-init")
 	cmd.Stderr = os.Stderr
 	cmd.ExtraFiles = []*os.File{death, readyW}
 	attr := &syscall.SysProcAttr{Cloneflags: unix.CLONE_NEWNS | unix.CLONE_NEWPID, UseCgroupFD: true, CgroupFD: leaf}
@@ -87,70 +87,70 @@ func childK5Supervisor(args []string) error {
 	return nil
 }
 
-// childK5Init is PID 1: it starts a workload and exits when the supervisor
+// childSwitchInit is PID 1: it starts a workload and exits when the supervisor
 // is gone.
-func childK5Init([]string) error {
+func childSwitchInit([]string) error {
 	if os.Getpid() != 1 {
 		return fmt.Errorf("pid %d: expected to be PID 1 of a new pid namespace", os.Getpid())
 	}
 	// The workload inherits neither pipe.
-	unix.CloseOnExec(k5Death)
-	unix.CloseOnExec(k5Ready)
+	unix.CloseOnExec(switchDeath)
+	unix.CloseOnExec(switchReady)
 	for range 2 {
-		if err := exec.Command("/proc/self/exe", childArg, "k5sleep").Start(); err != nil {
+		if err := exec.Command("/proc/self/exe", childArg, "sleep").Start(); err != nil {
 			return fmt.Errorf("start a workload process: %w", err)
 		}
 	}
 	// One process that loses its parent and falls to PID 1.
-	if err := exec.Command("/proc/self/exe", childArg, "k5orphaner").Run(); err != nil {
+	if err := exec.Command("/proc/self/exe", childArg, "orphaner").Run(); err != nil {
 		return fmt.Errorf("start the orphan: %w", err)
 	}
-	if _, err := unix.Write(k5Ready, []byte{1}); err != nil {
+	if _, err := unix.Write(switchReady, []byte{1}); err != nil {
 		return fmt.Errorf("report readiness: %w", err)
 	}
-	unix.Close(k5Ready)
+	unix.Close(switchReady)
 
 	// End-of-file: the supervisor is gone. Exiting is all PID 1 has to do.
-	_, _ = io.Copy(io.Discard, os.NewFile(k5Death, "death"))
+	_, _ = io.Copy(io.Discard, os.NewFile(switchDeath, "death"))
 	os.Exit(0)
 	return nil
 }
 
-// childK5Orphaner leaves a process behind in a session of its own.
-func childK5Orphaner([]string) error {
-	cmd := exec.Command("/proc/self/exe", childArg, "k5sleep")
+// childOrphaner leaves a process behind in a session of its own.
+func childOrphaner([]string) error {
+	cmd := exec.Command("/proc/self/exe", childArg, "sleep")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd.Start()
 }
 
-func TestK5Pid1ExitKillsNamespace(t *testing.T) {
-	r := declare(t, "K5")
+func TestPid1ExitKillsNamespace(t *testing.T) {
+	r := declare(t, "init-kill-switch")
 	r.needRoot()
 	r.needCgroup2()
 
-	tr, err := newCgTree(t, "k5")
+	tr, err := newCgTree(t, "killswitch")
 	if err != nil {
-		r.no("K5", "the cgroup layout could not be created: %v", err)
+		r.no("init-kill-switch", "the cgroup layout could not be created: %v", err)
 		return
 	}
-	sup, err := spawnChild(t, spawn{name: "k5supervisor", args: []string{tr.leaf}})
+	sup, err := spawnChild(t, spawn{name: "switch-supervisor", args: []string{tr.leaf}})
 	if err != nil {
-		r.no("K5", "the supervisor did not start: %v", err)
+		r.no("init-kill-switch", "the supervisor did not start: %v", err)
 		return
 	}
 	var rdy struct {
 		Init int `json:"init"`
 	}
 	if err := sup.ready(&rdy); err != nil {
-		r.no("K5", "the init and its workload did not start in new user, mount and pid namespaces inside the leaf: %v", err)
+		r.no("init-kill-switch", "the init and its workload did not start in new user, mount and pid namespaces inside the leaf: %v", err)
 		return
 	}
 	var procs []int
 	if !poll(5*time.Second, func() bool {
 		procs = cgProcs(tr.leaf)
-		return len(procs) == k5Processes
+		return len(procs) == switchProcesses
 	}) {
-		r.no("K5", "cgroup.procs of the leaf lists %v where %d processes were expected (the init, two children, one orphan)", procs, k5Processes)
+		r.no("init-kill-switch", "cgroup.procs of the leaf lists %v where %d processes were expected (the init, two children, one orphan)", procs, switchProcesses)
 		return
 	}
 
@@ -162,7 +162,7 @@ func TestK5Pid1ExitKillsNamespace(t *testing.T) {
 		return len(left) == 0
 	})
 	took := time.Since(killed)
-	r.judge("K5", empty && slices.Contains(procs, rdy.Init),
+	r.judge("init-kill-switch", empty && slices.Contains(procs, rdy.Init),
 		"the namespace held %d processes %v, the init being pid %d on the host; after SIGKILL of the supervisor, cgroup.procs of the leaf was empty after %s (limit 2 s); left: %v",
 		len(procs), procs, rdy.Init, millis(took), left)
 }

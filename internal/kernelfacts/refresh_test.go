@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// K3: the refresh of the project between two commands.
+// The refresh of the project between two commands.
 //
 // The workspace overlay is mounted for the length of one command. Between
 // two commands the worker applies the host's edits to the lower tree, then
@@ -25,8 +25,8 @@ import (
 // tree: a file replaced, a file deleted, a directory deleted that has an
 // upper counterpart.
 
-// k3Lower is the project as the first command finds it.
-var k3Lower = tree{
+// projectTree is the project as the first command finds it.
+var projectTree = tree{
 	"keep.txt":      "f:keep v1",
 	"ro.txt":        "f:ro v1",
 	"mod.txt":       "f:mod v1",
@@ -38,11 +38,11 @@ var k3Lower = tree{
 	"dir/sub/c.txt": "f:c v1",
 }
 
-// k3SandboxWrites is what the first command does through the overlay. It
+// sandboxWrites is what the first command does through the overlay. It
 // leaves in the upper layer: a full copy of mod.txt, a new file, a whiteout
 // for gone.txt, and a directory "dir" that holds a new file and a whiteout
 // for b.txt.
-func k3SandboxWrites(merged string) error {
+func sandboxWrites(merged string) error {
 	_, readErr := os.ReadFile(filepath.Join(merged, "ro.txt"))
 	return errors.Join(
 		readErr,
@@ -64,8 +64,8 @@ func replaceFile(path, content string) error {
 	return os.Rename(tmp, path)
 }
 
-// k3Case is one change of the lower tree and the two views it must give.
-type k3Case struct {
+// refreshCase is one change of the lower tree and the two views it must give.
+type refreshCase struct {
 	// change is what the host does to the lower tree while nothing is mounted.
 	change func(lower string) error
 	// kept is the merged view expected at the next mount when the upper
@@ -77,7 +77,7 @@ type k3Case struct {
 	dropped tree
 }
 
-var k3Cases = map[string]k3Case{
+var refreshCases = map[string]refreshCase{
 	"replace": {
 		change: func(lower string) error {
 			return errors.Join(
@@ -164,20 +164,21 @@ var k3Cases = map[string]k3Case{
 	},
 }
 
-// k3Report is what the helper found. An empty difference means the merged
+// refreshReport is what the helper found. An empty difference means the merged
 // view was the expected tree.
-type k3Report struct {
+type refreshReport struct {
 	Options string `json:"options"` // overlay options as the kernel reports them
 	Kept    string `json:"kept"`    // difference with the upper layer kept
 	Dropped string `json:"dropped"` // difference after the stale upper entries were dropped
 }
 
-// childK3 runs one case in a private mount namespace. args: directory, case.
-func childK3(args []string) error {
+// childRefresh runs one case in a private mount namespace. args: directory,
+// case.
+func childRefresh(args []string) error {
 	if len(args) != 2 {
-		return errors.New("usage: k3 DIR CASE")
+		return errors.New("usage: refresh DIR CASE")
 	}
-	kase, ok := k3Cases[args[1]]
+	kase, ok := refreshCases[args[1]]
 	if !ok {
 		return fmt.Errorf("unknown case %q", args[1])
 	}
@@ -188,7 +189,7 @@ func childK3(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeTree(o.lower, k3Lower); err != nil {
+	if err := writeTree(o.lower, projectTree); err != nil {
 		return err
 	}
 
@@ -196,11 +197,11 @@ func childK3(args []string) error {
 	if err := o.mount(overlayOpts); err != nil {
 		return err
 	}
-	var rep k3Report
+	var rep refreshReport
 	if e, ok := mountAt(parseMountinfo(mountinfoText()), o.merged); ok {
 		rep.Options = overlayExtras(e.superOpts)
 	}
-	if err := k3SandboxWrites(o.merged); err != nil {
+	if err := sandboxWrites(o.merged); err != nil {
 		return fmt.Errorf("writes through the first mount: %w", err)
 	}
 	if err := o.unmount(); err != nil {
@@ -237,15 +238,15 @@ func childK3(args []string) error {
 	return sayResult(rep)
 }
 
-func TestK3LowerChangedWhileUnmounted(t *testing.T) {
-	r := declare(t, "K3-replace", "K3-delete-file", "K3-delete-dir")
+func TestLowerChangedWhileUnmounted(t *testing.T) {
+	r := declare(t, "refresh-replace", "refresh-delete-file", "refresh-delete-dir")
 	r.needRoot()
 
 	for _, kase := range []string{"replace", "delete-file", "delete-dir"} {
-		id := "K3-" + kase
-		dir := scratch(t, "k3-"+kase)
-		var rep k3Report
-		if err := runChild(t, spawn{name: "k3", args: []string{dir, kase}, clone: unix.CLONE_NEWNS}, &rep); err != nil {
+		id := "refresh-" + kase
+		dir := scratch(t, "refresh-"+kase)
+		var rep refreshReport
+		if err := runChild(t, spawn{name: "refresh", args: []string{dir, kase}, clone: unix.CLONE_NEWNS}, &rep); err != nil {
 			r.no(id, "the case did not complete on %s: %v", fsTypeOf(dir), err)
 			continue
 		}
@@ -255,11 +256,11 @@ func TestK3LowerChangedWhileUnmounted(t *testing.T) {
 	}
 }
 
-// k3Union is the rule overlayfs documents for a merged view, written out
+// unionOf is the rule overlayfs documents for a merged view, written out
 // once more in Go: an upper entry wins, a whiteout hides the lower entry of
 // the same name and everything under it, and the rest of the lower tree
 // shows through. Whiteouts are "w" in the upper tree given here.
-func k3Union(lower, upper tree) tree {
+func unionOf(lower, upper tree) tree {
 	out := tree{}
 	hidden := func(p string) bool {
 		for q := p; q != "." && q != "/"; q = filepath.Dir(q) {
@@ -282,12 +283,12 @@ func k3Union(lower, upper tree) tree {
 	return out
 }
 
-// The expected trees of K3 are written by hand, above, so that they can be
-// read. This test derives them a second way, from the real change functions
-// applied to a real lower tree and from the union rule, and requires both
-// to agree. It needs no mount.
-func TestSelfK3Expectations(t *testing.T) {
-	// What k3SandboxWrites leaves in the upper layer.
+// The expected trees of the cases are written by hand, above, so that they
+// can be read. This test derives them a second way, from the real change
+// functions applied to a real lower tree and from the union rule, and
+// requires both to agree. It needs no mount.
+func TestSelfRefreshExpectations(t *testing.T) {
+	// What sandboxWrites leaves in the upper layer.
 	sandboxUpper := tree{
 		"mod.txt":   "f:mod sandbox",
 		"new.txt":   "f:new sandbox",
@@ -296,9 +297,9 @@ func TestSelfK3Expectations(t *testing.T) {
 		"dir/n.txt": "f:n sandbox",
 		"dir/b.txt": "w",
 	}
-	for name, kase := range k3Cases {
+	for name, kase := range refreshCases {
 		lower := filepath.Join(t.TempDir(), "lower")
-		if err := writeTree(lower, k3Lower); err != nil {
+		if err := writeTree(lower, projectTree); err != nil {
 			t.Fatal(err)
 		}
 		if err := kase.change(lower); err != nil {
@@ -306,7 +307,7 @@ func TestSelfK3Expectations(t *testing.T) {
 		}
 		after := readTree(lower)
 
-		if d := diffTrees(kase.kept, k3Union(after, sandboxUpper)); d != "" {
+		if d := diffTrees(kase.kept, unionOf(after, sandboxUpper)); d != "" {
 			t.Errorf("%s: the tree expected with the upper layer kept is not the union of the layers: %s", name, d)
 		}
 		upper := maps.Clone(sandboxUpper)
@@ -317,7 +318,7 @@ func TestSelfK3Expectations(t *testing.T) {
 				}
 			}
 		}
-		if d := diffTrees(kase.dropped, k3Union(after, upper)); d != "" {
+		if d := diffTrees(kase.dropped, unionOf(after, upper)); d != "" {
 			t.Errorf("%s: the tree expected after the drop is not the union of the layers: %s", name, d)
 		}
 	}

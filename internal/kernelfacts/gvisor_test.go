@@ -20,7 +20,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// K6: gVisor with a user namespace.
+// gVisor with a user namespace.
 //
 // Today's backend gives runsc no user namespace, so the Sentry and the
 // gofer are host root. The design adds an OCI user namespace that maps 0 to
@@ -30,16 +30,16 @@ import (
 // mounted by the worker in its own mount namespace, must work through the
 // bind. Otherwise gVisor is "preview: network none, no project".
 
-// k6Written is the file the probe creates on each writable mount.
-const k6Written = "written-inside"
+// writtenInside is the file the probe creates on each writable mount.
+const writtenInside = "written-inside"
 
 const (
-	k6LowerContent = "from the lower layer"
-	k6SubContent   = "in a mount under the root path"
+	runscLowerContent = "from the lower layer"
+	runscSubContent   = "in a mount under the root path"
 )
 
-// k6Layout is where everything of the test lives under its directory.
-type k6Layout struct {
+// runscLayout is where everything of the test lives under its directory.
+type runscLayout struct {
 	bundle string  // OCI bundle: config.json
 	rootfs string  // root.path, owned by the shifted uid
 	work   string  // bind-mounted read-write at /work
@@ -49,9 +49,9 @@ type k6Layout struct {
 	logs   string  // runsc --debug-log
 }
 
-func k6Paths(dir string) k6Layout {
+func runscPaths(dir string) runscLayout {
 	o := filepath.Join(dir, "ovl")
-	return k6Layout{
+	return runscLayout{
 		bundle: filepath.Join(dir, "bundle"),
 		rootfs: filepath.Join(dir, "rootfs"),
 		work:   filepath.Join(dir, "work"),
@@ -100,15 +100,15 @@ func copyFile(dst, src string, mode os.FileMode) error {
 	return out.Close()
 }
 
-// k6Prepare creates the directories as the service would: what the sandbox
+// runscPrepare creates the directories as the service would: what the sandbox
 // may write belongs to the shifted uid, the rest to root. Every directory
 // on the way can be searched by the shifted uid (scratch).
-func k6Prepare(lay k6Layout) error {
+func runscPrepare(lay runscLayout) error {
 	shifted := []string{
 		lay.rootfs, lay.work, lay.ovl.lower, lay.ovl.upper,
 		filepath.Join(lay.rootfs, "proc"), filepath.Join(lay.rootfs, "dev"), filepath.Join(lay.rootfs, "tmp"),
 		filepath.Join(lay.rootfs, "work"), filepath.Join(lay.rootfs, "ovl"), filepath.Join(lay.rootfs, "sub"),
-		filepath.Join(lay.rootfs, "kf"),
+		filepath.Join(lay.rootfs, "facts"),
 	}
 	rootOwned := []string{lay.bundle, lay.subSrc, lay.ovl.work, lay.ovl.merged, lay.state, lay.logs}
 	for _, d := range append(slices.Clone(shifted), rootOwned...) {
@@ -116,15 +116,15 @@ func k6Prepare(lay k6Layout) error {
 			return err
 		}
 	}
-	probe := filepath.Join(lay.rootfs, "kf", "probe")
+	probe := filepath.Join(lay.rootfs, "facts", "probe")
 	if err := copyFile(probe, "/proc/self/exe", 0o755); err != nil {
 		return fmt.Errorf("copy the test binary into the root filesystem: %w", err)
 	}
 	lowerFile := filepath.Join(lay.ovl.lower, "lower.txt")
-	if err := os.WriteFile(lowerFile, []byte(k6LowerContent), 0o644); err != nil {
+	if err := os.WriteFile(lowerFile, []byte(runscLowerContent), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(lay.subSrc, "marker"), []byte(k6SubContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(lay.subSrc, "marker"), []byte(runscSubContent), 0o644); err != nil {
 		return err
 	}
 	for _, p := range append(shifted, probe, lowerFile) {
@@ -132,18 +132,18 @@ func k6Prepare(lay k6Layout) error {
 			return err
 		}
 	}
-	cfg, err := k6Config(lay)
+	cfg, err := runscConfig(lay)
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(lay.bundle, "config.json"), cfg, 0o644)
 }
 
-// k6Config is the OCI runtime configuration of today's backend, reduced to
+// runscConfig is the OCI runtime configuration of today's backend, reduced to
 // what these facts need (its process, its capabilities, /proc and /dev),
 // plus a user namespace with the mapping of the design and the two bind
 // mounts under test.
-func k6Config(lay k6Layout) ([]byte, error) {
+func runscConfig(lay runscLayout) ([]byte, error) {
 	caps := []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL",
 		"CAP_SETGID", "CAP_SETUID", "CAP_SETPCAP", "CAP_NET_BIND_SERVICE", "CAP_SYS_CHROOT", "CAP_AUDIT_WRITE"}
 	ids := []map[string]int{{"containerID": 0, "hostID": idShift, "size": idRange}}
@@ -152,7 +152,7 @@ func k6Config(lay k6Layout) ([]byte, error) {
 		"process": map[string]any{
 			"terminal":        false,
 			"user":            map[string]int{"uid": 0, "gid": 0},
-			"args":            []string{"/kf/probe", childArg, "k6probe"},
+			"args":            []string{"/facts/probe", childArg, "runscprobe"},
 			"env":             []string{"PATH=/usr/bin:/bin"},
 			"cwd":             "/",
 			"capabilities":    map[string][]string{"bounding": caps, "effective": caps, "permitted": caps},
@@ -177,8 +177,8 @@ func k6Config(lay k6Layout) ([]byte, error) {
 	return json.MarshalIndent(cfg, "", "  ")
 }
 
-// k6ProbeReport is what the process inside the sandbox saw.
-type k6ProbeReport struct {
+// runscProbeReport is what the process inside the sandbox saw.
+type runscProbeReport struct {
 	UID        int    `json:"uid"`         // its own uid
 	UIDMap     string `json:"uid_map"`     // /proc/self/uid_map as the sandbox shows it
 	RootOwner  string `json:"root_owner"`  // owner of /
@@ -190,18 +190,18 @@ type k6ProbeReport struct {
 	Released   string `json:"released"`    // how its wait ended
 }
 
-// childK6Probe runs inside the sandbox, as its only process.
-func childK6Probe([]string) error {
-	rep := k6ProbeReport{
+// childRunscProbe runs inside the sandbox, as its only process.
+func childRunscProbe([]string) error {
+	rep := runscProbeReport{
 		UID:       os.Getuid(),
 		UIDMap:    strings.Join(strings.Fields(contentOf("/proc/self/uid_map")), " "),
 		RootOwner: ownerOf("/"),
 	}
-	rep.Write = errnoName(os.WriteFile("/work/"+k6Written, []byte("written inside"), 0o644))
-	rep.WriteOwner = ownerOf("/work/" + k6Written)
+	rep.Write = errnoName(os.WriteFile("/work/"+writtenInside, []byte("written inside"), 0o644))
+	rep.WriteOwner = ownerOf("/work/" + writtenInside)
 	rep.Submount = contentOf("/sub/marker")
 	rep.Lower = contentOf("/ovl/lower.txt")
-	rep.OvlWrite = errnoName(os.WriteFile("/ovl/"+k6Written, []byte("written inside"), 0o644))
+	rep.OvlWrite = errnoName(os.WriteFile("/ovl/"+writtenInside, []byte("written inside"), 0o644))
 
 	// Stay until the test has looked at the host processes that run this
 	// sandbox. It then closes our standard input and creates /work/release;
@@ -228,16 +228,16 @@ func childK6Probe([]string) error {
 	return sayResult(rep)
 }
 
-// k6WorkerReport is what the stand-in for the worker reports.
-type k6WorkerReport struct {
+// runscWorkerReport is what the stand-in for the worker reports.
+type runscWorkerReport struct {
 	Runsc  string          `json:"runsc"`           // how runsc run ended
 	Probe  json.RawMessage `json:"probe,omitempty"` // the probe's result, absent when it printed none
 	Stderr string          `json:"stderr"`          // end of runsc's standard error
 	Logs   string          `json:"logs"`            // end of each runsc debug log
 }
 
-// k6Logs returns the end of each debug log runsc wrote.
-func k6Logs(dir string) string {
+// runscLogs returns the end of each debug log runsc wrote.
+func runscLogs(dir string) string {
 	var out []string
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
@@ -250,17 +250,17 @@ func k6Logs(dir string) string {
 	return strings.Join(out, "\n")
 }
 
-// childK6Worker does what the worker does: it mounts the overlay in its own
+// childRunscWorker does what the worker does: it mounts the overlay in its own
 // mount namespace and runs runsc from there. args: directory, runsc, id.
-func childK6Worker(args []string) error {
+func childRunscWorker(args []string) error {
 	if len(args) != 3 {
-		return errors.New("usage: k6worker DIR RUNSC ID")
+		return errors.New("usage: runscworker DIR RUNSC ID")
 	}
 	dir, runsc, id := args[0], args[1], args[2]
 	if err := privateMounts(); err != nil {
 		return err
 	}
-	lay := k6Paths(dir)
+	lay := runscPaths(dir)
 	if err := lay.ovl.mount(overlayOpts); err != nil {
 		return err
 	}
@@ -295,7 +295,7 @@ func childK6Worker(args []string) error {
 	cmd.Stdin = os.Stdin // the probe waits for end-of-file on it
 	cmd.Stdout, cmd.Stderr = out, errf
 	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
-	rep := k6WorkerReport{Runsc: errOrOK(cmd.Run())}
+	rep := runscWorkerReport{Runsc: errOrOK(cmd.Run())}
 	_ = exec.Command(runsc, append(slices.Clone(global), "delete", "--force", id)...).Run()
 
 	data, _ := os.ReadFile(outPath)
@@ -303,12 +303,12 @@ func childK6Worker(args []string) error {
 		rep.Probe = json.RawMessage(p)
 	}
 	rep.Stderr = tail(contentOf(errPath), 2000)
-	rep.Logs = k6Logs(lay.logs)
+	rep.Logs = runscLogs(lay.logs)
 	return sayResult(rep)
 }
 
-// k6Proc is one host process of the sandbox.
-type k6Proc struct {
+// runscProc is one host process of the sandbox.
+type runscProc struct {
 	pid  int
 	role string // "sentry", "gofer" or "other"
 	comm string
@@ -316,20 +316,20 @@ type k6Proc struct {
 	uids []string // real, effective, saved, filesystem
 }
 
-func (p k6Proc) String() string {
+func (p runscProc) String() string {
 	return fmt.Sprintf("%s pid %d (%s: %s) uids %s", p.role, p.pid, p.comm, p.args, strings.Join(p.uids, "/"))
 }
 
-// k6Processes describes the processes of the leaf other than the worker:
+// runscProcesses describes the processes of the leaf other than the worker:
 // runsc and what it started.
-func k6Processes(leaf string, worker int) []k6Proc {
-	var out []k6Proc
+func runscProcesses(leaf string, worker int) []runscProc {
+	var out []runscProc
 	for _, pid := range cgProcs(leaf) {
 		if pid == worker {
 			continue
 		}
 		dir := fmt.Sprintf("/proc/%d", pid)
-		p := k6Proc{pid: pid, role: "other", comm: readOr(filepath.Join(dir, "comm"))}
+		p := runscProc{pid: pid, role: "other", comm: readOr(filepath.Join(dir, "comm"))}
 		cmdline, _ := os.ReadFile(filepath.Join(dir, "cmdline"))
 		argv := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
 		p.args = tail(strings.Join(argv, " "), 160)
@@ -352,8 +352,8 @@ func k6Processes(leaf string, worker int) []k6Proc {
 	return out
 }
 
-func TestK6RunscUIDMappings(t *testing.T) {
-	r := declare(t, "K6-owner", "K6-bind", "K6-uids", "K6-submount")
+func TestRunscUIDMappings(t *testing.T) {
+	r := declare(t, "gvisor-file-owner", "gvisor-overlay-bind", "gvisor-process-uids", "gvisor-root-submount")
 	r.needRoot()
 	runsc, err := exec.LookPath("runsc")
 	r.need("runsc", err == nil, "runsc is not installed (not found in PATH)")
@@ -364,27 +364,27 @@ func TestK6RunscUIDMappings(t *testing.T) {
 	r.needCgroup2()
 
 	version, _, _ := strings.Cut(commandOutput(runsc, "--version"), "\n")
-	dir := scratch(t, "k6")
-	lay := k6Paths(dir)
+	dir := scratch(t, "gvisor")
+	lay := runscPaths(dir)
 	id := fmt.Sprintf("kernelfacts-%d", os.Getpid())
-	if err := k6Prepare(lay); err != nil {
-		r.no("K6-owner", "the bundle could not be prepared: %v", err)
+	if err := runscPrepare(lay); err != nil {
+		r.no("gvisor-file-owner", "the bundle could not be prepared: %v", err)
 		return
 	}
-	tr, err := newCgTree(t, "k6")
+	tr, err := newCgTree(t, "gvisor")
 	if err != nil {
-		r.no("K6-owner", "the cgroup layout could not be created: %v", err)
+		r.no("gvisor-file-owner", "the cgroup layout could not be created: %v", err)
 		return
 	}
-	c, err := spawnChild(t, spawn{name: "k6worker", args: []string{dir, runsc, id}, clone: unix.CLONE_NEWNS, cgroup: tr.leaf})
+	c, err := spawnChild(t, spawn{name: "runscworker", args: []string{dir, runsc, id}, clone: unix.CLONE_NEWNS, cgroup: tr.leaf})
 	if err != nil {
-		r.no("K6-owner", "the worker that runs runsc did not start: %v", err)
+		r.no("gvisor-file-owner", "the worker that runs runsc did not start: %v", err)
 		return
 	}
 
 	// The probe writes this file first; the sandbox is then up, and stays
 	// up until it is released.
-	written := filepath.Join(lay.work, k6Written)
+	written := filepath.Join(lay.work, writtenInside)
 	poll(20*time.Second, func() bool {
 		select {
 		case <-c.exited:
@@ -393,21 +393,21 @@ func TestK6RunscUIDMappings(t *testing.T) {
 			return exists(written)
 		}
 	})
-	procs := k6Processes(tr.leaf, c.pid())
+	procs := runscProcesses(tr.leaf, c.pid())
 	if err := os.WriteFile(filepath.Join(lay.work, "release"), nil, 0o644); err != nil {
 		t.Errorf("release file: %v", err)
 	}
 	c.release()
 
-	var rep k6WorkerReport
+	var rep runscWorkerReport
 	if err := c.result(&rep); err != nil {
-		r.no("K6-owner", "%s: the worker that runs runsc did not complete: %v", version, err)
+		r.no("gvisor-file-owner", "%s: the worker that runs runsc did not complete: %v", version, err)
 		return
 	}
-	var probe k6ProbeReport
+	var probe runscProbeReport
 	if len(rep.Probe) == 0 || json.Unmarshal(rep.Probe, &probe) != nil {
 		t.Logf("runsc standard error:\n%s\nrunsc debug logs:\n%s", rep.Stderr, rep.Logs)
-		r.no("K6-owner", "%s: the process inside the sandbox reported nothing; runsc run ended with: %s; end of its standard error: %s",
+		r.no("gvisor-file-owner", "%s: the process inside the sandbox reported nothing; runsc run ended with: %s; end of its standard error: %s",
 			version, rep.Runsc, tail(rep.Stderr, 600))
 		return
 	}
@@ -417,17 +417,17 @@ func TestK6RunscUIDMappings(t *testing.T) {
 
 	shifted := fmt.Sprintf("%d:%d", idShift, idShift)
 	hostOwner := ownerOf(written)
-	r.judge("K6-owner", probe.Write == "ok" && hostOwner == shifted,
+	r.judge("gvisor-file-owner", probe.Write == "ok" && hostOwner == shifted,
 		"%s, platform systrap, uid map \"0 %d %d\"; inside: uid %d, uid_map %q, / owned by %s, write on the bind mount: %s, the file owned by %s; on the host that file is owned by %s (expected %s)",
 		version, idShift, idRange, probe.UID, probe.UIDMap, probe.RootOwner, probe.Write, probe.WriteOwner, hostOwner, shifted)
 
-	upperOwner := ownerOf(filepath.Join(lay.ovl.upper, k6Written))
-	r.judge("K6-bind", probe.Lower == k6LowerContent && probe.OvlWrite == "ok" && upperOwner == shifted,
+	upperOwner := ownerOf(filepath.Join(lay.ovl.upper, writtenInside))
+	r.judge("gvisor-overlay-bind", probe.Lower == runscLowerContent && probe.OvlWrite == "ok" && upperOwner == shifted,
 		"overlay mounted by the worker in its mount namespace and given to runsc as an rbind mount; inside: the lower file reads %q (expected %q), a write answers %s; on the host the upper directory holds that file owned by %s (expected %s)",
-		probe.Lower, k6LowerContent, probe.OvlWrite, upperOwner, shifted)
+		probe.Lower, runscLowerContent, probe.OvlWrite, upperOwner, shifted)
 
-	r.judge("K6-submount", probe.Submount == k6SubContent,
-		"a bind mount placed on a directory of the root path before runsc started; its file reads %q inside (expected %q)", probe.Submount, k6SubContent)
+	r.judge("gvisor-root-submount", probe.Submount == runscSubContent,
+		"a bind mount placed on a directory of the root path before runsc started; its file reads %q inside (expected %q)", probe.Submount, runscSubContent)
 
 	var sentries, gofers, wrong int
 	var listed []string
@@ -446,17 +446,17 @@ func TestK6RunscUIDMappings(t *testing.T) {
 		}
 	}
 	if len(procs) == 0 {
-		r.skip("K6-uids", "no process of the sandbox was running when the test looked; the probe says its wait ended with: %s", probe.Released)
+		r.skip("gvisor-process-uids", "no process of the sandbox was running when the test looked; the probe says its wait ended with: %s", probe.Released)
 		return
 	}
-	r.judge("K6-uids", sentries > 0 && gofers > 0 && wrong == 0,
+	r.judge("gvisor-process-uids", sentries > 0 && gofers > 0 && wrong == 0,
 		"expected the Sentry and the gofer with all four uids equal to %d; host processes of the sandbox: %s", idShift, strings.Join(listed, "; "))
 }
 
-// The bundle of K6 is what the design says it is.
-func TestSelfK6Bundle(t *testing.T) {
-	lay := k6Paths("/var/lib/x")
-	raw, err := k6Config(lay)
+// The bundle given to runsc is what the design says it is.
+func TestSelfRunscBundle(t *testing.T) {
+	lay := runscPaths("/var/lib/x")
+	raw, err := runscConfig(lay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +489,7 @@ func TestSelfK6Bundle(t *testing.T) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(cfg.Process.Args, []string{"/kf/probe", childArg, "k6probe"}) || cfg.Root.Path != lay.rootfs {
+	if !slices.Equal(cfg.Process.Args, []string{"/facts/probe", childArg, "runscprobe"}) || cfg.Root.Path != lay.rootfs {
 		t.Errorf("process %v in root %s", cfg.Process.Args, cfg.Root.Path)
 	}
 	kinds := map[string]string{}
@@ -534,10 +534,10 @@ func TestSelfK6Bundle(t *testing.T) {
 	}
 }
 
-// The list of host processes K6 builds from a cgroup, on the group of this
-// process: it is in the list, with the four uids of /proc/pid/status, and
-// it is neither a Sentry nor a gofer.
-func TestSelfK6Processes(t *testing.T) {
+// The list of host processes the test builds from a cgroup, on the group
+// of this process: it is in the list, with the four uids of
+// /proc/pid/status, and it is neither a Sentry nor a gofer.
+func TestSelfRunscProcesses(t *testing.T) {
 	if !haveCgroup2() {
 		t.Skip("cgroup v2 is not mounted at " + cgroupRoot)
 	}
@@ -551,7 +551,7 @@ func TestSelfK6Processes(t *testing.T) {
 		t.Skipf("the cgroup of this process, %q, is not at %s: nothing to list", path, dir)
 	}
 	uid := fmt.Sprint(os.Getuid())
-	for _, p := range k6Processes(dir, -1) {
+	for _, p := range runscProcesses(dir, -1) {
 		if p.pid != os.Getpid() {
 			continue
 		}
@@ -560,5 +560,5 @@ func TestSelfK6Processes(t *testing.T) {
 		}
 		return
 	}
-	t.Errorf("k6Processes does not list this process, which cgroup.procs of %s does", dir)
+	t.Errorf("runscProcesses does not list this process, which cgroup.procs of %s does", dir)
 }

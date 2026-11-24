@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// K2: nested user namespaces are refused without the syscall filter.
+// Nested user namespaces are refused without the syscall filter.
 //
 // The init writes 0 to user/max_user_namespaces of the sandbox's user
 // namespace, through a procfs it mounted itself and checked with fstatfs,
@@ -25,7 +25,7 @@ import (
 // value back. The limit applies to every user of the namespace, uid 0
 // included (namespaces(7)).
 //
-// K2b: kernel objects that are charged up the chain of namespace creators.
+// Kernel objects that are charged up the chain of namespace creators.
 // The sandbox's user namespace was created by host root, so an inotify
 // instance the workload creates inside is also counted against root in the
 // initial namespace (kernel/ucount.c, inc_ucount). The init is meant to
@@ -139,8 +139,8 @@ func unshareUser() string {
 	return "ok"
 }
 
-// k2Report is what the stand-in for the init measured.
-type k2Report struct {
+// usernsReport is what the stand-in for the init measured.
+type usernsReport struct {
 	Before      string `json:"before"`       // user/max_user_namespaces as the namespace was born
 	Write       string `json:"write"`        // result of writing 0, or "skipped" in the control run
 	After       string `json:"after"`        // the value read back
@@ -152,11 +152,11 @@ type k2Report struct {
 
 const maxUserNamespaces = "sys/user/max_user_namespaces"
 
-// childK2 runs as PID 1 of new user, mount and pid namespaces, like the
+// childUserns runs as PID 1 of new user, mount and pid namespaces, like the
 // init. args[0] is "write" or "control".
-func childK2(args []string) error {
+func childUserns(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: k2userns write|control")
+		return errors.New("usage: userns write|control")
 	}
 	// Capabilities are per thread, and the processes forked below must
 	// come from the thread that dropped them.
@@ -168,7 +168,7 @@ func childK2(args []string) error {
 	if err != nil {
 		return err
 	}
-	var rep k2Report
+	var rep usernsReport
 	rep.Before = proc.read(maxUserNamespaces)
 	rep.Write = "skipped"
 	if args[0] == "write" {
@@ -195,44 +195,44 @@ func childK2(args []string) error {
 	return sayResult(rep)
 }
 
-func TestK2NestedUserNamespaces(t *testing.T) {
-	r := declare(t, "K2", "K2-raise", "K2-control", "K2-lsm")
+func TestNestedUserNamespaces(t *testing.T) {
+	r := declare(t, "userns-nested-refused", "userns-limit-sealed", "userns-nested-control", "userns-nested-unprivileged")
 	r.needRoot()
 
-	standIn := spawn{name: "k2userns", clone: unix.CLONE_NEWNS | unix.CLONE_NEWPID, userns: true}
+	standIn := spawn{name: "userns", clone: unix.CLONE_NEWNS | unix.CLONE_NEWPID, userns: true}
 
-	var with k2Report
+	var with usernsReport
 	standIn.args = []string{"write"}
 	if err := runChild(t, standIn, &with); err != nil {
-		r.no("K2", "the stand-in for the init did not complete: %v", err)
+		r.no("userns-nested-refused", "the stand-in for the init did not complete: %v", err)
 	} else {
-		r.judge("K2", with.Write == "ok" && with.After == "0" && with.WithCaps == "ENOSPC" && with.WithoutCaps == "ENOSPC",
+		r.judge("userns-nested-refused", with.Write == "ok" && with.After == "0" && with.WithCaps == "ENOSPC" && with.WithoutCaps == "ENOSPC",
 			"value at birth %s; write of 0 through the init's own procfs: %s; read back: %s; unshare(CLONE_NEWUSER) with every capability: %s, with none: %s (expected ok, 0, ENOSPC, ENOSPC); kernel.unprivileged_userns_clone on the host: %s",
 			with.Before, with.Write, with.After, with.WithCaps, with.WithoutCaps, readOr("/proc/sys/kernel/unprivileged_userns_clone"))
 		refused := with.Raise == "EACCES" || with.Raise == "EPERM"
-		r.judge("K2-raise", with.Write == "ok" && refused && with.AfterRaise == "0",
+		r.judge("userns-limit-sealed", with.Write == "ok" && refused && with.AfterRaise == "0",
 			"writing %s back without CAP_SYS_RESOURCE and CAP_SYS_ADMIN: %s; value afterwards: %s (expected EACCES or EPERM, and 0)",
 			with.Before, with.Raise, with.AfterRaise)
 	}
 
-	var without k2Report
+	var without usernsReport
 	standIn.args = []string{"control"}
 	if err := runChild(t, standIn, &without); err != nil {
-		r.no("K2-control", "the control run did not complete: %v", err)
+		r.no("userns-nested-control", "the control run did not complete: %v", err)
 		return
 	}
 	// The control is the errno, not the success: an LSM may have its own
 	// reasons to refuse, and the helper its own trouble after the call, but
 	// only the limit answers ENOSPC.
-	r.judge("K2-control", without.Write == "skipped" && without.WithCaps != "ENOSPC",
+	r.judge("userns-nested-control", without.Write == "skipped" && without.WithCaps != "ENOSPC",
 		"without the write the value stays %s and unshare(CLONE_NEWUSER) with every capability answers %s (expected ok, and in any case not ENOSPC)", without.After, without.WithCaps)
-	r.judge("K2-lsm", without.WithoutCaps == "ok",
+	r.judge("userns-nested-unprivileged", without.WithoutCaps == "ok",
 		"without the write, unshare(CLONE_NEWUSER) with no capability answers %s; kernel.apparmor_restrict_unprivileged_userns=%s",
 		without.WithoutCaps, readOr("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"))
 }
 
-// k2bReady is what the helper holds while the test probes the host.
-type k2bReady struct {
+// inotifyReady is what the helper holds while the test probes the host.
+type inotifyReady struct {
 	Limit    string `json:"limit"`    // user/max_inotify_instances of the namespace after the optional write
 	Write    string `json:"write"`    // result of that write, or "skipped"
 	Created  int    `json:"created"`  // inotify instances it holds
@@ -244,12 +244,12 @@ type k2bReady struct {
 
 const maxInotifyInstances = "sys/user/max_inotify_instances"
 
-// childK2b creates inotify instances in the sandbox's user namespace until
+// childInotify creates inotify instances in the sandbox's user namespace until
 // the kernel refuses, then holds them until the test lets go.
 // args: how many to try, and the limit to write first ("" for none).
-func childK2b(args []string) error {
+func childInotify(args []string) error {
 	if len(args) != 2 {
-		return errors.New("usage: k2binotify COUNT LIMIT")
+		return errors.New("usage: inotify COUNT LIMIT")
 	}
 	budget, err := strconv.Atoi(args[0])
 	if err != nil {
@@ -259,7 +259,7 @@ func childK2b(args []string) error {
 	if err != nil {
 		return err
 	}
-	rdy := k2bReady{Write: "skipped", Capacity: budget, Stop: "budget"}
+	rdy := inotifyReady{Write: "skipped", Capacity: budget, Stop: "budget"}
 	if args[1] != "" {
 		rdy.Write = proc.write(maxInotifyInstances, args[1])
 	}
@@ -299,12 +299,12 @@ func hostInotify() string {
 	return "ok"
 }
 
-// k2bRun fills a sandbox user namespace with inotify instances and reports
+// inotifyRun fills a sandbox user namespace with inotify instances and reports
 // whether host root can still create one while they exist.
-func k2bRun(t *testing.T, budget int, limit string) (rdy k2bReady, host string, err error) {
+func inotifyRun(t *testing.T, budget int, limit string) (rdy inotifyReady, host string, err error) {
 	t.Helper()
 	c, err := spawnChild(t, spawn{
-		name:   "k2binotify",
+		name:   "inotify",
 		args:   []string{strconv.Itoa(budget), limit},
 		clone:  unix.CLONE_NEWNS | unix.CLONE_NEWPID,
 		userns: true,
@@ -319,8 +319,8 @@ func k2bRun(t *testing.T, budget int, limit string) (rdy k2bReady, host string, 
 	return rdy, hostInotify(), nil
 }
 
-func TestK2bInotifyCharged(t *testing.T) {
-	r := declare(t, "K2b-unbounded", "K2b-lowered")
+func TestInotifyCharged(t *testing.T) {
+	r := declare(t, "inotify-charge-default", "inotify-charge-lowered")
 	r.needRoot()
 
 	hostLimit, err := strconv.Atoi(readOr("/proc/sys/fs/inotify/max_user_instances"))
@@ -339,23 +339,23 @@ func TestK2bInotifyCharged(t *testing.T) {
 	const most = 60000
 	switch {
 	case !throwawayHost():
-		r.skip("K2b-unbounded", "not a throwaway host: this experiment takes every inotify instance of host root for a moment (set CI=true and %s=1)", throwawayEnv)
+		r.skip("inotify-charge-default", "not a throwaway host: this experiment takes every inotify instance of host root for a moment (set CI=true and %s=1)", throwawayEnv)
 	case hostLimit > most:
-		r.skip("K2b-unbounded", "fs.inotify.max_user_instances is %d: too many descriptors to fill in a test (limit %d)", hostLimit, most)
+		r.skip("inotify-charge-default", "fs.inotify.max_user_instances is %d: too many descriptors to fill in a test (limit %d)", hostLimit, most)
 	default:
-		rdy, host, err := k2bRun(t, hostLimit+64, "")
+		rdy, host, err := inotifyRun(t, hostLimit+64, "")
 		switch {
 		case err != nil:
-			r.skip("K2b-unbounded", "the experiment did not complete: %v", err)
+			r.skip("inotify-charge-default", "the experiment did not complete: %v", err)
 		case !rdy.FdsLeft || (rdy.Stop != "EMFILE" && rdy.Stop != "budget"):
 			// Stopped by its own descriptor table, or by something else
 			// than a limit on inotify instances: nothing was measured.
-			r.skip("K2b-unbounded", "the sandbox was not stopped by a limit on inotify instances: created %d of %d, stopped by %s, descriptors left: %v, RLIMIT_NOFILE %d",
+			r.skip("inotify-charge-default", "the sandbox was not stopped by a limit on inotify instances: created %d of %d, stopped by %s, descriptors left: %v, RLIMIT_NOFILE %d",
 				rdy.Created, rdy.Capacity, rdy.Stop, rdy.FdsLeft, rdy.NoFile)
 		default:
 			// "budget" means it created more than the host allows one user
 			// without ever being refused.
-			r.judge("K2b-unbounded", host == "ok",
+			r.judge("inotify-charge-default", host == "ok",
 				"host limit %d; the sandbox (own limit %s) created %d instances and was stopped by %s; host root creating one meanwhile: %s; after the sandbox is gone: %s",
 				hostLimit, rdy.Limit, rdy.Created, rdy.Stop, host, hostInotify())
 		}
@@ -363,18 +363,19 @@ func TestK2bInotifyCharged(t *testing.T) {
 
 	// With a small limit written in the sandbox's own user namespace.
 	const lowered = 16
-	rdy, host, err := k2bRun(t, 4096, strconv.Itoa(lowered))
+	rdy, host, err := inotifyRun(t, 4096, strconv.Itoa(lowered))
 	if err != nil {
-		r.skip("K2b-lowered", "the experiment did not complete: %v", err)
+		r.skip("inotify-charge-lowered", "the experiment did not complete: %v", err)
 		return
 	}
-	r.judge("K2b-lowered", rdy.Write == "ok" && rdy.Stop == "EMFILE" && rdy.FdsLeft && rdy.Created <= lowered && host == "ok",
+	r.judge("inotify-charge-lowered", rdy.Write == "ok" && rdy.Stop == "EMFILE" && rdy.FdsLeft && rdy.Created <= lowered && host == "ok",
 		"host limit %d; write of %d to user/max_inotify_instances in the sandbox: %s (reads %s); the sandbox created %d instances and was stopped by %s; host root creating one meanwhile: %s",
 		hostLimit, lowered, rdy.Write, rdy.Limit, rdy.Created, rdy.Stop, host)
 }
 
-// The procfs half of K2: a descriptor is accepted only for a real procfs,
-// values are read through it, and without privilege a write is refused.
+// The procfs half of the first test: a descriptor is accepted only for a
+// real procfs, values are read through it, and without privilege a write is
+// refused.
 func TestSelfProcSys(t *testing.T) {
 	p, err := openProc("/proc")
 	if err != nil {
@@ -393,7 +394,7 @@ func TestSelfProcSys(t *testing.T) {
 		t.Errorf("openProc accepted a directory that is not a procfs")
 	}
 	if os.Geteuid() != 0 {
-		// The same answer the workload gets in K2-raise, for the same
+		// The same answer the workload gets in userns-limit-sealed, for the same
 		// reason: no CAP_SYS_RESOURCE in the namespace that owns the value.
 		if got := p.write(maxUserNamespaces, value); got != "EACCES" && got != "EPERM" {
 			t.Errorf("an unprivileged write to user/max_user_namespaces = %q, want EACCES or EPERM", got)

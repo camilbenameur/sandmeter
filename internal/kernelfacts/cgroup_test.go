@@ -209,7 +209,7 @@ func cgParent() (string, error) {
 }
 
 // ownCgroupName is the name of this run's parent group.
-func ownCgroupName() string { return fmt.Sprintf("sandmeter-kf-%d", os.Getpid()) }
+func ownCgroupName() string { return fmt.Sprintf("sandmeter-facts-%d", os.Getpid()) }
 
 // removeCgParent undoes cgParent at the end of the run.
 func removeCgParent() error {

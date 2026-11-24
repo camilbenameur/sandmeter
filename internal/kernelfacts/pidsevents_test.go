@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// T-pids: where a refused fork is counted.
+// Where a refused fork is counted.
 //
 // The receipt reads the pids counter of the command's leaf, and the escape
 // case for fork bombs is judged from it. The meaning of pids.events changed
@@ -112,23 +112,23 @@ func pidsScenario(t *testing.T, name string, onLeaf bool) (pidsReport, error) {
 }
 
 func TestPidsEvents(t *testing.T) {
-	r := declare(t, "T-pids-leaf", "T-pids-session")
+	r := declare(t, "pids-events-leaf", "pids-events-session")
 	r.needRoot()
 	r.needCgroup2()
 
-	leaf, err := pidsScenario(t, "tpids-leaf", true)
+	leaf, err := pidsScenario(t, "pids-leaf", true)
 	if err != nil {
-		r.no("T-pids-leaf", "the scenario did not complete: %v", err)
+		r.no("pids-events-leaf", "the scenario did not complete: %v", err)
 	} else {
-		r.judge("T-pids-leaf", leaf.refused() && leaf.leafCount > 0,
+		r.judge("pids-events-leaf", leaf.refused() && leaf.leafCount > 0,
 			"limit hit on the leaf: %v (expected three EAGAIN and a leaf count above 0)", leaf)
 	}
 
-	session, err := pidsScenario(t, "tpids-session", false)
+	session, err := pidsScenario(t, "pids-session", false)
 	if err != nil {
-		r.skip("T-pids-session", "the scenario did not complete: %v", err)
+		r.skip("pids-events-session", "the scenario did not complete: %v", err)
 		return
 	}
-	r.judge("T-pids-session", session.refused() && session.leafCount > 0,
+	r.judge("pids-events-session", session.refused() && session.leafCount > 0,
 		"limit hit on the session group: %v", session)
 }

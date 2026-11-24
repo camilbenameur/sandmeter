@@ -17,11 +17,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// T-loop: the loop-image quota, which v0.1.0 leaves out.
+// The loop-image quota, which v0.1.0 leaves out.
 //
 // A per-session ext4 image on a loop device would bound bytes and inodes on
 // any host filesystem. v0.1.0 does not ship it: the free-space floor is
-// always on and the tmpfs quota is opt-in (K9). This test records what the
+// always on and the tmpfs quota is opt-in. This test records what the
 // driver would cost and whether the kernel takes the device back by itself,
 // after an unmount and after the death of the process that holds the mount,
 // so that the decision for the next release starts from measurements.
@@ -100,7 +100,7 @@ func loopFlagNames(flags uint32) string {
 // args: directory, mkfs.ext4, and "unmount" or "hold".
 func childLoop(args []string) error {
 	if len(args) != 3 {
-		return errors.New("usage: tloop DIR MKFS unmount|hold")
+		return errors.New("usage: loop DIR MKFS unmount|hold")
 	}
 	dir, mkfs, mode := args[0], args[1], args[2]
 	if err := privateMounts(); err != nil {
@@ -263,7 +263,7 @@ func (rep loopReport) String() string {
 }
 
 func TestLoopImage(t *testing.T) {
-	r := declare(t, "T-loop", "T-loop-kill")
+	r := declare(t, "loop-image", "loop-kill-release")
 	r.needRoot()
 	mkfs, err := exec.LookPath("mkfs.ext4")
 	if err != nil {
@@ -276,7 +276,7 @@ func TestLoopImage(t *testing.T) {
 	}
 
 	before := loopNames()
-	dir := scratch(t, "tloop")
+	dir := scratch(t, "loop")
 	// Registered after scratch, so it runs before the directory is removed.
 	t.Cleanup(func() {
 		detachLoopsUnder(t, dir)
@@ -290,34 +290,34 @@ func TestLoopImage(t *testing.T) {
 	}
 
 	var rep loopReport
-	if err := runChild(t, spawn{name: "tloop", args: []string{unmounted, mkfs, "unmount"}, clone: unix.CLONE_NEWNS}, &rep); err != nil {
-		r.skip("T-loop", "the measurement did not complete (image on %s): %v", fsTypeOf(dir), err)
+	if err := runChild(t, spawn{name: "loop", args: []string{unmounted, mkfs, "unmount"}, clone: unix.CLONE_NEWNS}, &rep); err != nil {
+		r.skip("loop-image", "the measurement did not complete (image on %s): %v", fsTypeOf(dir), err)
 	} else if rep.Step != "" {
-		r.no("T-loop", "image on %s; failed at: %s; before that: %v", fsTypeOf(dir), rep.Step, rep)
+		r.no("loop-image", "image on %s; failed at: %s; before that: %v", fsTypeOf(dir), rep.Step, rep)
 	} else {
 		released := "the device still had its backing file 2 s after the unmount"
 		if rep.Released >= 0 {
 			released = fmt.Sprintf("the device had no backing file %.1f ms after the unmount", rep.Released)
 		}
-		r.judge("T-loop", rep.Write == "ok" && rep.Released >= 0,
+		r.judge("loop-image", rep.Write == "ok" && rep.Released >= 0,
 			"image on %s; %v; unmount of both %.1f ms; %s", fsTypeOf(dir), rep, rep.Unmount, released)
 	}
 
-	c, err := spawnChild(t, spawn{name: "tloop", args: []string{held, mkfs, "hold"}, clone: unix.CLONE_NEWNS})
+	c, err := spawnChild(t, spawn{name: "loop", args: []string{held, mkfs, "hold"}, clone: unix.CLONE_NEWNS})
 	if err != nil {
-		r.skip("T-loop-kill", "the helper did not start: %v", err)
+		r.skip("loop-kill-release", "the helper did not start: %v", err)
 		return
 	}
 	var holding loopReport
 	if err := c.ready(&holding); err != nil {
-		r.skip("T-loop-kill", "the helper did not get as far as holding a mounted image: %v", err)
+		r.skip("loop-kill-release", "the helper did not get as far as holding a mounted image: %v", err)
 		return
 	}
 	backing := loopBacking(holding.Number)
 	killed := time.Now()
 	c.kill()
 	released := poll(2*time.Second, func() bool { return loopBacking(holding.Number) == "" })
-	r.judge("T-loop-kill", backing != "" && released,
+	r.judge("loop-kill-release", backing != "" && released,
 		"loop%d was attached to %q while a process held the mounts in its mount namespace; after SIGKILL of that process the device had no backing file: %v, %s after the kill (limit 2 s)",
 		holding.Number, backing, released, millis(time.Since(killed)))
 }

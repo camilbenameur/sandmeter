@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// K9: the opt-in disk quota.
+// The opt-in disk quota.
 //
 // With storage.upper = "tmpfs", the upper and work directories of a session
 // live on a tmpfs mounted with size= and nr_inodes= taken from limits.disk.
@@ -24,12 +24,12 @@ import (
 // also eats the sandbox's memory limit.
 
 const (
-	k9Size   = 8 << 20 // size= of the tmpfs, in bytes
-	k9Inodes = 96      // nr_inodes= of the tmpfs
+	tmpfsSize   = 8 << 20 // size= of the tmpfs, in bytes
+	tmpfsInodes = 96      // nr_inodes= of the tmpfs
 )
 
-// k9Report is what the helper measured. Empty strings mean "as expected".
-type k9Report struct {
+// tmpfsReport is what the helper measured. Empty strings mean "as expected".
+type tmpfsReport struct {
 	Whiteout    string `json:"whiteout"`     // what is wrong with the whiteout left in the upper layer
 	Opaque      string `json:"opaque"`       // what is wrong with the opaque directory left there
 	View        string `json:"view"`         // difference between the merged view and the expected tree
@@ -84,11 +84,11 @@ func memoryOf(leaf string) (current, shmem int64) {
 	return current, cgCounter(leaf, "memory.stat", "shmem")
 }
 
-// childK9 runs in a private mount namespace, inside the cgroup whose memory
-// is read. args: directory, cgroup directory or "".
-func childK9(args []string) error {
+// childTmpfsUpper runs in a private mount namespace, inside the cgroup whose
+// memory is read. args: directory, cgroup directory or "".
+func childTmpfsUpper(args []string) error {
 	if len(args) != 2 {
-		return errors.New("usage: k9tmpfs DIR LEAF")
+		return errors.New("usage: tmpfsupper DIR LEAF")
 	}
 	dir, leaf := args[0], args[1]
 	if err := privateMounts(); err != nil {
@@ -98,7 +98,7 @@ func childK9(args []string) error {
 	if err := os.Mkdir(tmp, 0o700); err != nil {
 		return err
 	}
-	opts := fmt.Sprintf("size=%d,nr_inodes=%d,mode=0700", k9Size, k9Inodes)
+	opts := fmt.Sprintf("size=%d,nr_inodes=%d,mode=0700", tmpfsSize, tmpfsInodes)
 	if err := unix.Mount("tmpfs", tmp, "tmpfs", unix.MS_NODEV|unix.MS_NOSUID, opts); err != nil {
 		return fmt.Errorf("mount a tmpfs with %s: %w", opts, err)
 	}
@@ -120,7 +120,7 @@ func childK9(args []string) error {
 		return fmt.Errorf("with the upper and work directories on a tmpfs: %w", err)
 	}
 
-	var rep k9Report
+	var rep tmpfsReport
 	// A lower file removed: a whiteout in the upper layer.
 	if err := os.Remove(filepath.Join(o.merged, "a.txt")); err != nil {
 		rep.Whiteout = "remove a lower file through the overlay: " + errnoName(err)
@@ -151,7 +151,7 @@ func childK9(args []string) error {
 	// One file that grows past size=.
 	rep.MemBefore, rep.ShmemBefore = memoryOf(leaf)
 	big := filepath.Join(o.merged, "big")
-	rep.SizeBytes, rep.SizeErr = fill(big, 2*k9Size)
+	rep.SizeBytes, rep.SizeErr = fill(big, 2*tmpfsSize)
 	rep.MemAfter, rep.ShmemAfter = memoryOf(leaf)
 	if err := os.Remove(big); err != nil {
 		return fmt.Errorf("remove the big file: %w", err)
@@ -159,7 +159,7 @@ func childK9(args []string) error {
 
 	// Empty files past nr_inodes=.
 	rep.InodeErr = "no error"
-	for i := 0; i < 2*k9Inodes; i++ {
+	for i := 0; i < 2*tmpfsInodes; i++ {
 		f, err := os.Create(filepath.Join(o.merged, fmt.Sprintf("f-%04d", i)))
 		if err != nil {
 			rep.InodeErr = errnoName(err)
@@ -178,15 +178,15 @@ func childK9(args []string) error {
 	return sayResult(rep)
 }
 
-func TestK9TmpfsUpper(t *testing.T) {
-	r := declare(t, "K9-whiteouts", "K9-size", "K9-inodes", "K9-memcg")
+func TestTmpfsUpper(t *testing.T) {
+	r := declare(t, "tmpfs-upper-whiteouts", "tmpfs-upper-size", "tmpfs-upper-inodes", "tmpfs-upper-memory")
 	r.needRoot()
 
-	dir := scratch(t, "k9")
+	dir := scratch(t, "tmpfsupper")
 	// The writer runs in a leaf of its own so that its memory can be read.
 	leaf, noLeaf := "", "cgroup v2 is not mounted at "+cgroupRoot
 	if haveCgroup2() {
-		tr, err := newCgTree(t, "k9")
+		tr, err := newCgTree(t, "tmpfsupper")
 		if err != nil {
 			noLeaf = "the cgroup layout could not be created: " + err.Error()
 		} else {
@@ -194,34 +194,34 @@ func TestK9TmpfsUpper(t *testing.T) {
 		}
 	}
 
-	var rep k9Report
-	if err := runChild(t, spawn{name: "k9tmpfs", args: []string{dir, leaf}, clone: unix.CLONE_NEWNS, cgroup: leaf}, &rep); err != nil {
-		r.no("K9-whiteouts", "the overlay on a tmpfs upper layer did not complete (lower layer on %s): %v", fsTypeOf(dir), err)
+	var rep tmpfsReport
+	if err := runChild(t, spawn{name: "tmpfsupper", args: []string{dir, leaf}, clone: unix.CLONE_NEWNS, cgroup: leaf}, &rep); err != nil {
+		r.no("tmpfs-upper-whiteouts", "the overlay on a tmpfs upper layer did not complete (lower layer on %s): %v", fsTypeOf(dir), err)
 		return
 	}
-	r.judge("K9-whiteouts", rep.Whiteout == "" && rep.Opaque == "" && rep.View == "" && rep.Remounted == "",
+	r.judge("tmpfs-upper-whiteouts", rep.Whiteout == "" && rep.Opaque == "" && rep.View == "" && rep.Remounted == "",
 		"tmpfs with size=%d,nr_inodes=%d, lower layer on %s; whiteout: %s; opaque directory: %s; merged view against the expected tree: %s; after a remount: %s",
-		k9Size, k9Inodes, fsTypeOf(dir), orOK(rep.Whiteout), orOK(rep.Opaque), orNothing(rep.View), orNothing(rep.Remounted))
-	r.judge("K9-size", rep.SizeErr == "ENOSPC" && rep.SizeBytes > k9Size/2 && rep.SizeBytes <= k9Size,
-		"a file written through the overlay grew to %d bytes and was stopped by %s (expected ENOSPC at or just under size=%d)", rep.SizeBytes, rep.SizeErr, k9Size)
-	r.judge("K9-inodes", rep.InodeErr == "ENOSPC" && rep.InodeCount > 0 && rep.InodeCount < k9Inodes,
-		"%d empty files were created through the overlay before %s (expected ENOSPC under nr_inodes=%d)", rep.InodeCount, rep.InodeErr, k9Inodes)
+		tmpfsSize, tmpfsInodes, fsTypeOf(dir), orOK(rep.Whiteout), orOK(rep.Opaque), orNothing(rep.View), orNothing(rep.Remounted))
+	r.judge("tmpfs-upper-size", rep.SizeErr == "ENOSPC" && rep.SizeBytes > tmpfsSize/2 && rep.SizeBytes <= tmpfsSize,
+		"a file written through the overlay grew to %d bytes and was stopped by %s (expected ENOSPC at or just under size=%d)", rep.SizeBytes, rep.SizeErr, tmpfsSize)
+	r.judge("tmpfs-upper-inodes", rep.InodeErr == "ENOSPC" && rep.InodeCount > 0 && rep.InodeCount < tmpfsInodes,
+		"%d empty files were created through the overlay before %s (expected ENOSPC under nr_inodes=%d)", rep.InodeCount, rep.InodeErr, tmpfsInodes)
 
 	switch {
 	case leaf == "":
-		r.skip("K9-memcg", "%s", noLeaf)
+		r.skip("tmpfs-upper-memory", "%s", noLeaf)
 	case rep.MemBefore < 0 || rep.MemAfter < 0:
-		r.skip("K9-memcg", "memory.current of the writer's cgroup could not be read")
+		r.skip("tmpfs-upper-memory", "memory.current of the writer's cgroup could not be read")
 	default:
 		grown := rep.MemAfter - rep.MemBefore
-		r.judge("K9-memcg", rep.SizeBytes > 0 && grown >= rep.SizeBytes*3/4,
+		r.judge("tmpfs-upper-memory", rep.SizeBytes > 0 && grown >= rep.SizeBytes*3/4,
 			"while a %d-byte file sat in the tmpfs upper layer, memory.current of the writer's cgroup went from %d to %d (+%d) and its shmem from %d to %d",
 			rep.SizeBytes, rep.MemBefore, rep.MemAfter, grown, rep.ShmemBefore, rep.ShmemAfter)
 	}
 }
 
 // What is not a whiteout or an opaque directory must not pass for one. The
-// positive cases need a mounted overlay: they are K9 itself.
+// positive cases need a mounted overlay: they are the root test itself.
 func TestSelfUpperChecks(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "file")

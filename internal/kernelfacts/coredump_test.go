@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// K7: piped core handlers.
+// Piped core handlers.
 //
 // When kernel.core_pattern starts with a pipe, the kernel runs that program
 // as root in the initial namespaces for every crash, sandboxed or not, and
@@ -35,12 +35,12 @@ const (
 	corePatternMax = 127
 )
 
-// childK7Crash sets RLIMIT_CORE and dies of SIGABRT with the default
+// childCrash sets RLIMIT_CORE and dies of SIGABRT with the default
 // action, which makes the kernel consult core_pattern. args: the limit, a
 // number of bytes or "unlimited".
-func childK7Crash(args []string) error {
+func childCrash(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: k7crash LIMIT")
+		return errors.New("usage: crash LIMIT")
 	}
 	lim := unix.Rlimit{Cur: unix.RLIM_INFINITY, Max: unix.RLIM_INFINITY}
 	if args[0] != "unlimited" {
@@ -89,8 +89,8 @@ func newLines(before, after, word string) []string {
 	return out
 }
 
-// k7Crash is one crash and what followed.
-type k7Crash struct {
+// crashOutcome is one crash and what followed.
+type crashOutcome struct {
 	limit   string
 	pid     int
 	state   string // how the process ended
@@ -98,19 +98,19 @@ type k7Crash struct {
 	handler bool   // the handler ran for it
 }
 
-func (c k7Crash) String() string {
+func (c crashOutcome) String() string {
 	return fmt.Sprintf("RLIMIT_CORE=%s: pid %d ended with %q, handler ran: %v", c.limit, c.pid, c.state, c.handler)
 }
 
-func TestK7PipedCoreHandler(t *testing.T) {
-	r := declare(t, "K7", "K7-klog")
+func TestPipedCoreHandler(t *testing.T) {
+	r := declare(t, "core-limit-one", "core-kernel-log")
 	r.needRoot()
 	if !throwawayHost() {
 		r.skipRest("not a throwaway host")
-		t.Skipf("K7 replaces kernel.core_pattern for a moment: it runs only with CI=true and %s=1", throwawayEnv)
+		t.Skipf("this test replaces kernel.core_pattern for a moment: it runs only with CI=true and %s=1", throwawayEnv)
 	}
 
-	dir := scratch(t, "k7")
+	dir := scratch(t, "core")
 	script, marker := filepath.Join(dir, "h"), filepath.Join(dir, "ran")
 	// The kernel runs the handler as root, in the initial namespaces, with
 	// the dump on its standard input. This one only notes that it ran:
@@ -143,11 +143,11 @@ func TestK7PipedCoreHandler(t *testing.T) {
 		}
 	})
 	if err := os.WriteFile(corePattern, []byte(pattern+"\n"), 0o644); err != nil {
-		r.no("K7", "the handler could not be installed: write to kernel.core_pattern: %v", err)
+		r.no("core-limit-one", "the handler could not be installed: write to kernel.core_pattern: %v", err)
 		return
 	}
 	if now := readOr(corePattern); now != pattern {
-		r.no("K7", "kernel.core_pattern reads %q after %q was written", now, pattern)
+		r.no("core-limit-one", "kernel.core_pattern reads %q after %q was written", now, pattern)
 		return
 	}
 
@@ -161,9 +161,9 @@ func TestK7PipedCoreHandler(t *testing.T) {
 	// The kernel starts the handler before the crashed process is reaped,
 	// so a handler that is going to run has been started when wait returns.
 	// The waits below are for its one line of shell.
-	crash := func(limit string, wait time.Duration) k7Crash {
-		out := k7Crash{limit: limit, state: "not started"}
-		c, err := spawnChild(t, spawn{name: "k7crash", args: []string{limit}})
+	crash := func(limit string, wait time.Duration) crashOutcome {
+		out := crashOutcome{limit: limit, state: "not started"}
+		c, err := spawnChild(t, spawn{name: "crash", args: []string{limit}})
 		if err != nil {
 			out.state = err.Error()
 			return out
@@ -183,23 +183,23 @@ func TestK7PipedCoreHandler(t *testing.T) {
 	unlimited := crash("unlimited", 5*time.Second)
 
 	allAborted := zero.aborted && one.aborted && unlimited.aborted
-	r.judge("K7", allAborted && zero.handler && unlimited.handler && !one.handler,
+	r.judge("core-limit-one", allAborted && zero.handler && unlimited.handler && !one.handler,
 		"handler installed as %q (core_pipe_limit %s); %v; %v; %v (expected: each dies of SIGABRT, the handler runs for 0 and unlimited and not for 1)",
 		pattern, readOr(corePipeLimit), zero, one, unlimited)
 
 	if err := errors.Join(logErr, logErr2); err != nil {
-		r.skip("K7-klog", "the kernel log is not readable: %v", err)
+		r.skip("core-kernel-log", "the kernel log is not readable: %v", err)
 		return
 	}
 	lines := newLines(logBefore, logAfter, "RLIMIT_CORE")
-	r.judge("K7-klog", len(lines) > 0,
+	r.judge("core-kernel-log", len(lines) > 0,
 		"%d new kernel log lines mention RLIMIT_CORE after the crash under RLIMIT_CORE=1: %s", len(lines), strings.Join(lines, " / "))
 }
 
-// The crasher of K7 must die of SIGABRT with the default action, or K7
-// measures nothing. With RLIMIT_CORE=1 the kernel writes no core file, and
-// where K7 holds it starts no handler either, so this is checked on any
-// host.
+// The crasher must die of SIGABRT with the default action, or the test
+// above measures nothing. With RLIMIT_CORE=1 the kernel writes no core file,
+// and where core-limit-one holds it starts no handler either, so this is
+// checked on any host.
 func TestSelfCrasher(t *testing.T) {
 	var lim unix.Rlimit
 	if err := unix.Getrlimit(unix.RLIMIT_CORE, &lim); err != nil {
@@ -208,7 +208,7 @@ func TestSelfCrasher(t *testing.T) {
 	if lim.Max < 1 && os.Geteuid() != 0 {
 		t.Skip("the hard RLIMIT_CORE of this process is 0: the helper cannot set it to 1")
 	}
-	c, err := spawnChild(t, spawn{name: "k7crash", args: []string{"1"}})
+	c, err := spawnChild(t, spawn{name: "crash", args: []string{"1"}})
 	if err != nil {
 		t.Fatal(err)
 	}

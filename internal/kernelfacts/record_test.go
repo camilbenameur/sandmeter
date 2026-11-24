@@ -21,7 +21,8 @@ const (
 	// fails a test instead of skipping it.
 	requireEnv = "SANDMETER_REQUIRE"
 	// throwawayEnv, together with CI=true, allows the tests that change a
-	// host-wide setting for a moment (K7, the first half of K2b).
+	// host-wide setting for a moment (the core handler, the inotify
+	// instances of host root).
 	throwawayEnv = "SANDMETER_THROWAWAY_HOST"
 )
 
