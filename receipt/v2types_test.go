@@ -87,6 +87,7 @@ func TestV2HasNoOptionalKey(t *testing.T) {
 
 func intp(v int) *int       { return &v }
 func int64p(v int64) *int64 { return &v }
+func boolp(v bool) *bool    { return &v }
 
 // TestV2CommandRecordReadsBack encodes a full command record, checks a few
 // of its bytes by hand and decodes it strictly to the same value.
@@ -97,6 +98,7 @@ func TestV2CommandRecordReadsBack(t *testing.T) {
 		Kind:   KindCommand,
 		ID:     "0123456789abcdef0123456789abcdef",
 		Chain:  ChainV2{Session: "00112233445566778899aabbccddeeff", Seq: 3, PrevSHA256: strings.Repeat("ab", 32)},
+		UID:    1000,
 		Time:   t0.Add(2 * time.Second),
 		Host:   HostV2{Kernel: "Linux 6.8.0", Arch: "amd64", SandmeterVersion: "0.1.0", Commit: "abc1234", Backend: "native"},
 		Command: &CommandV2{
@@ -106,8 +108,9 @@ func TestV2CommandRecordReadsBack(t *testing.T) {
 			Policy:        json.RawMessage(`{"version":2}`),
 			PolicySHA256:  strings.Repeat("cd", 32),
 			CeilingSHA256: strings.Repeat("ef", 32),
-			Image:         ImageV2{RequestedRef: "example.test/image:1", Digest: "sha256:" + strings.Repeat("0", 64)},
+			Image:         ImageV2{RequestedRef: "example.test/image:1", Digest: "sha256:" + strings.Repeat("0", 64), DiffIDs: []string{"sha256:" + strings.Repeat("7", 64)}},
 			Outcome:       OutcomeV2{Status: StatusKilled, Signal: intp(9), KillReason: KillOOM},
+			WallLimitMS:   int64p(60000),
 			StartedAt:     t0,
 			FinishedAt:    t0.Add(time.Second),
 			DurationMS:    1000,
@@ -122,16 +125,26 @@ func TestV2CommandRecordReadsBack(t *testing.T) {
 				Controls:       []ControlV2{{ID: "limits.memory", Enforced: true}},
 				SyscallProfile: "default",
 				SeccompSHA256:  strings.Repeat("4", 64),
-				Observed:       ObservedV2{Tasks: intp(2), SeccompMode: intp(2), MemoryMax: "67108864"},
+				Observed: ObservedV2{
+					Workload:  PostureV2{Tasks: intp(1), SeccompMode: intp(2), NoNewPrivs: boolp(true), CapInh: "0000000000000000"},
+					Init:      PostureV2{Tasks: intp(6), SeccompMode: intp(0)},
+					Settings:  []SettingV2{{Name: "user.max_inotify_instances", Value: "40"}, {Name: "user.max_user_namespaces", Value: "0"}},
+					MemoryMax: "67108864",
+					Runtime:   []RuntimeProcessV2{},
+				},
 			},
 			Storage:   StorageV2{Upper: "disk"},
 			Workspace: &WorkspaceV2{ManifestSHA256: strings.Repeat("5", 64), Entries: 2, Bytes: 10, Superseded: []SupersededV2{}},
 			Diff: DiffV2{
 				Base:    DiffBaseV2{Kind: BaseImage},
-				Status:  DiffComplete,
-				Counts:  DiffCountsV2{Added: 1},
+				Status:  DiffTruncated,
+				Reasons: []string{DiffReasonHashBudget},
+				Counts:  DiffCountsV2{Exact: true, Added: 2},
 				Budget:  DiffBudgetV2{Entries: 100000, Bytes: 16 << 20, Depth: 128},
-				Entries: []DiffEntryV2{{Path: "workspace/out.txt", Op: OpAdd, Type: TypeFile, Mode: 0o644, Size: 3, SHA256: strings.Repeat("6", 64), SinceSeq: 3}},
+				Entries: []DiffEntryV2{
+					{Path: "workspace/big.bin", Op: OpAdd, Type: TypeFile, Mode: 0o644, Nlink: 1, Xattrs: []string{}, Size: 1 << 40, SinceSeq: 3, Skipped: SkipHashBudget},
+					{Path: "workspace/out.txt", Op: OpAdd, Type: TypeFile, Mode: 0o644, Nlink: 2, Xattrs: []string{"security.capability"}, Size: 3, SHA256: strings.Repeat("6", 64), SinceSeq: 3},
+				},
 			},
 			Errors: []string{},
 		},
@@ -146,6 +159,13 @@ func TestV2CommandRecordReadsBack(t *testing.T) {
 		// A counter that was not measured is null, never zero.
 		`"cpu_usage_usec":null,"pids_peak":null,"pids_max_hits":null`,
 		`"oom_kills":1`,
+		`"uid":1000`,
+		`"wall_limit_ms":60000`,
+		// The posture of a process that was not read is null, field by field.
+		`"init":{"tasks":6,"seccomp_mode":0,"no_new_privs":null,`,
+		`"settings":[{"name":"user.max_inotify_instances","value":"40"},{"name":"user.max_user_namespaces","value":"0"}]`,
+		`"runtime":[]`,
+		`"status":"truncated","reasons":["hash-budget"],"error":""`,
 		`"quota_bytes":null`,
 		`"policy":{"version":2}`,
 	} {
@@ -185,7 +205,10 @@ func TestV2ConstantsAreDistinct(t *testing.T) {
 		"kills":    {KillWallTimeout, KillOOM, KillCancelled, KillStopped, KillDiskFloor, KillSupervisorLost, KillInitLost},
 		"scopes":   {ScopeWorkload, ScopeInitAndWorkload, ScopeRuntimeAndLoad},
 		"reasons":  {FlowNotAllowed, FlowSpecialAddress, FlowSNIMismatch, FlowNotTLS, FlowBadRequest, FlowResolveFailed, FlowDialFailed, FlowLimit},
-		"stops":    {StopRequested, StopClientGone, StopError},
+		"stops":    {StopRequested, StopClientGone, StopShutdown, StopServiceLost, StopError},
+		"types":    {TypeFile, TypeDir, TypeSymlink, TypeOther, TypeWhiteout, TypeOpaque},
+		"budgets":  {DiffReasonEntries, DiffReasonBytes, DiffReasonDepth, DiffReasonPath, DiffReasonHashBudget, DiffReasonScan, DiffReasonCancelled},
+		"skips":    {SkipUnreadable, SkipTooLarge, SkipHashBudget, SkipTooDeep, SkipPathTooLong},
 	} {
 		seen := map[string]bool{}
 		for _, v := range group {

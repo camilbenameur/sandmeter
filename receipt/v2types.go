@@ -163,12 +163,18 @@ const (
 	TypeSymlink = "symlink"
 	TypeOther   = "other"
 
+	// TypeWhiteout and TypeOpaque only occur in SupersededV2: a deletion, or
+	// an "everything below is gone" mark, that the session had written and
+	// that was dropped.
+	TypeWhiteout = "whiteout"
+	TypeOpaque   = "opaque"
+
 	// DiffComplete: every change is listed.
 	DiffComplete = "complete"
-	// DiffTruncated: a budget was reached. The counts are exact; the list of
-	// entries is not, or holds entries without a content hash.
+	// DiffTruncated: a budget was reached. Reasons names each one. The list
+	// of entries is cut short, or holds entries without a content hash.
 	DiffTruncated = "truncated"
-	// DiffError: the diff could not be computed. Reason says why.
+	// DiffError: the diff could not be computed. Error says why.
 	DiffError = "error"
 
 	// BaseImage: the diff is relative to the image and the imported
@@ -178,12 +184,56 @@ const (
 	BaseSnapshot = "snapshot"
 )
 
+// Budgets a diff can reach, the values of DiffV2.Reasons.
+const (
+	// DiffReasonEntries: more changed paths than the budget lists.
+	DiffReasonEntries = "entries"
+	// DiffReasonBytes: the encoded list reached its size budget.
+	DiffReasonBytes = "bytes"
+	// DiffReasonDepth: a directory deeper than the budget was not entered.
+	DiffReasonDepth = "depth"
+	// DiffReasonPath: a path longer than the budget was not entered.
+	DiffReasonPath = "path"
+	// DiffReasonHashBudget: the bytes hashed reached their budget; later
+	// files are listed without a content hash.
+	DiffReasonHashBudget = "hash-budget"
+	// DiffReasonScan: the number of directory entries read reached its
+	// bound. The walk stopped: the counts are lower bounds.
+	DiffReasonScan = "scan"
+	// DiffReasonCancelled: the walk ran out of time. The counts are lower
+	// bounds.
+	DiffReasonCancelled = "cancelled"
+)
+
+// Reasons an entry is listed without its content, the values of
+// DiffEntryV2.Skipped.
+const (
+	// SkipUnreadable: the file could not be opened or read.
+	SkipUnreadable = "unreadable"
+	// SkipTooLarge: the file is larger than the bound on one hashed file.
+	SkipTooLarge = "too_large"
+	// SkipHashBudget: the budget of hashed bytes was spent before this file.
+	SkipHashBudget = "hash_budget"
+	// SkipTooDeep: a directory deeper than the budget. It was not entered,
+	// and what it holds is not listed.
+	SkipTooDeep = "too_deep"
+	// SkipPathTooLong: a path longer than the budget. If it is a directory
+	// it was not entered.
+	SkipPathTooLong = "path_too_long"
+)
+
 // Reasons a session ended, the values of StopV2.Reason.
 const (
 	// StopRequested: the client asked for it.
 	StopRequested = "requested"
 	// StopClientGone: the client's connection closed.
 	StopClientGone = "client-gone"
+	// StopShutdown: the service was told to stop.
+	StopShutdown = "shutdown"
+	// StopServiceLost: the process that held the session died. The record
+	// was written by a later start of the service, which found the session
+	// without an owner.
+	StopServiceLost = "service-lost"
 	// StopError: the session could not go on. Error says why.
 	StopError = "error"
 )
@@ -199,6 +249,10 @@ type RecordV2 struct {
 	ID string `json:"id"`
 	// Chain places the record in its session.
 	Chain ChainV2 `json:"chain"`
+	// UID is the user the session belongs to: the uid of the process at the
+	// other end of the service's socket, as the kernel reported it, or 0 when
+	// root ran the command without the service.
+	UID uint32 `json:"uid"`
 	// Time is the host clock, in UTC, when the record was built. It is the
 	// host's word and nothing checks it.
 	Time time.Time `json:"time"`
@@ -263,6 +317,11 @@ type CommandV2 struct {
 	Image   ImageV2   `json:"image"`
 	Outcome OutcomeV2 `json:"outcome"`
 
+	// WallLimitMS is the longest this command was allowed to run, in
+	// milliseconds: the limit of the policy, or a shorter one the client
+	// asked for with the command. Null when the policy sets no limit and the
+	// client asked for none.
+	WallLimitMS *int64 `json:"wall_limit_ms"`
 	// StartedAt and FinishedAt are host clock readings in UTC, taken around
 	// the command. DurationMS is measured separately, on a monotonic clock.
 	StartedAt  time.Time `json:"started_at"`
@@ -293,6 +352,10 @@ type ImageV2 struct {
 	RequestedRef string `json:"requested_ref"`
 	// Digest is the digest of the image manifest that was used.
 	Digest string `json:"digest"`
+	// DiffIDs are the digests of the uncompressed layers the root filesystem
+	// was built from, bottom layer first, as the image configuration lists
+	// them. It is empty, never null, when the service does not know them.
+	DiffIDs []string `json:"diff_ids"`
 }
 
 // OutcomeV2 is how a command ended. Status decides which other fields are
@@ -411,29 +474,36 @@ type ControlV2 struct {
 	Reason string `json:"reason"`
 }
 
-// ObservedV2 is the posture of the command as the host read it back from the
-// kernel after setting it. A field that could not be read is null, or empty
-// for the fields that are copies of kernel text.
+// ObservedV2 is what was in force around the command, as the host read it
+// back from the kernel after setting it and before the command started. A
+// field that could not be read is null, or empty for the fields that are
+// copies of kernel text and for the lists. Nothing here is what the service
+// intended: a value appears only if the kernel reported it.
 type ObservedV2 struct {
-	// Tasks is the number of tasks of the sandbox whose posture was read.
-	// The fields below hold a value only if all of them agreed on it.
-	Tasks *int `json:"tasks"`
-	// SeccompMode is the Seccomp field of /proc/<pid>/status: 2 with a
-	// filter, 0 without.
-	SeccompMode *int `json:"seccomp_mode"`
-	// NoNewPrivs is the NoNewPrivs field of the same file.
-	NoNewPrivs *bool `json:"no_new_privs"`
-	// The capability sets, as the hexadecimal masks of the same file.
-	CapEff string `json:"cap_eff"`
-	CapPrm string `json:"cap_prm"`
-	CapInh string `json:"cap_inh"`
-	CapBnd string `json:"cap_bnd"`
-	CapAmb string `json:"cap_amb"`
-	// UIDMap and GIDMap are the lines of /proc/<pid>/uid_map and gid_map,
-	// fields separated by one space and lines by a newline.
+	// Workload is the posture of the process that became the command, read
+	// when everything was installed on it and before it executed the
+	// command's program.
+	Workload PostureV2 `json:"workload"`
+	// Init is the posture of the first process of the sandbox, the small
+	// supervising program of the backend that stays for the life of the
+	// command. Every field of it is null on a backend that has no such
+	// process on the host's kernel.
+	Init PostureV2 `json:"init"`
+	// UIDMap and GIDMap are the lines of /proc/<pid>/uid_map and gid_map of
+	// the workload, fields separated by one space and lines by a newline.
 	UIDMap string `json:"uid_map"`
 	GIDMap string `json:"gid_map"`
-	// The limits as read from the cgroup files, verbatim and trimmed.
+	// Settings lists the kernel settings the backend wrote for the sandbox's
+	// own user namespace, each read back through the descriptor it was
+	// written through: the bound on nested user namespaces and the bounds on
+	// kernel objects that are otherwise charged to the host's root. A setting
+	// that is not in the list was not read back: a verifier that needs one
+	// looks for its name and treats its absence as "not enforced". Sorted by
+	// name; empty, never null.
+	Settings []SettingV2 `json:"settings"`
+	// The limits as read from the cgroup files of the session, verbatim and
+	// trimmed. PIDsMax includes what the backend reserves for its own
+	// processes inside the sandbox (see CountersV2.Scope).
 	CPUMax        string `json:"cpu_max"`
 	MemoryMax     string `json:"memory_max"`
 	MemorySwapMax string `json:"memory_swap_max"`
@@ -441,6 +511,49 @@ type ObservedV2 struct {
 	// MountOptions are the options of the root overlay as the kernel reports
 	// them in mountinfo.
 	MountOptions string `json:"mount_options"`
+	// Runtime lists the host processes of the external runtime that ran the
+	// command, with the ids they ran under on the host. It is empty, never
+	// null, for the native backend, which wraps no runtime. On gVisor the
+	// files a command writes can be owned by the sandbox's ids while these
+	// processes are not: this list is what says which.
+	Runtime []RuntimeProcessV2 `json:"runtime"`
+}
+
+// PostureV2 is the security posture of the tasks of one process, from
+// /proc/<pid>/task/*/status. Tasks is how many were read; each other field
+// holds a value only if every one of those tasks agreed on it.
+type PostureV2 struct {
+	Tasks *int `json:"tasks"`
+	// SeccompMode is the Seccomp field: 2 with a filter, 0 without.
+	SeccompMode *int `json:"seccomp_mode"`
+	// NoNewPrivs is the NoNewPrivs field.
+	NoNewPrivs *bool `json:"no_new_privs"`
+	// The capability sets, as the hexadecimal masks of the same file.
+	CapEff string `json:"cap_eff"`
+	CapPrm string `json:"cap_prm"`
+	CapInh string `json:"cap_inh"`
+	CapBnd string `json:"cap_bnd"`
+	CapAmb string `json:"cap_amb"`
+}
+
+// SettingV2 is one kernel setting as read back.
+type SettingV2 struct {
+	// Name is the name of the setting under /proc/sys with dots for slashes,
+	// such as "user.max_user_namespaces" or "user.max_inotify_instances".
+	Name string `json:"name"`
+	// Value is what the kernel printed, trimmed.
+	Value string `json:"value"`
+}
+
+// RuntimeProcessV2 is one host process of an external runtime.
+type RuntimeProcessV2 struct {
+	// Role says what the process is, in the runtime's own words: "sentry" or
+	// "gofer" for gVisor.
+	Role string `json:"role"`
+	// UID and GID are the effective ids of the process on the host, from
+	// /proc/<pid>/status. 0 is the host's root.
+	UID uint32 `json:"uid"`
+	GID uint32 `json:"gid"`
 }
 
 // StorageV2 describes the writable layer of the session after the command.
@@ -479,11 +592,15 @@ type SupersededV2 struct {
 	// not valid UTF-8; Path then holds its quoted form.
 	Path        string `json:"path"`
 	PathEscaped bool   `json:"path_escaped"`
-	// Type is one of the Type constants.
+	// Type is one of the Type constants, TypeWhiteout and TypeOpaque
+	// included.
 	Type string `json:"type"`
 	// SHA256 is the hash of the content that was dropped, for a regular file
 	// that could be hashed, else empty.
 	SHA256 string `json:"sha256"`
+	// Layer says where the entry was: "upper" for the writable layer, or the
+	// identifier of a snapshot.
+	Layer string `json:"layer"`
 }
 
 // DiffV2 is the change set of the writable layer: everything the session
@@ -491,14 +608,19 @@ type SupersededV2 struct {
 // entry tells the two apart.
 type DiffV2 struct {
 	Base DiffBaseV2 `json:"base"`
-	// Status is DiffComplete, DiffTruncated or DiffError, and Reason says
-	// which budget was reached or what failed.
+	// Status is DiffComplete, DiffTruncated or DiffError.
 	Status string `json:"status"`
-	Reason string `json:"reason"`
-	// Counts are exact with DiffComplete and DiffTruncated: they include the
-	// entries a budget kept out of the list.
-	Counts  DiffCountsV2  `json:"counts"`
-	Budget  DiffBudgetV2  `json:"budget"`
+	// Reasons lists the budgets that were reached, with DiffTruncated: the
+	// DiffReason constants, each at most once, in the order they are
+	// declared. Empty, never null, otherwise.
+	Reasons []string `json:"reasons"`
+	// Error says what failed, with DiffError; empty otherwise.
+	Error string `json:"error"`
+	// Counts include the entries a budget kept out of the list.
+	Counts DiffCountsV2 `json:"counts"`
+	Budget DiffBudgetV2 `json:"budget"`
+	// Entries is sorted by Path, compared as bytes. It is empty, never null,
+	// when there is nothing to list.
 	Entries []DiffEntryV2 `json:"entries"`
 }
 
@@ -512,6 +634,11 @@ type DiffBaseV2 struct {
 
 // DiffCountsV2 counts the changed paths by operation.
 type DiffCountsV2 struct {
+	// Exact is true when the whole writable layer was walked: the counts are
+	// then the true numbers, whatever the list holds. It is false when the
+	// walk itself stopped early (DiffReasonScan, DiffReasonCancelled,
+	// DiffError): the counts are then lower bounds.
+	Exact    bool  `json:"exact"`
 	Added    int64 `json:"added"`
 	Modified int64 `json:"modified"`
 	Deleted  int64 `json:"deleted"`
@@ -543,9 +670,20 @@ type DiffEntryV2 struct {
 	Type string `json:"type"`
 	// Mode holds the permission, setuid, setgid and sticky bits.
 	Mode uint32 `json:"mode"`
-	// UID and GID are the owner as the sandbox sees it: 0 is its root.
+	// UID and GID are the owner as the sandbox sees it: 0 is its root. An
+	// owner outside the ids of the sandbox, which no process inside can be,
+	// is recorded as 65534, the id the kernel shows the sandbox for it.
 	UID uint32 `json:"uid"`
 	GID uint32 `json:"gid"`
+	// Nlink is the link count of an entry that is not a directory: above 1,
+	// the same content has other names. 0 for a directory and for a delete.
+	Nlink uint32 `json:"nlink"`
+	// Xattrs lists the names of the extended attributes of the entry, sorted,
+	// without their values and without the overlay's own marks. At most 64
+	// are listed; XattrsTruncated says that there were more. Empty, never
+	// null, when there is none.
+	Xattrs          []string `json:"xattrs"`
+	XattrsTruncated bool     `json:"xattrs_truncated"`
 	// Size is the apparent size of a regular file.
 	Size int64 `json:"size"`
 	// SHA256 is the lower-case hexadecimal SHA-256 of a regular file's
@@ -557,9 +695,9 @@ type DiffEntryV2 struct {
 	// first seen in this state: the changes of the command with sequence
 	// number n are the entries whose SinceSeq is n.
 	SinceSeq uint64 `json:"since_seq"`
-	// Skipped is empty for a normal entry. Otherwise the entry is recorded
-	// without content: "unreadable" or "too_large". A program in the sandbox
-	// cannot suppress the diff by making one entry hard to read.
+	// Skipped is empty for a normal entry. Otherwise it is one of the Skip
+	// constants and the entry is recorded without its content. A program in
+	// the sandbox cannot suppress the diff by making one entry hard to read.
 	Skipped string `json:"skipped"`
 }
 
