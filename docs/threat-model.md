@@ -22,6 +22,102 @@ Out of scope as adversaries: the person running sandmeter, anyone with root on
 the host, the image registry (images are pinned by digest in receipts but their
 content is trusted), and the hardware.
 
+## Other principals
+
+Code inside a sandbox is not the only party that acts on a host running
+sandmeter. Three more have a stated level of trust, and the design is held to
+it. For each, the last paragraph says how far the code of this version is from
+that line: a line the code does not hold yet is a known gap, not a guarantee.
+
+### The MCP client
+
+The agent host that calls sandmeter's MCP tools, and the model that drives it.
+
+Trust: none for any choice that widens a sandbox. The agent outside the sandbox
+and the code inside it are the same adversary: a prompt-injected model is the
+caller of the tools as well as the author of the commands. The person who
+registers the server is trusted; the agent that runs under that person's user
+is not.
+
+What follows from it:
+
+- The agent chooses the command to run, and nothing that decides what the
+  command can reach. The policy, the set of images, the names of environment
+  variables passed into a sandbox and the project directory are fixed by a
+  person when the server is registered.
+- The bound that holds is the operator's ceiling, enforced by the root side
+  for the calling user. What the MCP server itself narrows is a convenience
+  and not a boundary: the server runs as the same user as the agent host, and
+  any process of that user can ask the service for anything the ceiling
+  grants.
+- No tool writes to the project on the host. What a sandbox changed reaches
+  the host only when a person applies it.
+- Everything a sandbox chose and a tool returns (output, file names, the
+  names of refused destinations) is data. It is never part of a sentence the
+  server utters itself, because the reader of that sentence is the model.
+- No process that parses what an agent or a model wrote runs as root.
+
+In this version: not held. The MCP server runs as root in the same process as
+the engine, and its `start` tool accepts a policy written by the client.
+
+### Other unprivileged users of the host
+
+Anyone else with an account on the same machine: a colleague on a shared
+development server, another job on a CI runner.
+
+Trust: none. A member of the group that may use the service is trusted with
+what the operator's ceiling grants, which is running commands in sandboxes
+within the budgets set for each user, and with nothing more: not with another
+member's sessions, not with the host.
+
+What follows from it:
+
+- A session, its copy of a project, its output and its receipts belong to one
+  user. No other user can enter, read, list, export or stop them, and a
+  request that names something of another user gets the same answer as one
+  that names nothing. Receipts hold command lines: they are readable by their
+  owner only.
+- The directories of the root side cannot be entered by other users, and no
+  mount of a sandbox is visible in the mount namespace they live in.
+- One user cannot use up what the others need: sessions, running commands,
+  imported bytes, stored receipts and connections are budgeted per user, and a
+  floor on free space is always on.
+- Installing sandmeter gives no user a new way to root: the package sets no
+  setuid bit and no file capability, and the entry points the root side
+  starts for itself refuse to run when started by hand.
+
+In this version: not held. Every command needs root, state lives under `/run`
+in directories other users can traverse, and receipts are written
+world-readable under predictable names.
+
+### The network position
+
+Whoever answers the host's DNS queries, serves the image registry, or sits on
+the path to either.
+
+Trust: none beyond what TLS and a content digest establish. A name is not an
+address, an answer is not the truth, and a registry is a remote party that
+sends bytes to be parsed.
+
+What follows from it:
+
+- Egress is decided by name, on the host, at the moment of each connection:
+  the name is matched against the policy before anything is resolved, and the
+  address is checked when it is dialled, so that no DNS answer can turn an
+  allowed name into a way to the host itself, to a private network or to a
+  metadata service.
+- An image is identified by its digest. The default image is pinned by digest,
+  and what a registry sent is checked against the digest before it is used.
+- What a registry sends is parsed by an unprivileged process, never by root.
+
+What it does not cover, and no version will: the content of an image that
+matches its digest is trusted, and an allowed destination can carry any data
+out, in either direction.
+
+In this version: not held. Allowed names are resolved once, when a command
+starts, and the answers are trusted; images are pulled and unpacked by the
+root process.
+
 ## Boundaries, per backend
 
 | Layer | native | gvisor |
