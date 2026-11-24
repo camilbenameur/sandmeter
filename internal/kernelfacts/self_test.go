@@ -98,7 +98,7 @@ func TestSelfHelpersStopAtTheGuard(t *testing.T) {
 		{"netns", "3128", "3129", "nonce"},
 		{"userns", "write"},
 		{"inotify", "4", ""},
-		{"refresh", work, "replace"},
+		{"refresh", work, "replace", "tmpfs"},
 		{"worker", work},
 		{"upperprobe", work},
 		{"runscworker", work, "/nonexistent/runsc", "id"},

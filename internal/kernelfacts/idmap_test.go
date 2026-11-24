@@ -164,13 +164,14 @@ func childIDMap(args []string) error {
 	}
 
 	proj := filepath.Join(dir, "proj")
+	mapped := filepath.Join(dir, "mapped")
 	o := overlay{
-		lower:  filepath.Join(dir, "mapped"),
+		lowers: []string{mapped},
 		upper:  filepath.Join(dir, "upper"),
 		work:   filepath.Join(dir, "work"),
 		merged: filepath.Join(dir, "merged"),
 	}
-	for _, d := range []string{proj, o.lower, o.upper, o.work, o.merged} {
+	for _, d := range []string{proj, mapped, o.upper, o.work, o.merged} {
 		if err := os.Mkdir(d, 0o755); err != nil {
 			return err
 		}
@@ -215,14 +216,14 @@ func childIDMap(args []string) error {
 	}
 	defer unix.Close(ns)
 
-	rep.Mount = idmapMount(proj, o.lower, ns)
+	rep.Mount = idmapMount(proj, mapped, ns)
 	if rep.Mount != "ok" {
 		return sayResult(rep)
 	}
-	defer func() { _ = unix.Unmount(o.lower, unix.MNT_DETACH) }()
-	rep.MappedOwn = ownerOf(filepath.Join(o.lower, "own.txt"))
-	rep.MappedTeam = ownerOf(filepath.Join(o.lower, "team.txt"))
-	rep.MappedRoot = ownerOf(filepath.Join(o.lower, "foreign.txt"))
+	defer func() { _ = unix.Unmount(mapped, unix.MNT_DETACH) }()
+	rep.MappedOwn = ownerOf(filepath.Join(mapped, "own.txt"))
+	rep.MappedTeam = ownerOf(filepath.Join(mapped, "team.txt"))
+	rep.MappedRoot = ownerOf(filepath.Join(mapped, "foreign.txt"))
 
 	if err := o.mount(overlayOpts); err != nil {
 		rep.Overlay = errnoName(err)

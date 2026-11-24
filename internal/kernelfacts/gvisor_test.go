@@ -44,6 +44,7 @@ type runscLayout struct {
 	rootfs string  // root.path, owned by the shifted uid
 	work   string  // bind-mounted read-write at /work
 	subSrc string  // bind-mounted by the worker on rootfs/sub before runsc starts
+	lower  string  // the one lower layer of ovl
 	ovl    overlay // mounted by the worker; its merged directory is bound at /ovl
 	state  string  // runsc --root
 	logs   string  // runsc --debug-log
@@ -56,8 +57,9 @@ func runscPaths(dir string) runscLayout {
 		rootfs: filepath.Join(dir, "rootfs"),
 		work:   filepath.Join(dir, "work"),
 		subSrc: filepath.Join(dir, "sub"),
+		lower:  filepath.Join(o, "lower"),
 		ovl: overlay{
-			lower:  filepath.Join(o, "lower"),
+			lowers: []string{filepath.Join(o, "lower")},
 			upper:  filepath.Join(o, "upper"),
 			work:   filepath.Join(o, "work"),
 			merged: filepath.Join(o, "merged"),
@@ -105,7 +107,7 @@ func copyFile(dst, src string, mode os.FileMode) error {
 // on the way can be searched by the shifted uid (scratch).
 func runscPrepare(lay runscLayout) error {
 	shifted := []string{
-		lay.rootfs, lay.work, lay.ovl.lower, lay.ovl.upper,
+		lay.rootfs, lay.work, lay.lower, lay.ovl.upper,
 		filepath.Join(lay.rootfs, "proc"), filepath.Join(lay.rootfs, "dev"), filepath.Join(lay.rootfs, "tmp"),
 		filepath.Join(lay.rootfs, "work"), filepath.Join(lay.rootfs, "ovl"), filepath.Join(lay.rootfs, "sub"),
 		filepath.Join(lay.rootfs, "facts"),
@@ -120,7 +122,7 @@ func runscPrepare(lay runscLayout) error {
 	if err := copyFile(probe, "/proc/self/exe", 0o755); err != nil {
 		return fmt.Errorf("copy the test binary into the root filesystem: %w", err)
 	}
-	lowerFile := filepath.Join(lay.ovl.lower, "lower.txt")
+	lowerFile := filepath.Join(lay.lower, "lower.txt")
 	if err := os.WriteFile(lowerFile, []byte(runscLowerContent), 0o644); err != nil {
 		return err
 	}

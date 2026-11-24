@@ -48,11 +48,11 @@ func childWorker(args []string) error {
 	if err := privateMounts(); err != nil {
 		return err
 	}
-	o, err := makeOverlay(filepath.Join(args[0], "ovl"))
+	o, err := makeStack(filepath.Join(args[0], "ovl"), filepath.Join(args[0], "ovl"))
 	if err != nil {
 		return err
 	}
-	if err := writeTree(o.lower, tree{"marker": "f:" + workerMarker}); err != nil {
+	if err := writeTree(o.image, tree{"marker": "f:" + workerMarker}); err != nil {
 		return err
 	}
 	if err := o.mount(overlayOpts); err != nil {
@@ -96,11 +96,10 @@ func childUpperProbe(args []string) error {
 	if err := privateMounts(); err != nil {
 		return err
 	}
-	o, err := makeOverlay(filepath.Join(args[0], "ovl"))
-	if err != nil {
-		return err
-	}
-	err = o.mount("index=on")
+	// The directories exist: the worker made them, and nothing of them is
+	// written here while its overlay may still be mounted.
+	o := stackAt(filepath.Join(args[0], "ovl"), filepath.Join(args[0], "ovl"))
+	err := o.mount("index=on")
 	if err == nil {
 		_ = o.unmount()
 	}

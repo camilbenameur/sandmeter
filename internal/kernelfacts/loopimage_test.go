@@ -157,17 +157,13 @@ func childLoop(args []string) error {
 	}
 	rep.Mount = since(start)
 
-	o := overlay{
-		lower:  filepath.Join(dir, "lower"),
-		upper:  filepath.Join(mnt, "upper"),
-		work:   filepath.Join(mnt, "work"),
-		merged: filepath.Join(dir, "merged"),
-	}
-	for _, d := range []string{o.lower, o.upper, o.work, o.merged} {
-		if err := os.Mkdir(d, 0o755); err != nil {
-			_ = unix.Unmount(mnt, 0)
-			return err
-		}
+	// The lower layers on the filesystem that holds the image file, the
+	// upper and work directories on the image, in directories of their own
+	// so that its lost+found never shows.
+	o, err := makeStack(filepath.Join(dir, "stack"), mnt)
+	if err != nil {
+		_ = unix.Unmount(mnt, 0)
+		return err
 	}
 	start = time.Now()
 	if err := o.mount(overlayOpts); err != nil {

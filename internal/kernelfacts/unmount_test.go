@@ -44,8 +44,8 @@ func childUnmount(args []string) error {
 	}
 	// unmountAfter mounts a fresh overlay, lets write fill it through the
 	// merged directory, and times the unmount alone.
-	unmountAfter := func(name string, write func(merged string) error) (overlay, float64, error) {
-		o, err := makeOverlay(filepath.Join(args[0], name))
+	unmountAfter := func(name string, write func(merged string) error) (stack, float64, error) {
+		o, err := makeStack(filepath.Join(args[0], name), filepath.Join(args[0], name))
 		if err != nil {
 			return o, 0, err
 		}

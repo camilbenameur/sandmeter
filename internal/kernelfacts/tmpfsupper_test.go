@@ -102,18 +102,11 @@ func childTmpfsUpper(args []string) error {
 	if err := unix.Mount("tmpfs", tmp, "tmpfs", unix.MS_NODEV|unix.MS_NOSUID, opts); err != nil {
 		return fmt.Errorf("mount a tmpfs with %s: %w", opts, err)
 	}
-	o := overlay{
-		lower:  filepath.Join(dir, "lower"),
-		upper:  filepath.Join(tmp, "upper"),
-		work:   filepath.Join(tmp, "work"),
-		merged: filepath.Join(dir, "merged"),
+	o, err := makeStack(dir, tmp)
+	if err != nil {
+		return err
 	}
-	for _, d := range []string{o.lower, o.upper, o.work, o.merged} {
-		if err := os.Mkdir(d, 0o755); err != nil {
-			return err
-		}
-	}
-	if err := writeTree(o.lower, tree{"a.txt": "f:a", "d": "d", "d/x.txt": "f:x", "d/y.txt": "f:y", "keep": "d", "keep/k.txt": "f:k"}); err != nil {
+	if err := writeTree(o.workspace(), tree{"a.txt": "f:a", "d": "d", "d/x.txt": "f:x", "d/y.txt": "f:y", "keep": "d", "keep/k.txt": "f:k"}); err != nil {
 		return err
 	}
 	if err := o.mount(overlayOpts); err != nil {
@@ -121,24 +114,30 @@ func childTmpfsUpper(args []string) error {
 	}
 
 	var rep tmpfsReport
-	// A lower file removed: a whiteout in the upper layer.
-	if err := os.Remove(filepath.Join(o.merged, "a.txt")); err != nil {
-		rep.Whiteout = "remove a lower file through the overlay: " + errnoName(err)
-	} else {
-		rep.Whiteout = isWhiteout(filepath.Join(o.upper, "a.txt"))
+	// A file of each lower layer removed: two whiteouts in the upper layer.
+	for _, removed := range []string{"workspace/a.txt", "etc/issue"} {
+		if err := os.Remove(filepath.Join(o.merged, removed)); err != nil {
+			rep.Whiteout = fmt.Sprintf("remove the lower file %s through the overlay: %s", removed, errnoName(err))
+			break
+		}
+		if rep.Whiteout = isWhiteout(filepath.Join(o.upper, removed)); rep.Whiteout != "" {
+			rep.Whiteout = removed + ": " + rep.Whiteout
+			break
+		}
 	}
 	// A lower directory removed and created again: an opaque directory.
-	err := errors.Join(
-		os.RemoveAll(filepath.Join(o.merged, "d")),
-		os.Mkdir(filepath.Join(o.merged, "d"), 0o755),
-		os.WriteFile(filepath.Join(o.merged, "d", "new.txt"), []byte("new"), 0o644),
+	err = errors.Join(
+		os.RemoveAll(filepath.Join(o.merged, "workspace/d")),
+		os.Mkdir(filepath.Join(o.merged, "workspace/d"), 0o755),
+		os.WriteFile(filepath.Join(o.merged, "workspace/d/new.txt"), []byte("new"), 0o644),
 	)
 	if err != nil {
 		rep.Opaque = "replace a lower directory through the overlay: " + errnoName(err)
 	} else {
-		rep.Opaque = isOpaque(filepath.Join(o.upper, "d"))
+		rep.Opaque = isOpaque(filepath.Join(o.upper, "workspace/d"))
 	}
-	want := tree{"keep": "d", "keep/k.txt": "f:k", "d": "d", "d/new.txt": "f:new"}
+	want := view(tree{"keep": "d", "keep/k.txt": "f:k", "d": "d", "d/new.txt": "f:new"})
+	delete(want, "etc/issue")
 	rep.View = diffTrees(want, readTree(o.merged))
 	if err := o.unmount(); err != nil {
 		return err
@@ -196,12 +195,12 @@ func TestTmpfsUpper(t *testing.T) {
 
 	var rep tmpfsReport
 	if err := runChild(t, spawn{name: "tmpfsupper", args: []string{dir, leaf}, clone: unix.CLONE_NEWNS, cgroup: leaf}, &rep); err != nil {
-		r.no("tmpfs-upper-whiteouts", "the overlay on a tmpfs upper layer did not complete (lower layer on %s): %v", fsTypeOf(dir), err)
+		r.no("tmpfs-upper-whiteouts", "the overlay on a tmpfs upper layer did not complete (lower layers on %s): %v", fsTypeOf(dir), err)
 		return
 	}
 	r.judge("tmpfs-upper-whiteouts", rep.Whiteout == "" && rep.Opaque == "" && rep.View == "" && rep.Remounted == "",
-		"tmpfs with size=%d,nr_inodes=%d, lower layer on %s; whiteout: %s; opaque directory: %s; merged view against the expected tree: %s; after a remount: %s",
-		tmpfsSize, tmpfsInodes, fsTypeOf(dir), orOK(rep.Whiteout), orOK(rep.Opaque), orNothing(rep.View), orNothing(rep.Remounted))
+		"tmpfs with size=%d,nr_inodes=%d, project layer above an image layer on %s, mounted with %s; whiteouts of a file of each lower layer: %s; opaque directory: %s; merged view against the expected tree: %s; after a remount: %s",
+		tmpfsSize, tmpfsInodes, fsTypeOf(dir), overlayOpts, orOK(rep.Whiteout), orOK(rep.Opaque), orNothing(rep.View), orNothing(rep.Remounted))
 	r.judge("tmpfs-upper-size", rep.SizeErr == "ENOSPC" && rep.SizeBytes > tmpfsSize/2 && rep.SizeBytes <= tmpfsSize,
 		"a file written through the overlay grew to %d bytes and was stopped by %s (expected ENOSPC at or just under size=%d)", rep.SizeBytes, rep.SizeErr, tmpfsSize)
 	r.judge("tmpfs-upper-inodes", rep.InodeErr == "ENOSPC" && rep.InodeCount > 0 && rep.InodeCount < tmpfsInodes,

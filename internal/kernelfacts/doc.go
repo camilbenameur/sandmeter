@@ -96,24 +96,38 @@
 // to inotify-charge-lowered publishes the limit as not enforced, in the
 // threat model too.
 //
-// The workspace overlay. It is mounted for one command at a time; between
-// two commands the lower tree is refreshed from the host while nothing is
-// mounted, and the upper entries of the changed paths are dropped. The
-// opt-in disk quota puts the upper layer on a tmpfs.
+// The overlay of a sandbox. One overlay holds everything: the layers of the
+// image, above them a layer with the copy of the project, and the upper
+// directory of the session. It is mounted for one command at a time, with
+// index, metacopy and redirect_dir off and xino left to the kernel. Between
+// two commands the project layer is refreshed from the host while nothing
+// is mounted, and the upper entries of the changed paths are dropped. The
+// opt-in disk quota puts the upper directory on a tmpfs: the layers are
+// then on two filesystems, the kernel turns xino on, and its documentation
+// no longer covers a lower tree that changes between two mounts. So the
+// refresh is measured on both placements.
 //
-//	refresh-replace        required  a lower file replaced between two mounts
-//	refresh-delete-file    required  a lower file deleted between two mounts
-//	refresh-delete-dir     required  a lower directory deleted that has an upper
-//	                                 counterpart
-//	tmpfs-upper-whiteouts  required  overlayfs works with its upper layer on a
-//	                                 tmpfs
-//	tmpfs-upper-size       required  size= answers ENOSPC through the overlay
-//	tmpfs-upper-inodes     required  nr_inodes= answers ENOSPC through the overlay
-//	tmpfs-upper-memory     recorded  the quota is charged to the memory of the
-//	                                 writer's cgroup, as the documentation is
-//	                                 about to say
-//	overlay-unmount-time   recorded  what an unmount per command costs: a
-//	                                 benchmark row
+//	refresh-disk-replace       required  upper directory on the state
+//	                                     filesystem: a lower file replaced
+//	                                     between two mounts
+//	refresh-disk-delete-file   required  a lower file deleted
+//	refresh-disk-delete-dir    required  a lower directory deleted that has an
+//	                                     upper counterpart
+//	refresh-tmpfs-replace      required  upper directory on a tmpfs: a lower
+//	                                     file replaced between two mounts
+//	refresh-tmpfs-delete-file  required  a lower file deleted
+//	refresh-tmpfs-delete-dir   required  a lower directory deleted that has an
+//	                                     upper counterpart
+//	tmpfs-upper-whiteouts      required  overlayfs works with its upper layer on
+//	                                     a tmpfs
+//	tmpfs-upper-size           required  size= answers ENOSPC through the overlay
+//	tmpfs-upper-inodes         required  nr_inodes= answers ENOSPC through the
+//	                                     overlay
+//	tmpfs-upper-memory         recorded  the quota is charged to the memory of
+//	                                     the writer's cgroup, as the
+//	                                     documentation is about to say
+//	overlay-unmount-time       recorded  what an unmount per command costs: a
+//	                                     benchmark row
 //
 // A "no" to a refresh fact replaces the refresh in place by a new lower
 // directory per refresh, built as a hard-link farm of the previous one. A

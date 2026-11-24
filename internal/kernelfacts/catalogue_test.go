@@ -23,9 +23,12 @@ var catalogue = []def{
 	{"inotify-charge-default", "host root can still create an inotify instance while a sandbox user namespace holds as many as the kernel lets it create", false},
 	{"inotify-charge-lowered", "host root can still create an inotify instance once the sandbox lowered user/max_inotify_instances in its own user namespace", false},
 
-	{"refresh-replace", "lower files replaced while the overlay was unmounted are seen at the next mount, and an upper copy wins until it is dropped", true},
-	{"refresh-delete-file", "lower files deleted while the overlay was unmounted are gone at the next mount, and an upper copy stays until it is dropped", true},
-	{"refresh-delete-dir", "a lower directory deleted while the overlay was unmounted leaves only its upper counterpart at the next mount", true},
+	{"refresh-disk-replace", "with the upper directory on the state filesystem, lower files replaced while the overlay was unmounted are seen at the next mount, and an upper copy wins until it is dropped", true},
+	{"refresh-disk-delete-file", "with the upper directory on the state filesystem, lower files deleted while the overlay was unmounted are gone at the next mount, and an upper copy stays until it is dropped", true},
+	{"refresh-disk-delete-dir", "with the upper directory on the state filesystem, a lower directory deleted while the overlay was unmounted leaves only its upper counterpart at the next mount", true},
+	{"refresh-tmpfs-replace", "with the upper directory on a tmpfs, lower files replaced while the overlay was unmounted are seen at the next mount, and an upper copy wins until it is dropped", true},
+	{"refresh-tmpfs-delete-file", "with the upper directory on a tmpfs, lower files deleted while the overlay was unmounted are gone at the next mount, and an upper copy stays until it is dropped", true},
+	{"refresh-tmpfs-delete-dir", "with the upper directory on a tmpfs, a lower directory deleted while the overlay was unmounted leaves only its upper counterpart at the next mount", true},
 
 	{"worker-mounts-private", "mounts made by a CLONE_NEWNS child after MS_REC|MS_SLAVE on / never appear in the host's /proc/self/mountinfo", true},
 	{"worker-kill-unmounts", "after SIGKILL of that child nothing is left mounted: its mount namespace has no member and its upper directory can be mounted again", true},
