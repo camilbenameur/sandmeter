@@ -1,10 +1,11 @@
-// Package ids defines the identifier sandmeter gives to a session.
+// Package ids defines the identifier sandmeter gives to a session, and to a
+// snapshot of a session.
 //
 // The root side generates every identifier itself, from the system's random
 // source, and never accepts one it did not generate: a request that names a
-// session carries an ID, the service looks it up among the sessions of the
-// calling user, and an unknown one is refused. No path is ever built from a
-// string a client sent.
+// session or a snapshot carries an ID, the service looks it up among the
+// things that belong to the calling user, and an unknown one is refused. No
+// path is ever built from a string a client sent.
 //
 // Invariant, enforced by Parse and by the type itself: an ID is 128 bits and
 // its only text form is 32 lower-case hexadecimal digits. A directory, a
@@ -20,8 +21,9 @@ import (
 	"fmt"
 )
 
-// ID identifies one session. The zero ID is "no session": New never returns
-// it, Parse refuses it and it has no text form.
+// ID identifies one session, or one snapshot of a session. The zero ID
+// names nothing: New never returns it, Parse refuses it and it has no text
+// form.
 type ID [16]byte
 
 // textLen is the length of the text form: two hexadecimal digits per byte.
