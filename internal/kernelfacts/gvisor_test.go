@@ -250,6 +250,28 @@ func runscLogs(dir string) string {
 	return strings.Join(out, "\n")
 }
 
+// runscFlags are the global flags of every runsc command of the test: the
+// ones of the backend that matter here (network none, writes straight to
+// the host directories), debug logs for the day this fails, and one of the
+// test's own.
+//
+// --ignore-cgroups keeps the sandbox where the test put it. Given no cgroup
+// path, runsc makes one up from the container's name, directly under the
+// root of the hierarchy, turns every controller on in the root group and
+// starts the gofer and the Sentry in the new group: out of the leaf where
+// the test lists them and is sure to kill them, and left behind in the
+// root when a run is cut short.
+func runscFlags(lay runscLayout) []string {
+	return []string{
+		"--root=" + lay.state,
+		"--debug", "--debug-log=" + lay.logs + "/",
+		"--platform=systrap",
+		"--network=none",
+		"--overlay2=none",
+		"--ignore-cgroups",
+	}
+}
+
 // childRunscWorker does what the worker does: it mounts the overlay in its own
 // mount namespace and runs runsc from there. args: directory, runsc, id.
 func childRunscWorker(args []string) error {
@@ -281,16 +303,7 @@ func childRunscWorker(args []string) error {
 	}
 	defer errf.Close()
 
-	// The flags of the backend that matter here (network none, writes
-	// straight to the host directories), plus debug logs for the day this
-	// fails.
-	global := []string{
-		"--root=" + lay.state,
-		"--debug", "--debug-log=" + lay.logs + "/",
-		"--platform=systrap",
-		"--network=none",
-		"--overlay2=none",
-	}
+	global := runscFlags(lay)
 	cmd := exec.Command(runsc, append(slices.Clone(global), "run", "--bundle="+lay.bundle, id)...)
 	cmd.Stdin = os.Stdin // the probe waits for end-of-file on it
 	cmd.Stdout, cmd.Stderr = out, errf
@@ -376,6 +389,19 @@ func TestRunscUIDMappings(t *testing.T) {
 		r.no("gvisor-file-owner", "the cgroup layout could not be created: %v", err)
 		return
 	}
+	// runsc is told to leave cgroups alone (runscFlags). The group it would
+	// otherwise create is named after the container: if it shows up all the
+	// same, the sandbox is not in the leaf, and nothing else would kill it.
+	t.Cleanup(func() {
+		own := filepath.Join(cgroupRoot, id)
+		if !exists(own) {
+			return
+		}
+		t.Errorf("runsc created the cgroup %s and ran the sandbox there, not in the leaf %s: its processes were not the ones this test examined (cgroup.procs of that group: %v)", own, tr.leaf, cgProcs(own))
+		if err := cgRemove(own); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	})
 	c, err := spawnChild(t, spawn{name: "runscworker", args: []string{dir, runsc, id}, clone: unix.CLONE_NEWNS, cgroup: tr.leaf})
 	if err != nil {
 		r.no("gvisor-file-owner", "the worker that runs runsc did not start: %v", err)
@@ -484,10 +510,23 @@ func TestSelfRunscBundle(t *testing.T) {
 			GIDMappings []struct {
 				ContainerID, HostID, Size int64
 			} `json:"gidMappings"`
+			CgroupsPath string `json:"cgroupsPath"`
 		} `json:"linux"`
 	}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatal(err)
+	}
+	// The sandbox must stay in the cgroup of the process that starts runsc:
+	// the test finds its processes there. So runsc is given no group to move
+	// it to, and is told not to make one up.
+	flags := runscFlags(lay)
+	if !slices.Contains(flags, "--ignore-cgroups") || cfg.Linux.CgroupsPath != "" {
+		t.Errorf("runsc flags %v and linux.cgroupsPath %q: want --ignore-cgroups and no path, or runsc moves the sandbox out of the test's leaf", flags, cfg.Linux.CgroupsPath)
+	}
+	for _, want := range []string{"--root=" + lay.state, "--network=none", "--overlay2=none"} {
+		if !slices.Contains(flags, want) {
+			t.Errorf("runsc flags %v lack %s", flags, want)
+		}
 	}
 	if !slices.Equal(cfg.Process.Args, []string{"/facts/probe", childArg, "runscprobe"}) || cfg.Root.Path != lay.rootfs {
 		t.Errorf("process %v in root %s", cfg.Process.Args, cfg.Root.Path)
