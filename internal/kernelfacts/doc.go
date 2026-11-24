@@ -229,7 +229,9 @@
 //	clean-mounts     required  the mount table of the host is as it was found
 //	clean-cgroups    required  no cgroup is left
 //	clean-loops      required  no loop device is left attached
-//	clean-processes  required  no helper process is left, and so no namespace
+//	clean-processes  required  no helper process is left, and no thread of the
+//	                           test process in a namespace of a test: so no
+//	                           namespace outlives the run
 //	clean-sysctls    required  the sysctls the tests touch are as they were found
 //
 // # How a test is built
@@ -242,13 +244,15 @@
 // report errno names, not booleans, so a detail reads "expected ENOSPC,
 // found EPERM".
 //
-// Two rules keep the host safe. A helper that mounts or configures a
+// Three rules keep the host safe. A helper that mounts or configures a
 // network first checks that it is not in the namespace of the test process,
 // so a forgotten clone flag cannot touch the host; a self-test starts each
-// of them without its flags, and without privilege, to see it refuse. And a
+// of them without its flags, and without privilege, to see it refuse. A
 // helper that waits does so on its standard input, whose other end only the
 // test holds: when the test dies, the helper ends, and its namespaces with
-// it.
+// it. And the test process itself stays where it started: the one thread it
+// sends into the namespace of a helper is kept apart until it is back, and
+// is never the main thread (threads_test.go).
 //
 // Where half of a mechanism needs no privilege (the socket passing of the
 // egress listener, the path resolution of a mount target, the crash under

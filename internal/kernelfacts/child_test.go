@@ -247,7 +247,10 @@ func startChild(dir string, s spawn) (*child, error) {
 
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinR, out, errf
 	cmd.ExtraFiles = s.files
-	cmd.Env = append(os.Environ(), hostMntEnv+"="+nsLink("mnt"), hostNetEnv+"="+nsLink("net"))
+	// What TestMain read before the first test, not what /proc/self says
+	// now. Empty values, as in a process that did not go through TestMain,
+	// make every guard refuse.
+	cmd.Env = append(os.Environ(), hostMntEnv+"="+hostMntNS, hostNetEnv+"="+hostNetNS)
 	attr := &syscall.SysProcAttr{Cloneflags: s.clone}
 	if s.nobody {
 		attr.Credential = &syscall.Credential{Uid: nobodyID, Gid: nobodyID, Groups: []uint32{}}

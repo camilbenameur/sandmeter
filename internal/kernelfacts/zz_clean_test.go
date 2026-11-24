@@ -39,7 +39,10 @@ func TestZZHostLeftClean(t *testing.T) {
 	r.judge("clean-loops", d == "", "loop devices with a backing file, against the snapshot (%d then): %s", len(baseline.loops), orNothing(d))
 
 	d = strayHelpers()
-	r.judge("clean-processes", d == "", "processes that still run the test binary, and with them any namespace a test created: %s", orNothing(d))
+	threads := settled(strayThreads)
+	r.judge("clean-processes", d == "" && threads == "",
+		"processes that still run the test binary, and with them any namespace a test created: %s; threads of the test process that are not in the mount and network namespaces it started in: %s",
+		orNothing(d), orNothing(threads))
 
 	d = baseline.sysctlsDiff()
 	r.judge("clean-sysctls", d == "", "of %s: %s", strings.Join(watchedSysctls, ", "), orNothing(d))

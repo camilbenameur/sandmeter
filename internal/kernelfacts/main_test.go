@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -23,7 +24,21 @@ var (
 	scratchRoot string
 	// baseline is the state of the host before the first test.
 	baseline hostState
+	// hostMntNS and hostNetNS are the mount and network namespaces of the
+	// test process, read once before the first test. Helpers are told them
+	// so that they can refuse to work there (outsideHost); read at each
+	// start of a helper, they would follow whatever a test did to the
+	// thread that /proc/self names.
+	hostMntNS, hostNetNS string
 )
+
+// The main goroutine stays on the main thread, in the test process and in
+// every helper. In the test process this keeps the goroutines of the tests
+// off that thread: one of them enters the network namespace of a sandbox,
+// and a thread that cannot be brought back must be one the runtime is able
+// to end, which the main thread is not (threads_test.go). In a helper it
+// makes /proc/self/ns describe the very thread that goes on to mount.
+func init() { runtime.LockOSThread() }
 
 // plainPath is what a scratch path may look like: it ends up in overlay
 // option strings and in a shell script, where a comma, a colon or a quote
@@ -44,6 +59,7 @@ func runTests(m *testing.M) int {
 	// their "other" permission bits: the modes the tests ask for must be
 	// the modes they get, whatever umask root has here.
 	unix.Umask(0o022)
+	hostMntNS, hostNetNS = nsLink("mnt"), nsLink("net")
 	baseline = snapshotHost()
 	if os.Geteuid() != 0 {
 		// Every test that creates something skips itself, or fails when
@@ -75,6 +91,7 @@ func runTests(m *testing.M) int {
 		{"cgroups", baseline.cgroupsDiff(true)},
 		{"loop devices", baseline.loopsDiff()},
 		{"helper processes", strayHelpers()},
+		{"threads of the test process", settled(strayThreads)},
 		{"sysctls", baseline.sysctlsDiff()},
 	} {
 		if c.diff != "" {

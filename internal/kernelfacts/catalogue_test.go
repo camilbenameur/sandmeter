@@ -85,6 +85,6 @@ var catalogue = []def{
 	{"clean-mounts", "the tests left the mount table of the host as they found it", true},
 	{"clean-cgroups", "the tests left no cgroup behind", true},
 	{"clean-loops", "the tests left no loop device attached", true},
-	{"clean-processes", "the tests left no helper process running", true},
+	{"clean-processes", "the tests left no helper process running, and no thread of their own in a namespace of a test", true},
 	{"clean-sysctls", "the tests left the sysctls they touch as they found them", true},
 }

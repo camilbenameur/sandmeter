@@ -277,12 +277,45 @@ func adoptListener(fd int) (net.Listener, error) {
 	return net.FileListener(f)
 }
 
-// listenInNetns is the fallback: a thread of this process enters the
-// network namespace of pid and creates the listener there.
+// inNetnsOf runs fn on the calling thread while that thread is in the
+// network namespace of pid, then brings the thread back. The caller has
+// locked its goroutine to the thread.
 //
-// The thread is locked and never unlocked, so the runtime ends it when the
-// goroutine returns (runtime.LockOSThread): no thread that has been in a
-// sandbox's namespace runs anything else afterwards.
+// back reports whether the thread is, at return, in the namespace it was in
+// at the call. When it is not, the caller must never unlock the thread: the
+// runtime would hand it to another goroutine, which would then work in the
+// namespace of a sandbox.
+func inNetnsOf(pid int, fn func() error) (back bool, err error) {
+	// thread-self, not self: /proc/self names the main thread.
+	own, err := unix.Open("/proc/thread-self/ns/net", unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return true, fmt.Errorf("open the network namespace of this thread: %w", err)
+	}
+	defer unix.Close(own)
+	theirs, err := unix.Open(fmt.Sprintf("/proc/%d/ns/net", pid), unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return true, fmt.Errorf("open the network namespace of pid %d: %w", pid, err)
+	}
+	defer unix.Close(theirs)
+	if err := unix.Setns(theirs, unix.CLONE_NEWNET); err != nil {
+		return true, fmt.Errorf("setns into the network namespace of pid %d: %w", pid, err)
+	}
+	err = fn()
+	if e := unix.Setns(own, unix.CLONE_NEWNET); e != nil {
+		return false, errors.Join(err, fmt.Errorf("setns back into the network namespace this thread came from: %w", e))
+	}
+	return true, err
+}
+
+// listenInNetns is the fallback: a thread of this process enters the
+// network namespace of pid, creates the listener there and comes back.
+//
+// The goroutine keeps the thread to itself while it is away, and gives it
+// back to the runtime only once the thread is home again. A thread that
+// could not come back stays locked: the runtime then ends it with the
+// goroutine instead of running anything else on it. That is true of every
+// thread but the main one, which no goroutine of a test ever gets (init, in
+// main_test.go).
 func listenInNetns(pid, port int) (int, error) {
 	type result struct {
 		fd  int
@@ -291,17 +324,18 @@ func listenInNetns(pid, port int) (int, error) {
 	done := make(chan result, 1)
 	go func() {
 		runtime.LockOSThread()
-		ns, err := unix.Open(fmt.Sprintf("/proc/%d/ns/net", pid), unix.O_RDONLY|unix.O_CLOEXEC, 0)
-		if err != nil {
-			done <- result{-1, fmt.Errorf("open the network namespace of pid %d: %w", pid, err)}
-			return
+		fd := -1
+		back, err := inNetnsOf(pid, func() (err error) {
+			fd, err = listenLoopback(port)
+			return err
+		})
+		if back {
+			runtime.UnlockOSThread()
 		}
-		defer unix.Close(ns)
-		if err := unix.Setns(ns, unix.CLONE_NEWNET); err != nil {
-			done <- result{-1, fmt.Errorf("setns: %w", err)}
-			return
+		if err != nil && fd >= 0 {
+			unix.Close(fd)
+			fd = -1
 		}
-		fd, err := listenLoopback(port)
 		done <- result{fd, err}
 	}()
 	r := <-done
@@ -471,6 +505,12 @@ func TestEgressListener(t *testing.T) {
 	// The fallback, recorded and not required: a thread of this process
 	// enters the namespace and creates the listener itself.
 	fd2, err := listenInNetns(c.pid(), setnsPort)
+	// Whatever came of it, no thread of this process may stay in the
+	// namespace of the helper. A thread that could not come back is ended
+	// by the runtime, which takes a moment.
+	if stray := settled(strayThreads); stray != "" {
+		t.Errorf("after a thread of this process went into the network namespace of the helper: %s", stray)
+	}
 	if err != nil {
 		_, _ = unix.Write(control, []byte{'N'})
 		r.no("egress-listener-setns", "a locked thread could not create the listener: %v", err)
@@ -500,6 +540,62 @@ func TestEgressListener(t *testing.T) {
 	d1, d2 := diffNetwork(before, during), diffNetwork(before, after)
 	r.judge("egress-host-untouched", d1 == "" && d2 == "",
 		"%s; changed while the namespace existed: %s; changed after it was gone: %s", describeNetwork(before), orNothing(d1), orNothing(d2))
+}
+
+// The way into a network namespace and back, on the one namespace that
+// needs no other process: this one's own. Root goes in and out for real.
+// Without privilege the kernel refuses the way in, and the thread must be
+// reported as never having left.
+func TestSelfNetnsRoundTrip(t *testing.T) {
+	threadNetns := func() string {
+		l, err := os.Readlink("/proc/thread-self/ns/net")
+		if err != nil {
+			t.Fatalf("the network namespace of this thread: %v", err)
+		}
+		return l
+	}
+	runtime.LockOSThread()
+	before := threadNetns()
+	ran := false
+	back, err := inNetnsOf(os.Getpid(), func() error {
+		ran = true
+		return nil
+	})
+	if !back {
+		// The thread stays locked, and ends with this goroutine.
+		t.Fatalf("the thread did not come back from its own network namespace: %v", err)
+	}
+	after := threadNetns()
+	runtime.UnlockOSThread()
+
+	if before != hostNetNS || after != hostNetNS {
+		t.Errorf("the thread was in %s before and is in %s after; the process started in %s", before, after, hostNetNS)
+	}
+	if os.Geteuid() == 0 {
+		if err != nil || !ran {
+			t.Errorf("as root: error %v, function ran: %v; want no error and the function run inside", err, ran)
+		}
+	} else if errnoName(err) != "EPERM" || ran || !strings.Contains(err.Error(), "setns into") {
+		t.Errorf("without privilege: error %v, function ran: %v; want EPERM from the setns on the way in, and the function not run", err, ran)
+	}
+
+	// A process that does not exist: nothing is entered, nothing runs.
+	runtime.LockOSThread()
+	ranForNobody := false
+	back, err = inNetnsOf(1<<30, func() error {
+		ranForNobody = true
+		return nil
+	})
+	if !back {
+		t.Fatalf("the thread is reported as gone although no namespace could be opened: %v", err)
+	}
+	runtime.UnlockOSThread()
+	if errnoName(err) != "ENOENT" || ranForNobody {
+		t.Errorf("for a pid that does not exist: error %v, function ran: %v; want ENOENT from the open, and the function not run", err, ranForNobody)
+	}
+	if d := strayThreads(); d != "" {
+		t.Errorf("after the round trips: %s", d)
+	}
 }
 
 // The socket half of the test above: a listener is passed over a socket
