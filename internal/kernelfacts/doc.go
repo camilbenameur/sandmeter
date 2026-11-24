@@ -15,12 +15,14 @@
 //
 //	go test -exec "sudo -E" -tags integration -count=1 -v ./internal/kernelfacts/
 //
-// They create namespaces, mounts, cgroups and a loop device, and two of them
-// change a host-wide setting for a moment. Every test puts back what it
-// changed, and the last one compares the host with a snapshot taken before
-// the first; all the same, run them on a throwaway machine. Without root the
-// tests that create something are skipped, and the ones that only read (the
-// facts about the host, the final comparison, the self-tests) still run.
+// They create namespaces, mounts, cgroups and a loop device, and three of
+// them change something host-wide for a moment: the core handler, the
+// inotify instances left to root, the mount table. Every test puts back
+// what it changed, and the last one compares the host with a snapshot taken
+// before the first; all the same, run them on a throwaway machine. Without
+// root the tests that create something are skipped, and the ones that only
+// read (the facts about the host, the final comparison, the self-tests)
+// still run.
 //
 // Environment:
 //
@@ -279,15 +281,16 @@
 // report errno names, not booleans, so a detail reads "expected ENOSPC,
 // found EPERM".
 //
-// Three rules keep the host safe. A helper that mounts or configures a
-// network first checks that it is not in the namespace of the test process,
-// so a forgotten clone flag cannot touch the host; a self-test starts each
-// of them without its flags, and without privilege, to see it refuse. A
-// helper that waits does so on its standard input, whose other end only the
-// test holds: when the test dies, the helper ends, and its namespaces with
-// it. And the test process itself stays where it started: the one thread it
-// sends into the namespace of a helper is kept apart until it is back, and
-// is never the main thread (threads_test.go).
+// Three rules keep the host safe. A helper that mounts, configures a
+// network or signals PID 1 first checks that it is not in the namespace of
+// the test process, so a forgotten clone flag cannot touch the host; a
+// self-test starts each of them without its flags, and without privilege,
+// to see it refuse. A helper that waits does so on its standard input,
+// whose other end only the test holds, or within a time limit of its own:
+// when the test dies, the helper ends, and its namespaces with it. And the
+// test process itself stays where it started: the one thread it sends into
+// the namespace of a helper is kept apart until it is back, and is never
+// the main thread (threads_test.go).
 //
 // Where half of a mechanism needs no privilege (the socket passing of the
 // egress listener, the path resolution of a mount target, the crash under
