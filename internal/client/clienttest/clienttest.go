@@ -32,6 +32,7 @@ import (
 	"github.com/camilbenameur/sandmeter/internal/changeset"
 	"github.com/camilbenameur/sandmeter/internal/client"
 	"github.com/camilbenameur/sandmeter/internal/ctl"
+	"github.com/camilbenameur/sandmeter/internal/hostprobe"
 	"github.com/camilbenameur/sandmeter/internal/ids"
 	"github.com/camilbenameur/sandmeter/internal/iox"
 	"github.com/camilbenameur/sandmeter/policy"
@@ -110,7 +111,7 @@ func Refusal(code ctl.Code, message string, reasons ...ctl.Reason) error {
 type Fake struct {
 	// InfoReply, ProbeReply and ImagesReply are what the questions answer.
 	// New fills them with a plausible service: service mode, the native
-	// backend, the built-in ceiling.
+	// backend, the built-in ceiling, a host on which every check passed.
 	InfoReply   ctl.InfoReply
 	ProbeReply  ctl.ProbeReply
 	ImagesReply ctl.ImagesReply
@@ -140,7 +141,13 @@ var _ client.Client = (*Fake)(nil)
 // New returns a fake of a service with the default behaviour.
 func New() *Fake {
 	const image = "registry.test/base@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	report := hostprobe.Blank()
+	report.Kernel = "0.0.0-clienttest"
+	for _, s := range hostprobe.Checks {
+		report.Set(hostprobe.Check{ID: s.ID, Outcome: hostprobe.Yes, Detail: "clienttest"})
+	}
 	return &Fake{
+		ProbeReply: ctl.ProbeReply{Report: report, Capabilities: []policy.Capabilities{report.Capabilities(policy.BackendNative)}},
 		InfoReply: ctl.InfoReply{
 			Mode:         ctl.ModeService,
 			Build:        ctl.Build{Version: "0.0.0-clienttest"},
@@ -150,7 +157,7 @@ func New() *Fake {
 			Ceiling:      policy.BuiltinCeiling(),
 			KeyID:        "clienttest",
 		},
-		ImagesReply: ctl.ImagesReply{Default: image, Images: []ctl.ImageInfo{{Reference: image, Digest: image[len(image)-71:]}}},
+		ImagesReply: ctl.ImagesReply{Default: image, Images: []ctl.ImageInfo{{Reference: image, Digest: image[len(image)-71:]}}, Allow: []string{}},
 	}
 }
 

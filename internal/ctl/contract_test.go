@@ -305,7 +305,7 @@ func TestMessagesReadBack(t *testing.T) {
 		&Check{Policy: "version = 2\n", Backend: policy.BackendNative, Image: "example.test/base:1"},
 		&CheckReply{Reasons: []Reason{{Code: CodePolicyRefused, Key: "limits.memory", Text: "8GiB is above the ceiling of 512MiB"}}, Backend: policy.BackendNative, Policy: json.RawMessage("null"), CeilingSHA256: hash},
 		&Images{},
-		&ImagesReply{Default: "example.test/base@sha256:" + hash, Images: []ImageInfo{{Reference: "example.test/base:1", Digest: "sha256:" + hash}}, PullAllowed: true},
+		&ImagesReply{Default: "example.test/base@sha256:" + hash, Images: []ImageInfo{{Reference: "example.test/base:1", Digest: "sha256:" + hash}}, Allow: []string{"example.test/*"}, PullAllowed: true},
 		&Sessions{},
 		&SessionsReply{Sessions: []SessionInfo{{ID: id, Created: time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC), Live: true, LastSeq: 4}}},
 		&Records{Session: id, From: 2},

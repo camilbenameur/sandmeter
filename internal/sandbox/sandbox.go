@@ -410,8 +410,11 @@ type Counters struct {
 type Verdict string
 
 const (
+	// VerdictAllowed: the destination is in the allow list. The request may
+	// still have failed afterwards; Flow.Reason then says how.
 	VerdictAllowed Verdict = "allowed"
-	VerdictDenied  Verdict = "denied"
+	// VerdictDenied: the proxy refused the request.
+	VerdictDenied Verdict = "denied"
 )
 
 // FlowReason says why a request was denied or failed. The list is closed;

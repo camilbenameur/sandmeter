@@ -37,8 +37,9 @@ func TestQuestions(t *testing.T) {
 	if err != nil || info.Mode != ctl.ModeService || len(info.Backends) != 1 || info.DefaultImage == "" {
 		t.Errorf("Info = %+v, %v", info, err)
 	}
-	if _, err := f.Probe(ctx); err != nil {
-		t.Error(err)
+	probe, err := f.Probe(ctx)
+	if err != nil || probe.Report.Validate() != nil || len(probe.Capabilities) != 1 || !probe.Capabilities[0].Usable() {
+		t.Errorf("Probe = %+v, %v", probe, err)
 	}
 	images, err := f.Images(ctx)
 	if err != nil || images.Default != info.DefaultImage || !strings.HasPrefix(images.Images[0].Digest, "sha256:") || len(images.Images[0].Digest) != 71 {

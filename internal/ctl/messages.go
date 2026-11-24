@@ -397,9 +397,13 @@ type ImagesReply struct {
 	Default string `json:"default"`
 	// Images lists what the store holds and the caller may use.
 	Images []ImageInfo `json:"images"`
+	// Allow lists the operator's patterns of references a member may use
+	// besides the default image, as the operator file writes them. Empty,
+	// never null, when the default image is the only one.
+	Allow []string `json:"allow"`
 	// PullAllowed says whether the operator lets a session of this caller
-	// trigger a pull of an image that matches the operator's list. The
-	// default image may always be pulled.
+	// trigger a pull of an image that matches Allow and is not in the store
+	// yet. The default image may always be pulled.
 	PullAllowed bool `json:"pull_allowed"`
 }
 
@@ -807,41 +811,110 @@ type Error struct {
 	Incident string `json:"incident"`
 }
 
-// Kind implementations.
+// Kind implements Message.
+func (*Hello) Kind() Kind { return KindHello }
 
-func (*Hello) Kind() Kind         { return KindHello }
-func (*Info) Kind() Kind          { return KindInfo }
-func (*InfoReply) Kind() Kind     { return KindInfoReply }
-func (*Probe) Kind() Kind         { return KindProbe }
-func (*ProbeReply) Kind() Kind    { return KindProbeReply }
-func (*Check) Kind() Kind         { return KindCheck }
-func (*CheckReply) Kind() Kind    { return KindCheckReply }
-func (*Images) Kind() Kind        { return KindImages }
-func (*ImagesReply) Kind() Kind   { return KindImagesReply }
-func (*Sessions) Kind() Kind      { return KindSessions }
+// Kind implements Message.
+func (*Info) Kind() Kind { return KindInfo }
+
+// Kind implements Message.
+func (*InfoReply) Kind() Kind { return KindInfoReply }
+
+// Kind implements Message.
+func (*Probe) Kind() Kind { return KindProbe }
+
+// Kind implements Message.
+func (*ProbeReply) Kind() Kind { return KindProbeReply }
+
+// Kind implements Message.
+func (*Check) Kind() Kind { return KindCheck }
+
+// Kind implements Message.
+func (*CheckReply) Kind() Kind { return KindCheckReply }
+
+// Kind implements Message.
+func (*Images) Kind() Kind { return KindImages }
+
+// Kind implements Message.
+func (*ImagesReply) Kind() Kind { return KindImagesReply }
+
+// Kind implements Message.
+func (*Sessions) Kind() Kind { return KindSessions }
+
+// Kind implements Message.
 func (*SessionsReply) Kind() Kind { return KindSessionsReply }
-func (*Records) Kind() Kind       { return KindRecords }
-func (*RecordsReply) Kind() Kind  { return KindRecordsReply }
-func (*Record) Kind() Kind        { return KindRecord }
-func (*RecordReply) Kind() Kind   { return KindRecordReply }
-func (*Start) Kind() Kind         { return KindStart }
-func (*Accept) Kind() Kind        { return KindAccept }
-func (*Abort) Kind() Kind         { return KindAbort }
-func (*Started) Kind() Kind       { return KindStarted }
-func (*Refresh) Kind() Kind       { return KindRefresh }
-func (*Refreshed) Kind() Kind     { return KindRefreshed }
-func (*Run) Kind() Kind           { return KindRun }
-func (*Cancel) Kind() Kind        { return KindCancel }
-func (*Result) Kind() Kind        { return KindResult }
-func (*Snapshot) Kind() Kind      { return KindSnapshot }
-func (*Snapshotted) Kind() Kind   { return KindSnapshotted }
-func (*Restore) Kind() Kind       { return KindRestore }
-func (*Restored) Kind() Kind      { return KindRestored }
-func (*Changes) Kind() Kind       { return KindChanges }
-func (*ChangesReply) Kind() Kind  { return KindChangesReply }
-func (*Export) Kind() Kind        { return KindExport }
-func (*ExportReply) Kind() Kind   { return KindExportReply }
-func (*Exported) Kind() Kind      { return KindExported }
-func (*Stop) Kind() Kind          { return KindStop }
-func (*Stopped) Kind() Kind       { return KindStopped }
-func (*Error) Kind() Kind         { return KindError }
+
+// Kind implements Message.
+func (*Records) Kind() Kind { return KindRecords }
+
+// Kind implements Message.
+func (*RecordsReply) Kind() Kind { return KindRecordsReply }
+
+// Kind implements Message.
+func (*Record) Kind() Kind { return KindRecord }
+
+// Kind implements Message.
+func (*RecordReply) Kind() Kind { return KindRecordReply }
+
+// Kind implements Message.
+func (*Start) Kind() Kind { return KindStart }
+
+// Kind implements Message.
+func (*Accept) Kind() Kind { return KindAccept }
+
+// Kind implements Message.
+func (*Abort) Kind() Kind { return KindAbort }
+
+// Kind implements Message.
+func (*Started) Kind() Kind { return KindStarted }
+
+// Kind implements Message.
+func (*Refresh) Kind() Kind { return KindRefresh }
+
+// Kind implements Message.
+func (*Refreshed) Kind() Kind { return KindRefreshed }
+
+// Kind implements Message.
+func (*Run) Kind() Kind { return KindRun }
+
+// Kind implements Message.
+func (*Cancel) Kind() Kind { return KindCancel }
+
+// Kind implements Message.
+func (*Result) Kind() Kind { return KindResult }
+
+// Kind implements Message.
+func (*Snapshot) Kind() Kind { return KindSnapshot }
+
+// Kind implements Message.
+func (*Snapshotted) Kind() Kind { return KindSnapshotted }
+
+// Kind implements Message.
+func (*Restore) Kind() Kind { return KindRestore }
+
+// Kind implements Message.
+func (*Restored) Kind() Kind { return KindRestored }
+
+// Kind implements Message.
+func (*Changes) Kind() Kind { return KindChanges }
+
+// Kind implements Message.
+func (*ChangesReply) Kind() Kind { return KindChangesReply }
+
+// Kind implements Message.
+func (*Export) Kind() Kind { return KindExport }
+
+// Kind implements Message.
+func (*ExportReply) Kind() Kind { return KindExportReply }
+
+// Kind implements Message.
+func (*Exported) Kind() Kind { return KindExported }
+
+// Kind implements Message.
+func (*Stop) Kind() Kind { return KindStop }
+
+// Kind implements Message.
+func (*Stopped) Kind() Kind { return KindStopped }
+
+// Kind implements Message.
+func (*Error) Kind() Kind { return KindError }
