@@ -3,7 +3,8 @@ name: kernel-facts
 # One root test per kernel assumption of the design (internal/kernelfacts),
 # on the three hosted runners the release claims to be tested on. A required
 # fact that comes out "no" fails the job: the design branch that rests on it
-# has to switch to its fallback before anything is built on it.
+# has to switch to its fallback before anything is built on it. So does a
+# required fact that was skipped: it decided nothing.
 
 on:
   workflow_dispatch:
@@ -34,8 +35,9 @@ jobs:
       # host-wide setting for a moment (the core handler, the inotify
       # instances of root) may run.
       SANDMETER_THROWAWAY_HOST: "1"
-      # A missing prerequisite is a broken job, not a skipped test.
-      SANDMETER_REQUIRE: root,cgroup2,runsc
+      # A missing prerequisite is a broken job, not a skipped test. That
+      # includes the mark above: without it a gating fact would be skipped.
+      SANDMETER_REQUIRE: root,cgroup2,runsc,throwaway
       SANDMETER_FACTS_OUT: ${{ github.workspace }}/out/facts.jsonl
       # A static test binary: it is also the process the gVisor test runs
       # inside the sandbox.
@@ -120,8 +122,9 @@ jobs:
           if-no-files-found: error
 
       # The step above already fails the job when go test fails. This one
-      # adds what go test cannot say: that nothing ran, or that nothing was
-      # recorded, and it names the required facts that came out "no".
+      # adds what go test cannot say: that nothing ran, that nothing was
+      # recorded, or that a required fact was skipped, which no test fails
+      # for. It names the required facts that came out "no" or skipped.
       - name: Gate
         if: always()
         shell: bash
@@ -146,8 +149,13 @@ jobs:
             echo "$failed"
             status=1
           fi
-          # A required fact that was not measured decides nothing: say so.
-          jq -r 'select(.required and .outcome == "skipped") | "::warning title=Required fact \(.id) was skipped::\(.detail)"' "$SANDMETER_FACTS_OUT"
+          # A required fact that was not measured decided nothing: the
+          # branch of the design that rests on it is as open as before.
+          unmeasured=$(jq -r 'select(.required and .outcome == "skipped") | "::error title=Required fact \(.id) was skipped::\(.name). Not measured: \(.detail)"' "$SANDMETER_FACTS_OUT")
+          if [ -n "$unmeasured" ]; then
+            echo "$unmeasured"
+            status=1
+          fi
           # Whatever else go test counted as a failure: a prerequisite of
           # SANDMETER_REQUIRE that is missing, a host left changed.
           tests=$(jq -R -r 'fromjson? | select(.Action == "fail" and .Test != null) | .Test' out/test.jsonl | sort -u | paste -sd ' ' -)

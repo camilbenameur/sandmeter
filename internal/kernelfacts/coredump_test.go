@@ -105,10 +105,7 @@ func (c crashOutcome) String() string {
 func TestPipedCoreHandler(t *testing.T) {
 	r := declare(t, "core-limit-one", "core-kernel-log")
 	r.needRoot()
-	if !throwawayHost() {
-		r.skipRest("not a throwaway host")
-		t.Skipf("this test replaces kernel.core_pattern for a moment: it runs only with CI=true and %s=1", throwawayEnv)
-	}
+	r.needThrowaway("this test replaces kernel.core_pattern for a moment")
 
 	dir := scratch(t, "core")
 	script, marker := filepath.Join(dir, "h"), filepath.Join(dir, "ran")

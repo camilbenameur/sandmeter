@@ -17,7 +17,7 @@ import (
 const (
 	// factsOutEnv names a file that receives one JSON line per fact.
 	factsOutEnv = "SANDMETER_FACTS_OUT"
-	// requireEnv lists prerequisites (root, cgroup2, runsc) whose absence
+	// requireEnv lists prerequisites (root, cgroup2, runsc, throwaway) whose absence
 	// fails a test instead of skipping it.
 	requireEnv = "SANDMETER_REQUIRE"
 	// throwawayEnv, together with CI=true, allows the tests that change a
@@ -224,6 +224,14 @@ func (r *recorder) needRoot() {
 func (r *recorder) needCgroup2() {
 	r.t.Helper()
 	r.need("cgroup2", haveCgroup2(), "cgroup v2 is not mounted at "+cgroupRoot)
+}
+
+// needThrowaway stops a test that changes a host-wide setting for a
+// moment, unless the host is marked as one nobody else uses. why says what
+// the test changes.
+func (r *recorder) needThrowaway(why string) {
+	r.t.Helper()
+	r.need("throwaway", throwawayHost(), fmt.Sprintf("this is not a throwaway host, and %s (set CI=true and %s=1)", why, throwawayEnv))
 }
 
 // close records what the test left open. Such a fact was not measured, so

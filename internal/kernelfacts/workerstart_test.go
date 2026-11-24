@@ -88,10 +88,7 @@ func childLateMount(args []string) error {
 func TestWorkerSeesHostMounts(t *testing.T) {
 	r := declare(t, "worker-sees-host-mounts")
 	r.needRoot()
-	if !throwawayHost() {
-		r.skip("worker-sees-host-mounts", "not a throwaway host: this test mounts a tmpfs in the mount namespace of the host for a moment (set CI=true and %s=1)", throwawayEnv)
-		return
-	}
+	r.needThrowaway("this test mounts a tmpfs in the mount namespace of the host for a moment")
 
 	point := filepath.Join(scratch(t, "latemount"), "late")
 	if err := os.Mkdir(point, 0o755); err != nil {

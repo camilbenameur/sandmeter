@@ -340,6 +340,9 @@ func TestInotifyCharged(t *testing.T) {
 	switch {
 	case !throwawayHost():
 		r.skip("inotify-charge-default", "not a throwaway host: this experiment takes every inotify instance of host root for a moment (set CI=true and %s=1)", throwawayEnv)
+		if requireLists("throwaway") {
+			t.Errorf("%s lists throwaway but this host is not marked as one: CI=%q, %s=%q", requireEnv, os.Getenv("CI"), throwawayEnv, os.Getenv(throwawayEnv))
+		}
 	case hostLimit > most:
 		r.skip("inotify-charge-default", "fs.inotify.max_user_instances is %d: too many descriptors to fill in a test (limit %d)", hostLimit, most)
 	default:

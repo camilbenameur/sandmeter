@@ -25,8 +25,9 @@
 // Environment:
 //
 //	SANDMETER_FACTS_OUT       file that receives one JSON line per fact
-//	SANDMETER_REQUIRE         comma-separated prerequisites (root, cgroup2, runsc)
-//	                          whose absence fails a test instead of skipping it
+//	SANDMETER_REQUIRE         comma-separated prerequisites (root, cgroup2, runsc,
+//	                          throwaway) whose absence fails a test instead of
+//	                          skipping it
 //	SANDMETER_THROWAWAY_HOST  set to 1, with CI=true, to allow the tests that
 //	                          change a host-wide setting for a moment
 //	SANDMETER_FACTS_DIR       where the scratch directory goes (default /var/lib,
@@ -43,7 +44,8 @@
 // host: "yes", "no", or "skipped" with the reason in the detail. A required
 // fact gates a decision of the design: its "no" fails the test, and the job
 // (.github/workflows/kernel-facts.yml) with it. A recorded fact is a
-// measurement and never fails; several are expected to be "no". Every fact
+// measurement and never fails; several are expected to be "no". A required
+// fact that was skipped decided nothing, and fails the job too. Every fact
 // of the catalogue (catalogue_test.go) is recorded on every run, so the
 // absence of a line is itself an error.
 //

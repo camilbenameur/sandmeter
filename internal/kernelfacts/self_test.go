@@ -233,8 +233,8 @@ func TestSelfEmit(t *testing.T) {
 }
 
 func TestSelfRequireLists(t *testing.T) {
-	t.Setenv(requireEnv, "root, cgroup2,runsc")
-	for name, want := range map[string]bool{"root": true, "cgroup2": true, "runsc": true, "run": false, "": false} {
+	t.Setenv(requireEnv, "root, cgroup2,runsc,throwaway")
+	for name, want := range map[string]bool{"root": true, "cgroup2": true, "runsc": true, "throwaway": true, "run": false, "": false} {
 		if got := requireLists(name); got != want {
 			t.Errorf("requireLists(%q) = %v with %s=%q, want %v", name, got, requireEnv, os.Getenv(requireEnv), want)
 		}
