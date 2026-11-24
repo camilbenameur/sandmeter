@@ -1,5 +1,16 @@
 package policy
 
+// Backend names, as the operator file lists them and as Capabilities.Backend
+// and receipts record them.
+const (
+	// BackendNative is the backend written on Linux namespaces, cgroups and
+	// seccomp. Sandboxes share the kernel of the host.
+	BackendNative = "native"
+	// BackendGVisor runs commands on gVisor's user-space kernel. It is a
+	// preview: off unless the operator lists it.
+	BackendGVisor = "gvisor"
+)
+
 // ControlID names one control: one thing a backend can enforce around a
 // command. The list is closed. The same identifiers are used by the host
 // probe (which check backs which control), by the policy check (which key
