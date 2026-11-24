@@ -1,0 +1,202 @@
+// Package entry holds what every hidden entry point of the root side shares:
+// the names that select them, and the handshake each one must complete on
+// its control descriptor before it does anything.
+//
+// A hidden entry point is a way into the sandmeterd binary that is not a
+// command: the first process of a sandbox, the worker of a connection, the
+// egress proxy, the image fetcher. Each is started by sandmeter itself, with
+// descriptors and privileges prepared for that one job. The binary has to be
+// executable by everybody (the first process of a sandbox runs it under the
+// sandbox's ids), so anybody can type such a name on a command line. They
+// gain nothing by it: the package installs no setuid bit and no file
+// capability.
+//
+// The handshake is what keeps an entry point from running anywhere but under
+// its parent. The parent writes one fixed line, the greeting, on the control
+// channel it gives the child; the child refuses to go on unless its control
+// descriptor is a pipe or a socket and the greeting for its own name arrives
+// on it promptly. Typed by hand, started by a script, or given a file or a
+// terminal as descriptor, an entry point exits at once with a message that
+// says what it is.
+//
+// What the handshake does not do, and must not be taken for: it does not
+// authenticate anybody. Whoever starts the binary chooses its descriptors
+// and can write the greeting. In particular it is no protection for a host
+// where a user was granted sudo on the bare binary: that grant is root, with
+// or without a greeting.
+//
+// This package is a leaf, on purpose: the packages that own an entry point
+// import it for the handshake, and the table of entry points (package
+// hidden) imports those packages.
+package entry
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"time"
+
+	"golang.org/x/sys/unix"
+
+	"github.com/camilbenameur/sandmeter/internal/exit"
+)
+
+// The names of the hidden entry points: the first command-line argument that
+// selects each one. They start with two underscores so that none can be
+// taken for a command or a flag.
+const (
+	// Worker serves one connection of one client, as root, and at most one
+	// session. The service starts one per accepted connection; root starts
+	// one itself in direct mode.
+	Worker = "__worker"
+	// Init is the first stage of the native backend inside a new sandbox:
+	// process 1 of its pid namespace for the life of a command.
+	Init = "__init"
+	// Exec is the second stage: it drops what is left of the privileges,
+	// installs the syscall filter and executes the command.
+	Exec = "__exec"
+	// Egress is the egress proxy of one command. It runs without privilege,
+	// under an id of its own.
+	Egress = "__egress"
+	// Fetch pulls an image from a registry. It runs without privilege, under
+	// an id of its own, and refuses to run as root.
+	Fetch = "__fetch"
+)
+
+// Names is the closed list of names.
+var Names = []string{Worker, Init, Exec, Egress, Fetch}
+
+// ControlFD is the descriptor on which an entry point finds its control
+// channel unless its owner documents another: the first one after the three
+// standard streams.
+const ControlFD = 3
+
+// Timeout is how long an entry point waits for its greeting. A parent writes
+// it before or right after it starts the child, so the wait is short when
+// everything is as it should be and bounded when nothing is.
+const Timeout = 5 * time.Second
+
+// protocol names the handshake itself. It changes if the greeting ever does.
+const protocol = "sandmeter-entry/1"
+
+// greeting returns the line a parent writes for the named entry point.
+func greeting(name string) []byte { return []byte(protocol + " " + name + "\n") }
+
+// ErrRefused is the error of Accept, wrapped with the reason.
+var ErrRefused = errors.New("refused to run")
+
+// Offer is the parent's half of the handshake: it writes the greeting for
+// the named entry point on the control channel it hands to the child. The
+// write does not wait for the child; on a pipe or a socket it may be done
+// before the child is started.
+func Offer(w io.Writer, name string) error {
+	if !known(name) {
+		return fmt.Errorf("offer a handshake to %q: not a hidden entry point", name)
+	}
+	if _, err := w.Write(greeting(name)); err != nil {
+		return fmt.Errorf("offer the handshake to %s: %w", name, err)
+	}
+	return nil
+}
+
+func known(name string) bool {
+	for _, n := range Names {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Accept is the child's half of the handshake, and the first thing an entry
+// point does. It checks that descriptor fd is open and is a pipe or a
+// socket, marks it close-on-exec, waits up to Timeout for the greeting of
+// the named entry point and returns the descriptor as a file, positioned
+// right after the greeting, for the rest of the conversation.
+//
+// Any other outcome is ErrRefused and the entry point must exit without
+// having done anything: see MustAccept.
+func Accept(fd uintptr, name string) (*os.File, error) {
+	return accept(fd, name, Timeout)
+}
+
+func accept(fd uintptr, name string, timeout time.Duration) (*os.File, error) {
+	refuse := func(format string, args ...any) (*os.File, error) {
+		return nil, fmt.Errorf("%s: %w: %s", name, ErrRefused, fmt.Sprintf(format, args...))
+	}
+	if !known(name) {
+		return refuse("not a hidden entry point")
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(int(fd), &st); err != nil {
+		return refuse("no control channel on descriptor %d (%v)", fd, err)
+	}
+	// Invariant: the control channel is a pipe or a socket. A regular file,
+	// a directory, a terminal or a device is what a person or a script would
+	// put there, never what sandmeter does.
+	if kind := st.Mode & unix.S_IFMT; kind != unix.S_IFIFO && kind != unix.S_IFSOCK {
+		return refuse("descriptor %d is not a pipe or a socket", fd)
+	}
+	unix.CloseOnExec(int(fd))
+
+	want := greeting(name)
+	got := make([]byte, 0, len(want))
+	deadline := time.Now().Add(timeout)
+	for len(got) < len(want) {
+		left := time.Until(deadline)
+		if left <= 0 {
+			return refuse("no greeting within %v", timeout)
+		}
+		pfd := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+		n, err := unix.Poll(pfd, int(left.Milliseconds())+1)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			return refuse("waiting for the greeting: %v", err)
+		}
+		if n == 0 {
+			continue
+		}
+		// Read no further than the greeting: what follows it belongs to the
+		// owner of the entry point.
+		buf := make([]byte, len(want)-len(got))
+		m, err := unix.Read(int(fd), buf)
+		if err == unix.EINTR || err == unix.EAGAIN {
+			continue
+		}
+		if err != nil {
+			return refuse("reading the greeting: %v", err)
+		}
+		if m == 0 {
+			return refuse("the control channel closed before the greeting")
+		}
+		got = append(got, buf[:m]...)
+		if string(got) != string(want[:len(got)]) {
+			return refuse("the control channel does not carry the greeting of this entry point")
+		}
+	}
+	return os.NewFile(fd, "control"), nil
+}
+
+// MustAccept is Accept for an entry point's first line: when the handshake
+// is refused it writes one message to standard error, saying what the
+// program is and why it will not run, and exits with exit.Failure. It
+// returns only with the control channel.
+func MustAccept(fd uintptr, name string) *os.File {
+	f, err := Accept(fd, name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sandmeter: %v\n%s is an internal entry point: sandmeter starts it itself, and it does nothing when it is started any other way.\n", err, name)
+		os.Exit(exit.Failure)
+	}
+	return f
+}
+
+// NotBuilt ends an entry point whose body is not written yet: one message
+// to standard error and exit.Failure. An entry point calls it after the
+// handshake, so that even an unfinished one refuses to run by hand.
+func NotBuilt(name string) {
+	fmt.Fprintf(os.Stderr, "sandmeter: the entry point %s is not built in this version\n", name)
+	os.Exit(exit.Failure)
+}
