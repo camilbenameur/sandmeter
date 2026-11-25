@@ -3,8 +3,10 @@ package policy
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func mustDest(t *testing.T, s string) Dest {
@@ -34,6 +36,11 @@ func TestParseDest(t *testing.T) {
 		"ssh.example.com:443/raw":    {Host: "ssh.example.com", Port: 443, Transport: TransportRaw},
 		"registry.example:8443/tls":  {Host: "registry.example", Port: 8443, Transport: TransportTLS},
 		"*.example.com/raw":          {Host: "example.com", Wildcard: true, Port: 443, Transport: TransportRaw},
+		// A label that looks like a number is a name wherever it is not the
+		// last one, and "0x" needs hexadecimal digits after it to be one.
+		"0x7f.example.com":  {Host: "0x7f.example.com", Port: 443},
+		"127.0.0.1.nip.io":  {Host: "127.0.0.1.nip.io", Port: 443},
+		"registry.0xyz:443": {Host: "registry.0xyz", Port: 443},
 	} {
 		got, err := ParseDest(in)
 		if err != nil || got != want {
@@ -80,6 +87,14 @@ func TestParseDestRefuses(t *testing.T) {
 		"address with zero prefix": "192.0.2.010",
 		"five fields":              "1.2.3.4.5",
 		"numeric last label":       "example.123",
+		"hex integer address":      "0x7f000001",
+		"hex integer, upper case":  "0X7F000001",
+		"hex last field":           "1.2.3.0x4",
+		"hex first and last field": "0x7f.0.0.0x1",
+		"metadata address in hex":  "169.254.169.0xfe:80",
+		"hex last label of a name": "example.0x1f",
+		"bare hex prefix":          "example.0x",
+		"wildcard on a hex label":  "*.example.0x7f",
 		"underscore":               "my_host.example.com",
 		"leading hyphen":           "-a.example.com",
 		"trailing hyphen":          "a-.example.com",
@@ -268,6 +283,252 @@ func TestCoveredEntryAdmitsNothingMore(t *testing.T) {
 	}
 }
 
+func parseDests(t *testing.T, entries ...string) []Dest {
+	t.Helper()
+	out := make([]Dest, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, mustDest(t, e))
+	}
+	return out
+}
+
+// TestUncoveredJudgesWholeLists is the check of a policy's allow list against
+// a ceiling's. The first rows are the case that an entry-by-entry comparison
+// gets wrong: every policy entry is covered by a ceiling entry, and the
+// policy still decides one name more loosely than the ceiling does.
+func TestUncoveredJudgesWholeLists(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		policy, ceiling []string
+		want            []int
+	}{
+		{"a raw wildcard under a ceiling that checks one name below it",
+			[]string{"*.example.com:443/raw"},
+			[]string{"*.example.com:443/raw", "api.example.com:443"}, []int{0}},
+		{"the same policy with the ceiling's stricter entry",
+			[]string{"*.example.com:443/raw", "api.example.com:443"},
+			[]string{"*.example.com:443/raw", "api.example.com:443"}, nil},
+		{"a raw wildcard under a ceiling that checks a deeper wildcard",
+			[]string{"*.example.com:443/raw"},
+			[]string{"*.example.com:443/raw", "*.git.example.com:443"}, []int{0}},
+		{"a raw name under a ceiling whose wildcard checks",
+			[]string{"a.example.com:443/raw", "b.example.com"},
+			[]string{"*.example.com"}, []int{0}},
+		{"a raw name the ceiling's most specific entry leaves raw",
+			[]string{"ssh.example.com:443/raw"},
+			[]string{"*.example.com", "ssh.example.com:443/raw"}, nil},
+		{"a policy stricter than the ceiling",
+			[]string{"ssh.example.com:443", "*.example.com:8443/tls"},
+			[]string{"*.example.com:443/raw", "*.example.com:8443"}, nil},
+		{"a name the ceiling does not list",
+			[]string{"pypi.org", "evil.example"},
+			[]string{"pypi.org", "*.pythonhosted.org"}, []int{1}},
+		{"another port",
+			[]string{"pypi.org:80"},
+			[]string{"pypi.org"}, []int{0}},
+		{"a wildcard wider than the ceiling's",
+			[]string{"*.example.com"},
+			[]string{"*.a.example.com"}, []int{0}},
+		{"a wildcard narrower than the ceiling's",
+			[]string{"*.a.example.com", "b.a.example.com"},
+			[]string{"*.example.com"}, nil},
+		{"a wildcard where the ceiling lists names only",
+			[]string{"*.example.com"},
+			[]string{"a.example.com", "b.example.com", "c.example.com"}, []int{0}},
+		{"the suffix itself is not under the wildcard",
+			[]string{"example.com"},
+			[]string{"*.example.com"}, []int{0}},
+		{"an address",
+			[]string{"192.0.2.1:22", "192.0.2.2:22"},
+			[]string{"192.0.2.1:22", "*.0.2.example:22"}, []int{1}},
+		{"an empty policy list", nil, []string{"pypi.org"}, nil},
+		{"an empty ceiling list", []string{"pypi.org", "*.example.com"}, nil, []int{0, 1}},
+		{"a policy entry that never decides is not held against the policy",
+			[]string{"example.com:443/raw", "example.com:443"},
+			[]string{"example.com:443"}, nil},
+	} {
+		got := Uncovered(parseDests(t, tc.policy...), parseDests(t, tc.ceiling...))
+		if len(got) != len(tc.want) {
+			t.Errorf("%s: Uncovered = %v, want %v", tc.name, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("%s: Uncovered = %v, want %v", tc.name, got, tc.want)
+				break
+			}
+		}
+	}
+	// What the first row shows: each entry is covered, the list is not.
+	raw, strict := mustDest(t, "*.example.com:443/raw"), mustDest(t, "api.example.com:443")
+	if !raw.Covers(raw) {
+		t.Fatal("an entry does not cover itself")
+	}
+	api := mustDest(t, "api.example.com")
+	inCeiling, _ := Find([]Dest{raw, strict}, api)
+	inPolicy, _ := Find([]Dest{raw}, api)
+	if !inCeiling.RequiresTLS() || inPolicy.RequiresTLS() {
+		t.Errorf("the ceiling decides %s and the policy %s: the case this test is about is gone", inCeiling, inPolicy)
+	}
+	// The zero Dest is in no list: it is skipped, never matched.
+	if got := Uncovered([]Dest{{}}, []Dest{{}}); len(got) != 0 {
+		t.Errorf("zero entries: %v", got)
+	}
+}
+
+// TestUncoveredAgreesWithFind draws lists from a small world of names and
+// compares Uncovered with the definition it implements, evaluated request by
+// request with Find over every name of that world.
+func TestUncoveredAgreesWithFind(t *testing.T) {
+	labels := []string{"a", "b", "example", "com"}
+	var names []string
+	var grow func(prefix string, depth int)
+	grow = func(prefix string, depth int) {
+		for _, l := range labels {
+			name := l
+			if prefix != "" {
+				name = l + "." + prefix
+			}
+			names = append(names, name)
+			if depth > 1 {
+				grow(name, depth-1)
+			}
+		}
+	}
+	grow("", 4)
+	var pool []Dest
+	for _, n := range names {
+		if strings.Count(n, ".") > 2 {
+			continue
+		}
+		for _, suffix := range []string{"", ":80", ":443/raw", ":80/tls"} {
+			pool = append(pool, mustDest(t, n+suffix))
+			if strings.Contains(n, ".") {
+				pool = append(pool, mustDest(t, "*."+n+suffix))
+			}
+		}
+	}
+	var targets []Dest
+	for _, n := range names {
+		targets = append(targets, mustDest(t, n), mustDest(t, n+":80"))
+	}
+
+	// A fixed sequence: the test is the same on every run.
+	state := uint64(0x9e3779b97f4a7c15)
+	next := func(n int) int {
+		state ^= state << 13
+		state ^= state >> 7
+		state ^= state << 17
+		return int(state % uint64(n))
+	}
+	draw := func() []Dest {
+		list := make([]Dest, next(5))
+		for i := range list {
+			list[i] = pool[next(len(pool))]
+		}
+		return list
+	}
+	position := func(list []Dest, d Dest) int {
+		for i, e := range list {
+			if e == d {
+				return i
+			}
+		}
+		return -1
+	}
+	refused := 0
+	const rounds = 1500
+	for round := 0; round < rounds; round++ {
+		allow, ceiling := draw(), draw()
+		if round%4 == 0 {
+			// Lists that share entries are where the two decisions meet.
+			allow = append(allow, ceiling...)
+		}
+		want := map[int]bool{}
+		for _, target := range targets {
+			pe, ok := Find(allow, target)
+			if !ok {
+				continue
+			}
+			ce, ok := Find(ceiling, target)
+			if !ok || (ce.RequiresTLS() && !pe.RequiresTLS()) {
+				want[position(allow, pe)] = true
+			}
+		}
+		got := Uncovered(allow, ceiling)
+		if len(got) > 0 {
+			refused++
+		}
+		same := len(got) == len(want)
+		for _, i := range got {
+			same = same && want[i]
+		}
+		if !same {
+			t.Fatalf("round %d: allow %v under ceiling %v: Uncovered = %v, request by request %v", round, allow, ceiling, got, want)
+		}
+	}
+	if refused < rounds/8 || refused > rounds*7/8 {
+		t.Errorf("%d of %d rounds were refused: the lists drawn do not exercise both answers", refused, rounds)
+	}
+}
+
+// TestUncoveredOnLongLists holds the cost down: the policy text comes from a
+// client, and the check runs in the root service.
+func TestUncoveredOnLongLists(t *testing.T) {
+	var allow, ceiling []Dest
+	for i := 0; i < 20000; i++ {
+		name := "h" + strconv.Itoa(i) + ".d" + strconv.Itoa(i%100) + ".example.com"
+		allow = append(allow, Dest{Host: name, Port: 443}, Dest{Host: name, Wildcard: true, Port: 443})
+		ceiling = append(ceiling, Dest{Host: "d" + strconv.Itoa(i%100) + ".example.com", Wildcard: true, Port: 443})
+	}
+	began := time.Now()
+	if got := Uncovered(allow, ceiling); len(got) != 0 {
+		t.Errorf("%d entries are not covered, the first at %d", len(got), got[0])
+	}
+	if d := time.Since(began); d > 5*time.Second {
+		t.Errorf("checking %d entries against %d took %v", len(allow), len(ceiling), d)
+	}
+}
+
+// TestUnclaimedUnder covers the search for a name that stands for "any other
+// name under this suffix".
+func TestUnclaimedUnder(t *testing.T) {
+	ix := indexDests(parseDests(t, "a.example.com", "b.example.com", "a.example.com:80"))
+	if name, ok := unclaimedUnder("example.com", 443, ix); !ok || name != "c.example.com" {
+		t.Errorf("under example.com: %q, %v", name, ok)
+	}
+	if name, ok := unclaimedUnder("example.com", 80, ix); !ok || name != "b.example.com" {
+		t.Errorf("under example.com on port 80: %q, %v", name, ok)
+	}
+	// A suffix with room for one more byte: 36 names exist under it. With
+	// all of them named there is nothing left to stand for the rest.
+	long := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 59)
+	if len(long) != 251 {
+		t.Fatalf("the suffix is %d bytes long", len(long))
+	}
+	var all []Dest
+	for _, c := range "abcdefghijklmnopqrstuvwxyz0123456789" {
+		all = append(all, Dest{Host: string(c) + "." + long, Port: 443})
+	}
+	if name, ok := unclaimedUnder(long, 443, indexDests(all[:35])); !ok || name != "9."+long {
+		t.Errorf("with one name left: %q, %v", name, ok)
+	}
+	if name, ok := unclaimedUnder(long, 443, indexDests(all)); ok {
+		t.Errorf("with every name taken: %q", name)
+	}
+	if name, ok := unclaimedUnder(long+"ee", 443, indexDests(nil)); ok {
+		t.Errorf("under a suffix of 253 bytes: %q", name)
+	}
+	// Two labels are tried once every single one is taken.
+	var singles []Dest
+	for _, c := range "abcdefghijklmnopqrstuvwxyz0123456789" {
+		singles = append(singles, Dest{Host: string(c) + ".example.com", Port: 443})
+	}
+	if name, ok := unclaimedUnder("example.com", 443, indexDests(singles)); !ok || name != "aa.example.com" {
+		t.Errorf("with every one-byte label taken: %q, %v", name, ok)
+	}
+}
+
 func TestFindPicksTheMostSpecificEntry(t *testing.T) {
 	parse := func(entries ...string) []Dest {
 		var out []Dest
@@ -329,7 +590,7 @@ func TestDestJSON(t *testing.T) {
 }
 
 func FuzzParseDest(f *testing.F) {
-	for _, s := range []string{"example.com", "*.example.com:8443/tls", "192.0.2.1:22/raw", "[::1]:443", "a..b", "*.com", "x:0", strings.Repeat("a", 300)} {
+	for _, s := range []string{"example.com", "*.example.com:8443/tls", "192.0.2.1:22/raw", "[::1]:443", "a..b", "*.com", "x:0", "0x7f000001", "1.2.3.0x4", strings.Repeat("a", 300)} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
@@ -349,6 +610,11 @@ func FuzzParseDest(f *testing.F) {
 		}
 		if d.IsAddr() && d.Wildcard {
 			t.Fatalf("ParseDest(%q) returned a wildcard on an address", s)
+		}
+		// A name never ends in something an address parser takes for a
+		// number.
+		if last := d.Host[strings.LastIndexByte(d.Host, '.')+1:]; !d.IsAddr() && numericLabel(last) {
+			t.Fatalf("ParseDest(%q) kept the name %q, whose last label is a number", s, d.Host)
 		}
 		// An exact entry admits itself and covers itself.
 		if !d.Wildcard && (!d.Matches(d) || !d.Covers(d)) {

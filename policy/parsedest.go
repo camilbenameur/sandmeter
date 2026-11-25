@@ -34,8 +34,10 @@ var ErrDest = errors.New("invalid destination")
 //     be given in its ASCII form ("xn--...").
 //   - host is a name of RFC 1123 labels or an IPv4 address in dotted decimal
 //     form with four fields and no leading zero. A name whose last label is
-//     all digits is refused: resolvers disagree on whether it is an address.
-//     An IPv6 address is refused.
+//     a number is refused: all digits, or "0x" followed by hexadecimal digits
+//     or by nothing. Such a host is an address to the parsers that accept
+//     short, octal and hexadecimal forms, and a name to the others. An IPv6
+//     address is refused.
 //   - "*." may only come first, only before a name of at least two labels,
 //     and "*" may appear nowhere else.
 //   - port is decimal, 1 to 65535, without sign, space or leading zero. When
@@ -118,8 +120,16 @@ func ParseDest(s string) (Dest, error) {
 			return bad("a label of the name is not 1 to 63 letters, digits or hyphens with no hyphen at either end")
 		}
 	}
-	if allDigits(labels[len(labels)-1]) {
-		return bad("the last label is all digits, which is neither a name nor a dotted IPv4 address")
+	// Invariant: nothing that an address parser would read as an address is
+	// kept as a name. The parsers that accept more than four decimal fields
+	// (inet_aton and what is built on it, the host parser of the URL
+	// standard) read a host as an address only when its last field is a
+	// number in one of their spellings, so refusing those spellings in the
+	// last label is enough. Without this, "0x7f000001" would be matched
+	// against the allow list as a name and dialled by some resolver as
+	// 127.0.0.1.
+	if numericLabel(labels[len(labels)-1]) {
+		return bad("the last label is a number (all digits, or \"0x\" and hexadecimal digits), which is neither a name nor a dotted IPv4 address")
 	}
 	if d.Wildcard && len(labels) < 2 {
 		return bad("a wildcard needs a suffix of at least two labels")
@@ -159,11 +169,21 @@ func validLabel(l string) bool {
 	return true
 }
 
-func allDigits(l string) bool {
-	for i := 0; i < len(l); i++ {
-		if l[i] < '0' || l[i] > '9' {
-			return false
+// numericLabel reports whether a label, already in lower case, is a number
+// to some address parser: decimal or octal digits only, or "0x" followed by
+// any number of hexadecimal digits, none included. It is the "ends in a
+// number" rule of the URL standard.
+func numericLabel(l string) bool {
+	digits, hex := l, false
+	if strings.HasPrefix(l, "0x") {
+		digits, hex = l[2:], true
+	}
+	for i := 0; i < len(digits); i++ {
+		c := digits[i]
+		if c >= '0' && c <= '9' || hex && c >= 'a' && c <= 'f' {
+			continue
 		}
+		return false
 	}
 	return true
 }

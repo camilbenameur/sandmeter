@@ -227,8 +227,8 @@ type Workspace struct {
 //     nothing, grants UpperDisk only.
 //   - Network.Mode: NetworkProxy grants both modes; NetworkNone, or nothing,
 //     grants NetworkNone only. Network.Allow lists the destinations a policy
-//     may name: every entry of the policy must be covered by an entry here
-//     (see Dest.Covers).
+//     may name. The two lists are compared as wholes, on what each would
+//     decide for a request, not entry against entry: see Uncovered.
 //   - Filesystem.ReadOnlyRoot: false grants a writable root; true, or
 //     nothing, requires a read-only one.
 //   - Syscalls.Profile: the weakest profile a policy may ask for.
