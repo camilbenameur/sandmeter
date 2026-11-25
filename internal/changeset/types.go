@@ -993,7 +993,9 @@ func shortName(c string) bool {
 // ignorable lists the code points that are ignored by default when text is
 // shown or compared (the Unicode property Default_Ignorable_Code_Point), as
 // inclusive ranges: joiners, direction marks, variation selectors and the
-// like. It is a superset of what any one filesystem ignores.
+// like. The joiners, direction marks and the byte order mark among them are
+// the ones HFS+ skips when it compares two names; the rest is here because
+// a name that holds one does not look like what it is.
 var ignorable = [][2]rune{
 	{0x00ad, 0x00ad}, {0x034f, 0x034f}, {0x061c, 0x061c}, {0x115f, 0x1160}, {0x17b4, 0x17b5},
 	{0x180b, 0x180f}, {0x200b, 0x200f}, {0x202a, 0x202e}, {0x2060, 0x206f}, {0x3164, 0x3164},
