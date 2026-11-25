@@ -581,7 +581,7 @@ func TestClassify(t *testing.T) {
 		{"github~1/workflows/ci.yml", TierRefused},
 		{"vscode~1/tasks.json", TierRefused},
 		{"pre-co~1.yam", TierRefused},
-		{"src/claude~1/settings.json", TierRefused},
+		{"src/cursor~1/rules/style.mdc", TierRefused},
 		{"git~1.", TierRefused},
 		// Characters that are not shown, and that some filesystems ignore.
 		{".g\u200cit/hooks/pre-commit", TierRefused},
