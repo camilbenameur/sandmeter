@@ -206,6 +206,88 @@ func TestNumberTOMLEncodes(t *testing.T) {
 	}
 }
 
+// TestPolicyAndCeilingRoundTripThroughTOML encodes a policy and a ceiling and
+// reads the text back strictly: the same value comes out, and a key that was
+// not set is not in the text, where a strict reader would take an empty
+// string or a zero for a value.
+func TestPolicyAndCeilingRoundTripThroughTOML(t *testing.T) {
+	writable := false
+	full := Policy{
+		Version:    2,
+		Limits:     Limits{CPU: Num(0.5), Memory: "1GiB", PIDs: NoLimit(), Wall: Unlimited, Disk: "256MiB"},
+		Storage:    Storage{Upper: UpperTmpfs},
+		Network:    Network{Mode: NetworkProxy, Allow: []string{"pypi.org", "*.pythonhosted.org:443"}},
+		Filesystem: Filesystem{ReadOnlyRoot: &writable},
+		Syscalls:   Syscalls{Profile: ProfileCompat},
+		Process:    Process{Env: map[string]string{"CI": "1"}, EnvPass: []string{"NPM_TOKEN"}, Workdir: "/workspace"},
+		Workspace:  Workspace{Exclude: []string{".env"}},
+	}
+	onlyRoot := Policy{Version: 2, Filesystem: Filesystem{ReadOnlyRoot: &writable}}
+	for name, p := range map[string]Policy{
+		"nothing set":         {Version: 2},
+		"the default":         Default(),
+		"every key":           full,
+		"a writable root":     onlyRoot,
+		"one limit":           {Version: 2, Limits: Limits{PIDs: Num(64)}},
+		"an unlimited number": {Version: 2, Limits: Limits{CPU: NoLimit()}},
+	} {
+		var buf bytes.Buffer
+		if err := toml.NewEncoder(&buf).Encode(p); err != nil {
+			t.Errorf("%s: encode: %v", name, err)
+			continue
+		}
+		var back Policy
+		if err := decodeStrict(t, buf.String(), &back); err != nil {
+			t.Errorf("%s: decode of\n%s\n%v", name, buf.String(), err)
+			continue
+		}
+		if !reflect.DeepEqual(back, p) {
+			t.Errorf("%s: wrote\n%s\nand read back\n %+v\nwant\n %+v", name, buf.String(), back, p)
+		}
+		if strings.Contains(buf.String(), `""`) {
+			t.Errorf("%s: a key that is not set was written as an empty string:\n%s", name, buf.String())
+		}
+	}
+
+	// A policy with nothing set is the version line alone.
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(Policy{Version: 2}); err != nil || buf.String() != "version = 2\n" {
+		t.Errorf("an empty policy encodes as %q, %v", buf.String(), err)
+	}
+	// A writable root is false in the text, not an absent key.
+	buf.Reset()
+	if err := toml.NewEncoder(&buf).Encode(onlyRoot); err != nil || !strings.Contains(buf.String(), "read_only_root = false") {
+		t.Errorf("a writable root encodes as %q, %v", buf.String(), err)
+	}
+
+	for name, c := range map[string]Ceiling{
+		"nothing set":  {},
+		"the built-in": BuiltinCeiling(),
+		"a wide one": {
+			Limits:     Limits{CPU: NoLimit(), Memory: Unlimited, PIDs: Num(4096), Wall: "1h", Disk: "8GiB"},
+			Storage:    Storage{Upper: UpperTmpfs},
+			Network:    Network{Mode: NetworkProxy, Allow: []string{"*.example.org:443"}},
+			Filesystem: Filesystem{ReadOnlyRoot: &writable},
+			Syscalls:   Syscalls{Profile: ProfileOff},
+			Process:    CeilingProcess{EnvPass: []string{"NPM_TOKEN"}},
+		},
+	} {
+		buf.Reset()
+		if err := toml.NewEncoder(&buf).Encode(c); err != nil {
+			t.Errorf("ceiling, %s: encode: %v", name, err)
+			continue
+		}
+		var back Ceiling
+		if err := decodeStrict(t, buf.String(), &back); err != nil {
+			t.Errorf("ceiling, %s: decode of\n%s\n%v", name, buf.String(), err)
+			continue
+		}
+		if !reflect.DeepEqual(back, c) {
+			t.Errorf("ceiling, %s: wrote\n%s\nand read back\n %+v\nwant\n %+v", name, buf.String(), back, c)
+		}
+	}
+}
+
 func int64p(v int64) *int64 { return &v }
 
 func sampleNormal() Normal {

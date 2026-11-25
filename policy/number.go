@@ -123,7 +123,9 @@ func (n *Number) UnmarshalTOML(v any) error {
 }
 
 // MarshalTOML is the inverse of UnmarshalTOML for an encoder that follows the
-// same convention. An unset Number has no TOML form: tag the field omitempty.
+// same convention. An unset Number has no TOML form, since TOML has no null:
+// a field of this type is tagged omitempty, as those of Limits are, and the
+// encoder then leaves the key out.
 func (n Number) MarshalTOML() ([]byte, error) {
 	switch n.state {
 	case numberValue:

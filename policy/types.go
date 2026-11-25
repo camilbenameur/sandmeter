@@ -118,19 +118,22 @@ const (
 // Policy is a policy file of schema v2, as written. The zero Policy is the
 // file with nothing in it: every field takes its built-in default.
 //
-// The TOML tags are the keys of the file. The JSON tags give the same
+// The TOML tags are the keys of the file. Every key but version is optional
+// and is left out of an encoding when it is not set, so that what an encoder
+// writes for a Policy reads back as the same Policy: a key that is absent
+// means "not set", and no value in a file does. The JSON tags give the same
 // document a JSON form for tools; that form is not what a receipt embeds
 // (see Normal).
 type Policy struct {
 	// Version is 2. Parse sets it to 2 for a v1 file it mapped.
 	Version    int        `toml:"version" json:"version"`
-	Limits     Limits     `toml:"limits" json:"limits"`
-	Storage    Storage    `toml:"storage" json:"storage"`
-	Network    Network    `toml:"network" json:"network"`
-	Filesystem Filesystem `toml:"filesystem" json:"filesystem"`
-	Syscalls   Syscalls   `toml:"syscalls" json:"syscalls"`
-	Process    Process    `toml:"process" json:"process"`
-	Workspace  Workspace  `toml:"workspace" json:"workspace"`
+	Limits     Limits     `toml:"limits,omitempty" json:"limits"`
+	Storage    Storage    `toml:"storage,omitempty" json:"storage"`
+	Network    Network    `toml:"network,omitempty" json:"network"`
+	Filesystem Filesystem `toml:"filesystem,omitempty" json:"filesystem"`
+	Syscalls   Syscalls   `toml:"syscalls,omitempty" json:"syscalls"`
+	Process    Process    `toml:"process,omitempty" json:"process"`
+	Workspace  Workspace  `toml:"workspace,omitempty" json:"workspace"`
 }
 
 // Limits are the resource limits of a sandbox. Each one is a value, the word
@@ -138,38 +141,38 @@ type Policy struct {
 // of every command), except Wall, which bounds one command.
 type Limits struct {
 	// CPU is a number of cores, such as 0.5 or 2. Built-in default: 1.
-	CPU Number `toml:"cpu" json:"cpu,omitzero"`
+	CPU Number `toml:"cpu,omitempty" json:"cpu,omitzero"`
 	// Memory is a size such as "512MiB", or "unlimited". Swap is always
 	// refused to the sandbox, so this is its whole memory. Built-in
 	// default: "512MiB".
-	Memory string `toml:"memory" json:"memory,omitempty"`
+	Memory string `toml:"memory,omitempty" json:"memory,omitempty"`
 	// PIDs is the maximum number of tasks (processes and threads), a whole
 	// number. Built-in default: 256.
-	PIDs Number `toml:"pids" json:"pids,omitzero"`
+	PIDs Number `toml:"pids,omitempty" json:"pids,omitzero"`
 	// Wall is the longest one command may run, as a duration such as "60s"
 	// or "10m", or "unlimited". Built-in default: "60s".
-	Wall string `toml:"wall" json:"wall,omitempty"`
+	Wall string `toml:"wall,omitempty" json:"wall,omitempty"`
 	// Disk is the size of the writable layer, such as "1GiB". It is a hard
 	// quota and exists only with storage.upper = "tmpfs"; with any other
 	// storage mode a policy that sets it is refused. Absent by default,
 	// which with storage.upper = "tmpfs" means the ceiling's value.
-	Disk string `toml:"disk" json:"disk,omitempty"`
+	Disk string `toml:"disk,omitempty" json:"disk,omitempty"`
 }
 
 // Storage selects where the writable layer lives.
 type Storage struct {
 	// Upper is UpperDisk or UpperTmpfs. Built-in default: UpperDisk.
-	Upper string `toml:"upper" json:"upper,omitempty"`
+	Upper string `toml:"upper,omitempty" json:"upper,omitempty"`
 }
 
 // Network selects what the sandbox can reach.
 type Network struct {
 	// Mode is NetworkNone or NetworkProxy. Built-in default: NetworkNone.
-	Mode string `toml:"mode" json:"mode,omitempty"`
+	Mode string `toml:"mode,omitempty" json:"mode,omitempty"`
 	// Allow lists the destinations the proxy forwards to, in the grammar of
 	// ParseDest: "name", "name:port", "*.suffix:port". It must be empty
 	// unless Mode is NetworkProxy, and must not be empty when it is.
-	Allow []string `toml:"allow" json:"allow,omitempty"`
+	Allow []string `toml:"allow,omitempty" json:"allow,omitempty"`
 }
 
 // Filesystem selects how the root filesystem is exposed.
@@ -177,14 +180,14 @@ type Filesystem struct {
 	// ReadOnlyRoot, when true, makes the root filesystem read-only except
 	// /tmp and /workspace. Nil is the built-in default, true. A policy that
 	// writes false asks for a writable root, which the ceiling must grant.
-	ReadOnlyRoot *bool `toml:"read_only_root" json:"read_only_root,omitempty"`
+	ReadOnlyRoot *bool `toml:"read_only_root,omitempty" json:"read_only_root,omitempty"`
 }
 
 // Syscalls selects the system call filter.
 type Syscalls struct {
 	// Profile is ProfileDefault, ProfileCompat or ProfileOff. Built-in
 	// default: ProfileDefault.
-	Profile string `toml:"profile" json:"profile,omitempty"`
+	Profile string `toml:"profile,omitempty" json:"profile,omitempty"`
 }
 
 // Process describes the commands that run in the sandbox.
@@ -192,17 +195,17 @@ type Process struct {
 	// Env sets environment variables to literal values. The values are part
 	// of the policy: they are hashed, embedded in receipts and readable by
 	// whoever reads those. A secret does not belong here; see EnvPass.
-	Env map[string]string `toml:"env" json:"env,omitempty"`
+	Env map[string]string `toml:"env,omitempty" json:"env,omitempty"`
 	// EnvPass names variables whose values are taken from the environment of
 	// the client that starts the session. A receipt records the names, never
 	// the values. Each name must be granted by the ceiling. An agent that
 	// reaches sandmeter through MCP cannot add a name: the list comes from
 	// the policy file a human chose when registering the server.
-	EnvPass []string `toml:"env_pass" json:"env_pass,omitempty"`
+	EnvPass []string `toml:"env_pass,omitempty" json:"env_pass,omitempty"`
 	// Workdir is the working directory of commands, an absolute path inside
 	// the sandbox. Empty means the image's own, or /workspace when a project
 	// was imported.
-	Workdir string `toml:"workdir" json:"workdir,omitempty"`
+	Workdir string `toml:"workdir,omitempty" json:"workdir,omitempty"`
 }
 
 // Workspace describes the import of the project directory.
@@ -211,7 +214,7 @@ type Workspace struct {
 	// that the client leaves out when it packs the project. The client
 	// applies them; the root side never sees the excluded files. The order
 	// is kept as written.
-	Exclude []string `toml:"exclude" json:"exclude,omitempty"`
+	Exclude []string `toml:"exclude,omitempty" json:"exclude,omitempty"`
 }
 
 // Ceiling is the operator's maximum: the keys of a policy read as upper
@@ -239,18 +242,18 @@ type Workspace struct {
 // BuiltinCeiling returns: the default limits, no network, no passed variable,
 // ProfileCompat at the weakest and a read-only root.
 type Ceiling struct {
-	Limits     Limits         `toml:"limits" json:"limits"`
-	Storage    Storage        `toml:"storage" json:"storage"`
-	Network    Network        `toml:"network" json:"network"`
-	Filesystem Filesystem     `toml:"filesystem" json:"filesystem"`
-	Syscalls   Syscalls       `toml:"syscalls" json:"syscalls"`
-	Process    CeilingProcess `toml:"process" json:"process"`
+	Limits     Limits         `toml:"limits,omitempty" json:"limits"`
+	Storage    Storage        `toml:"storage,omitempty" json:"storage"`
+	Network    Network        `toml:"network,omitempty" json:"network"`
+	Filesystem Filesystem     `toml:"filesystem,omitempty" json:"filesystem"`
+	Syscalls   Syscalls       `toml:"syscalls,omitempty" json:"syscalls"`
+	Process    CeilingProcess `toml:"process,omitempty" json:"process"`
 }
 
 // CeilingProcess is the part of Process that a ceiling bounds.
 type CeilingProcess struct {
 	// EnvPass lists the variable names a policy may pass. Empty grants none.
-	EnvPass []string `toml:"env_pass" json:"env_pass,omitempty"`
+	EnvPass []string `toml:"env_pass,omitempty" json:"env_pass,omitempty"`
 }
 
 // Violation is one reason a policy is refused.
