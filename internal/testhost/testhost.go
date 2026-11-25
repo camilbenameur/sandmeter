@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -615,11 +616,12 @@ func (before Snapshot) Diff(after Snapshot) []string {
 // The whole host is compared, not the part one test touches. Two things
 // follow.
 //
-// Tests that call AssertClean take turns, across test binaries: each holds a
-// lock on the host from this call until its comparison is done, and the next
-// one waits. A test that calls AssertClean therefore must not call
-// t.Parallel, and needs no other care to keep away from the others that call
-// it.
+// Tests that call AssertClean take turns, across test binaries: a test
+// binary holds a lock on the host from this call until the comparison is
+// done, and the next binary waits. Inside one binary the lock is shared, so
+// that a test and its subtests may both call AssertClean; that is also why
+// a test that calls it must not call t.Parallel, which would let two tests
+// of the same binary change the host at once.
 //
 // Whatever else creates mounts, cgroups, links or processes of sandmeter on
 // the host during the test shows up as a difference, and the lock cannot
@@ -647,7 +649,7 @@ func AssertClean(t TB, more ...Scope) {
 		scope.StateRoots = append(scope.StateRoots, m.StateRoots...)
 		scope.Binaries = append(scope.Binaries, m.Binaries...)
 	}
-	unlock, err := lockHost(hostLockPath())
+	unlock, err := holdHost()
 	if err != nil {
 		t.Fatalf("testhost: the host cannot be compared alone: %v", err)
 		return
@@ -661,6 +663,41 @@ func AssertClean(t TB, more ...Scope) {
 			t.Errorf("the test did not leave the host as it found it:\n%s", strings.Join(diff, "\n"))
 		}
 	})
+}
+
+// held is this process's hold on the host lock: taken by the first test
+// that asks, shared by those that ask while it is held, given back when the
+// last of them is done.
+var held struct {
+	sync.Mutex
+	holders int
+	release func()
+}
+
+// holdHost takes the host lock for this process, or joins the hold the
+// process already has, and returns the function that lets go.
+func holdHost() (letGo func(), err error) {
+	held.Lock()
+	defer held.Unlock()
+	if held.holders == 0 {
+		release, err := lockHost(hostLockPath())
+		if err != nil {
+			return nil, err
+		}
+		held.release = release
+	}
+	held.holders++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			held.Lock()
+			defer held.Unlock()
+			if held.holders--; held.holders == 0 {
+				held.release()
+				held.release = nil
+			}
+		})
+	}, nil
 }
 
 // hostLockPath is the lock file of AssertClean: one per user, in the

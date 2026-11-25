@@ -584,26 +584,45 @@ func TestAssertCleanTakesTurns(t *testing.T) {
 	}
 
 	// AssertClean holds the real lock from the call to the end of the
-	// comparison, and gives it back after it.
+	// comparison, and gives it back after it. A test and its subtest may
+	// both call it: the second call joins the hold of the first instead of
+	// waiting for it for ever.
 	scope := fixture(t)
-	rec := &recorder{}
-	AssertClean(rec, scope)
-	held := make(chan func(), 1)
+	outer, inner := &recorder{}, &recorder{}
+	AssertClean(outer, scope)
+	nested := make(chan struct{})
 	go func() {
+		AssertClean(inner, scope)
+		close(nested)
+	}()
+	select {
+	case <-nested:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a second AssertClean in the same test binary waits for the first")
+	}
+	taken := make(chan func(), 1)
+	go func() {
+		// Another test binary: a lock of its own on the same file.
 		u, err := lockHost(hostLockPath())
 		if err != nil {
 			t.Error(err)
 		}
-		held <- u
+		taken <- u
 	}()
-	select {
-	case <-held:
-		t.Fatal("the host lock is free while a test that called AssertClean runs")
-	case <-time.After(100 * time.Millisecond):
+	stillHeld := func(when string) {
+		t.Helper()
+		select {
+		case <-taken:
+			t.Fatalf("the host lock is free %s", when)
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
-	rec.finish()
+	stillHeld("while a test that called AssertClean runs")
+	inner.finish()
+	stillHeld("after the subtest, while the test that called AssertClean first still runs")
+	outer.finish()
 	select {
-	case u := <-held:
+	case u := <-taken:
 		u()
 	case <-time.After(5 * time.Second):
 		t.Fatal("AssertClean did not give the host lock back")
