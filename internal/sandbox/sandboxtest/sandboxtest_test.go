@@ -17,11 +17,9 @@ import (
 
 func start(t *testing.T, b *Backend, mutate func(*sandbox.Spec)) *Sandbox {
 	t.Helper()
-	id, err := ids.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec := sandbox.Spec{ID: id, Dir: t.TempDir(), Storage: sandbox.StorageDisk, SyscallProfile: policy.ProfileDefault}
+	spec := NewSpec(t)
+	// Tests that are about the time limit set one; the others have none.
+	spec.Limits.Wall = sandbox.NoLimit()
 	if mutate != nil {
 		mutate(&spec)
 	}
@@ -63,7 +61,7 @@ func TestExecDefaultsAndOutput(t *testing.T) {
 }
 
 func TestExecRefusesWhatWasNeverAttempted(t *testing.T) {
-	s := start(t, New(), func(spec *sandbox.Spec) { spec.Limits.Wall = time.Second })
+	s := start(t, New(), func(spec *sandbox.Spec) { spec.Limits.Wall = sandbox.AtMost(int64(time.Second)) })
 	for name, argv := range map[string][]string{"empty": nil, "nul": {"a\x00b"}, "not utf-8": {"ok", "\xff"}} {
 		if _, err := s.Exec(context.Background(), argv, sandbox.ExecOptions{}); err == nil {
 			t.Errorf("%s: Exec accepted it", name)
@@ -121,7 +119,7 @@ func TestOneThingAtATime(t *testing.T) {
 
 	cancel()
 	res := <-out
-	if res.Status != sandbox.StatusKilled || res.KillReason != sandbox.KillCancelled || res.ExitStatus() != 137 {
+	if res.Status != sandbox.StatusKilled || res.KillReason != sandbox.KillCancelled || res.Signal != 9 {
 		t.Errorf("a cancelled command: %+v", res)
 	}
 }
@@ -172,7 +170,7 @@ func TestStopCanFailAndBeRepeated(t *testing.T) {
 func TestWallTimeout(t *testing.T) {
 	b := New()
 	b.Step = Block
-	s := start(t, b, func(spec *sandbox.Spec) { spec.Limits.Wall = time.Minute })
+	s := start(t, b, func(spec *sandbox.Spec) { spec.Limits.Wall = sandbox.AtMost(int64(time.Minute)) })
 	res, err := s.Exec(context.Background(), []string{"sleep", "1000"}, sandbox.ExecOptions{Timeout: 20 * time.Millisecond})
 	if err != nil || res.KillReason != sandbox.KillWallTimeout {
 		t.Errorf("a command past its limit: %+v, %v", res, err)
@@ -271,23 +269,51 @@ func TestLayersSnapshotRestore(t *testing.T) {
 	}
 }
 
-func TestStartChecksTheSpec(t *testing.T) {
+// TestStartRefusesWhatARealBackendRefuses: the double is no more lenient
+// than the contract. A Spec with a field left out is the weakest sandbox
+// there is, and an engine that builds one must not pass its tests here.
+func TestStartRefusesWhatARealBackendRefuses(t *testing.T) {
 	b := New()
-	id, _ := ids.New()
-	for name, spec := range map[string]sandbox.Spec{
-		"no identifier":     {Dir: t.TempDir()},
-		"relative dir":      {ID: id, Dir: "relative"},
-		"missing directory": {ID: id, Dir: filepath.Join(t.TempDir(), "absent")},
+	ctx := context.Background()
+	if _, err := b.Start(ctx, NewSpec(t)); err != nil {
+		t.Fatalf("the Spec of NewSpec: %v", err)
+	}
+	started := len(b.Sandboxes())
+
+	if _, err := b.Start(ctx, sandbox.Spec{}); !errors.Is(err, sandbox.ErrInvalid) {
+		t.Errorf("the zero Spec: %v, want ErrInvalid", err)
+	}
+	for name, mutate := range map[string]func(*sandbox.Spec){
+		"no identifier":        func(s *sandbox.Spec) { s.ID = ids.ID{} },
+		"relative dir":         func(s *sandbox.Spec) { s.Dir = "relative" },
+		"a limit left out":     func(s *sandbox.Spec) { s.Limits.MemoryBytes = sandbox.Limit{} },
+		"a limit of zero":      func(s *sandbox.Spec) { s.Limits.PIDs = sandbox.AtMost(0) },
+		"no floor":             func(s *sandbox.Spec) { s.Floor = sandbox.Floor{} },
+		"no network mode":      func(s *sandbox.Spec) { s.Network.Mode = "" },
+		"unknown network mode": func(s *sandbox.Spec) { s.Network.Mode = "host" },
+		"no storage mode":      func(s *sandbox.Spec) { s.Storage = "" },
+		"no profile":           func(s *sandbox.Spec) { s.SyscallProfile = "" },
+		"unknown profile":      func(s *sandbox.Spec) { s.SyscallProfile = "relaxed" },
+		"the host's own ids":   func(s *sandbox.Spec) { s.IDBase = 0 },
 	} {
-		if _, err := b.Start(context.Background(), spec); err == nil {
-			t.Errorf("%s: Start accepted it", name)
+		spec := NewSpec(t)
+		mutate(&spec)
+		if _, err := b.Start(ctx, spec); !errors.Is(err, sandbox.ErrInvalid) {
+			t.Errorf("%s: Start = %v, want ErrInvalid", name, err)
 		}
 	}
+	// The directory of a session is the engine's to create.
+	missing := NewSpec(t)
+	missing.Dir = filepath.Join(missing.Dir, "absent")
+	if _, err := b.Start(ctx, missing); err == nil {
+		t.Error("Start accepted a session directory that does not exist")
+	}
+
 	b.StartErr = sandbox.ErrUnsupported
-	if _, err := b.Start(context.Background(), sandbox.Spec{ID: id, Dir: t.TempDir()}); !errors.Is(err, sandbox.ErrUnsupported) {
+	if _, err := b.Start(ctx, NewSpec(t)); !errors.Is(err, sandbox.ErrUnsupported) {
 		t.Errorf("StartErr: %v", err)
 	}
-	if len(b.Sandboxes()) != 0 {
+	if len(b.Sandboxes()) != started {
 		t.Error("a refused Start left a sandbox")
 	}
 }

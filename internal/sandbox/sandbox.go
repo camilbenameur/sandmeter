@@ -52,9 +52,14 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"math"
 	"net/netip"
+	"path/filepath"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/camilbenameur/sandmeter/internal/hostprobe"
 	"github.com/camilbenameur/sandmeter/internal/ids"
@@ -71,6 +76,12 @@ var (
 	// say the same thing beforehand; the error is the second line of defence
 	// and means that a check upstream was skipped.
 	ErrUnsupported = errors.New("not supported by this backend on this host")
+	// ErrInvalid is returned for a Spec that is malformed: a field left at
+	// its zero value where a value is required, a limit that is neither a
+	// positive amount nor explicitly none, a mode that does not exist. It
+	// means that whoever built the Spec forgot a field or skipped a check.
+	// No backend guesses what was meant, and none runs anything.
+	ErrInvalid = errors.New("invalid sandbox specification")
 	// ErrBusy is returned by an operation that needs the sandbox at rest
 	// while a command runs in it, and by Exec while another Exec runs.
 	// Commands are never queued.
@@ -99,27 +110,75 @@ const IDCount = 65536
 // so on this host, never because a constant in the backend's code does.
 type Capabilities = policy.Capabilities
 
+// Limit is one resource limit of a Spec. It says one of two things, and says
+// it explicitly: a positive amount, or that no limit is in force. The zero
+// Limit says neither. Spec.Validate refuses it, so that a field somebody
+// forgot to fill is an error and never reads as "no limit".
+type Limit struct {
+	// Value is the limit, in the unit of the field that holds it. It is
+	// positive, and zero when None is set.
+	Value int64
+	// None says that no limit is in force: the policy asked for "unlimited"
+	// and the ceiling granted it, or a built-in default was not applied
+	// because the backend cannot enforce it. The backend then sets none.
+	None bool
+}
+
+// AtMost returns the Limit of v, which must be positive.
+func AtMost(v int64) Limit { return Limit{Value: v} }
+
+// NoLimit returns the Limit that says no limit is in force.
+func NoLimit() Limit { return Limit{None: true} }
+
+// Valid reports whether l is a positive amount or an explicit absence.
+func (l Limit) Valid() bool {
+	if l.None {
+		return l.Value == 0
+	}
+	return l.Value > 0
+}
+
+// Get returns the amount and true, or zero and false when no limit is in
+// force. A Limit that is not valid reads as an amount and never as "none":
+// code that used a Spec nobody validated then applies the harshest reading
+// of it, a limit of zero, which the kernel refuses or which lets nothing
+// run.
+func (l Limit) Get() (v int64, limited bool) {
+	if l.None && l.Value == 0 {
+		return 0, false
+	}
+	return l.Value, true
+}
+
+// Duration is Get for a limit that holds nanoseconds.
+func (l Limit) Duration() (d time.Duration, limited bool) {
+	v, limited := l.Get()
+	return time.Duration(v), limited
+}
+
 // Limits are the resource limits of a sandbox, already resolved: the engine
-// applied the defaults and the ceiling. A zero field means that the policy
-// asked for no limit and that the ceiling granted it; the backend then sets
-// none.
+// applied the defaults and the ceiling. Every field is a Limit and has to be
+// filled in: there is no value that means "no limit" by being left out.
 type Limits struct {
 	// CPUMillis is the CPU limit of the session in thousandths of a core.
-	CPUMillis int64
+	CPUMillis Limit
 	// MemoryBytes is the memory limit of the session. Swap is always
 	// refused to the sandbox.
-	MemoryBytes int64
+	MemoryBytes Limit
 	// PIDs is the largest number of tasks of the workload. Tasks the backend
 	// needs for its own processes inside the sandbox come on top of it and
 	// are the backend's to reserve.
-	PIDs int64
-	// Wall is the longest one command may run.
-	Wall time.Duration
+	PIDs Limit
+	// Wall is the longest one command may run, in nanoseconds: read it with
+	// Limit.Duration.
+	Wall Limit
 	// DiskBytes and DiskInodes are the hard quota of the writable layer.
-	// They are set only with StorageTmpfs. DiskInodes is InodesFor of
-	// DiskBytes unless the engine has a reason to say otherwise.
-	DiskBytes  int64
-	DiskInodes int64
+	// With StorageDisk both are NoLimit: that mode has no quota. With
+	// StorageTmpfs both are amounts, or both are NoLimit for a memory-backed
+	// layer that only the memory limit of the session bounds. DiskInodes is
+	// InodesFor of DiskBytes unless the engine has a reason to say otherwise.
+	DiskBytes  Limit
+	DiskInodes Limit
 }
 
 // InodesFor returns the inode quota that goes with a byte quota: one inode
@@ -168,8 +227,9 @@ const ProxyAddr = "127.0.0.1:3128"
 // what is left for everybody else, not what one session may write.
 type Floor struct {
 	// MinFreeBytes and MinFreeInodes are what must stay free on the
-	// filesystem of Spec.Dir. Zero switches that half of the guard off, which
-	// only the operator can ask for.
+	// filesystem of Spec.Dir. The guard is always on: both are positive, the
+	// operator file has no value that switches either half off, and a Spec
+	// with a zero in one of them is refused.
 	MinFreeBytes  int64
 	MinFreeInodes int64
 }
@@ -189,6 +249,11 @@ type Network struct {
 // Spec is everything a backend needs to start a sandbox. The engine fills
 // it; no field comes from a client unchecked, and no field is a path that a
 // client chose.
+//
+// The zero Spec is not a sandbox with everything switched off: it is
+// invalid. Every field that decides a protection has to be given a value,
+// and Validate, which every backend calls first, refuses a Spec in which one
+// was left out.
 type Spec struct {
 	// ID is the session identifier. The service generated it; no client
 	// chose it. The backend names the session's cgroup after it and after
@@ -251,7 +316,140 @@ type Spec struct {
 	Hostname string
 	// IDBase is the host id that user and group 0 of the sandbox map to.
 	// The image layers and the workspace layer were written for this base.
+	// It is never 0, which would make root of the sandbox root of the host,
+	// and the whole range lies above the ids a host gives its own accounts.
 	IDBase uint32
+}
+
+// MaxHostnameBytes is the longest host name the kernel takes.
+const MaxHostnameBytes = 64
+
+// Validate reports everything that is wrong with the form of s, as one error
+// that wraps ErrInvalid and names each fault. It asks the host nothing: it
+// checks what must hold for every backend, which is that every field that
+// decides a protection was given a meaningful value.
+//
+// Invariant: no backend starts anything for a Spec that Validate refuses.
+// Start calls it before it touches the host. Without it a forgotten field
+// would be read as the weakest setting of that field: no limit, no guard,
+// the host's own root.
+func (s Spec) Validate() error {
+	var faults []string
+	bad := func(format string, args ...any) {
+		faults = append(faults, fmt.Sprintf(format, args...))
+	}
+	absolute := func(what, p string) {
+		if !filepath.IsAbs(p) || filepath.Clean(p) != p {
+			bad("%s %q is not an absolute, clean path", what, p)
+		}
+	}
+	text := func(what, v string) bool {
+		if !utf8.ValidString(v) || strings.ContainsRune(v, 0) {
+			bad("%s is not valid UTF-8 or holds a NUL byte", what)
+			return false
+		}
+		return true
+	}
+
+	if s.ID.IsZero() {
+		bad("no session identifier")
+	}
+	absolute("the session directory", s.Dir)
+	for i, l := range s.Layers {
+		absolute(fmt.Sprintf("image layer %d", i), l)
+	}
+	if s.Workspace != "" {
+		absolute("the workspace layer", s.Workspace)
+	}
+
+	faults = append(faults, s.Limits.faults(s.Storage)...)
+	switch s.Storage {
+	case StorageDisk, StorageTmpfs:
+	default:
+		bad("storage mode %q is not %q or %q", s.Storage, StorageDisk, StorageTmpfs)
+	}
+	if s.Floor.MinFreeBytes <= 0 || s.Floor.MinFreeInodes <= 0 {
+		bad("the free-space floor is %d bytes and %d inodes: the guard is always on, and both are positive", s.Floor.MinFreeBytes, s.Floor.MinFreeInodes)
+	}
+
+	switch s.Network.Mode {
+	case NetworkNone:
+		if len(s.Network.Allow) != 0 {
+			bad("network mode %q with %d allowed destinations", NetworkNone, len(s.Network.Allow))
+		}
+	case NetworkProxy:
+	default:
+		bad("network mode %q is not %q or %q", s.Network.Mode, NetworkNone, NetworkProxy)
+	}
+	for i, d := range s.Network.Allow {
+		if d.Host == "" || d.Port == 0 {
+			bad("allowed destination %d is not a parsed destination", i)
+		}
+	}
+	for i, p := range s.Network.DenyExtra {
+		if !p.IsValid() {
+			bad("denied prefix %d is not a prefix", i)
+		}
+	}
+
+	switch s.SyscallProfile {
+	case policy.ProfileDefault, policy.ProfileCompat, policy.ProfileOff:
+	default:
+		bad("syscall profile %q is not %q, %q or %q", s.SyscallProfile, policy.ProfileDefault, policy.ProfileCompat, policy.ProfileOff)
+	}
+
+	for i, e := range s.Env {
+		if !text(fmt.Sprintf("environment entry %d", i), e) {
+			continue
+		}
+		if eq := strings.IndexByte(e, '='); eq <= 0 {
+			bad("environment entry %d is not NAME=value", i)
+		}
+	}
+	if text("the working directory", s.Workdir) && s.Workdir != "" && !strings.HasPrefix(s.Workdir, "/") {
+		bad("the working directory is not an absolute path")
+	}
+	if text("the host name", s.Hostname) && len(s.Hostname) > MaxHostnameBytes {
+		bad("the host name is %d bytes long, more than %d", len(s.Hostname), MaxHostnameBytes)
+	}
+
+	// Invariant: root of a sandbox is never root of the host, nor any id a
+	// host account can have. The whole range also has to exist: the kernel
+	// has no id above 2^32-2.
+	switch {
+	case s.IDBase < IDCount:
+		bad("id base %d: ids of the sandbox would be ids of the host's own accounts, root included below %d", s.IDBase, IDCount)
+	case uint64(s.IDBase)+IDCount-1 > math.MaxUint32-1:
+		bad("id base %d: the %d ids of a sandbox do not fit under the largest id", s.IDBase, IDCount)
+	}
+
+	if len(faults) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrInvalid, strings.Join(faults, "; "))
+}
+
+// faults lists what is wrong with the limits for a storage mode.
+func (l Limits) faults(storage StorageMode) []string {
+	var out []string
+	for _, f := range []struct {
+		name string
+		l    Limit
+	}{
+		{"the cpu limit", l.CPUMillis}, {"the memory limit", l.MemoryBytes}, {"the task limit", l.PIDs},
+		{"the wall limit", l.Wall}, {"the disk quota", l.DiskBytes}, {"the inode quota", l.DiskInodes},
+	} {
+		if !f.l.Valid() {
+			out = append(out, fmt.Sprintf("%s is %+v: a limit is a positive amount or explicitly none, and never left out", f.name, f.l))
+		}
+	}
+	switch {
+	case storage == StorageDisk && (!l.DiskBytes.None || !l.DiskInodes.None):
+		out = append(out, fmt.Sprintf("a disk quota with storage mode %q, which has none", StorageDisk))
+	case l.DiskBytes.None != l.DiskInodes.None:
+		out = append(out, "a byte quota without an inode quota, or the reverse")
+	}
+	return out
 }
 
 // FromPolicy returns the part of a Spec that a resolved policy decides:
@@ -259,20 +457,34 @@ type Spec struct {
 // and Workdir. The engine fills the rest: ID, Dir, Layers, Workspace, Floor,
 // Network.DenyExtra, Env (which includes the policy's own variables),
 // Hostname and IDBase.
-func FromPolicy(n policy.Normal) Spec {
-	deref := func(p *int64) int64 {
+//
+// A limit that is nil in the policy becomes NoLimit: nothing is in force for
+// it, whether "unlimited" was granted or a default was not applied. A limit
+// that is set must be at least 1, as policy.Resolve guarantees; one that is
+// zero or negative is refused with ErrInvalid.
+//
+// Invariant: "set to zero" and "not limited" never meet. They are two
+// different values in a policy, and a kernel interface that reads zero as
+// "no limit" must never be handed a limit somebody set.
+func FromPolicy(n policy.Normal) (Spec, error) {
+	var faults []string
+	limit := func(key string, p *int64) Limit {
 		if p == nil {
-			return 0
+			return NoLimit()
 		}
-		return *p
+		if *p <= 0 {
+			faults = append(faults, fmt.Sprintf("%s is %d in the policy in force: a limit that is set is at least 1", key, *p))
+		}
+		return AtMost(*p)
 	}
 	s := Spec{
 		Limits: Limits{
-			CPUMillis:   deref(n.Limits.CPUMillis),
-			MemoryBytes: deref(n.Limits.MemoryBytes),
-			PIDs:        deref(n.Limits.PIDs),
-			Wall:        time.Duration(deref(n.Limits.WallNanos)),
-			DiskBytes:   deref(n.Limits.DiskBytes),
+			CPUMillis:   limit(policy.KeyLimitCPU, n.Limits.CPUMillis),
+			MemoryBytes: limit(policy.KeyLimitMemory, n.Limits.MemoryBytes),
+			PIDs:        limit(policy.KeyLimitPIDs, n.Limits.PIDs),
+			Wall:        limit(policy.KeyLimitWall, n.Limits.WallNanos),
+			DiskBytes:   limit(policy.KeyLimitDisk, n.Limits.DiskBytes),
+			DiskInodes:  NoLimit(),
 		},
 		Storage:        StorageMode(n.Storage.Upper),
 		Network:        Network{Mode: NetworkMode(n.Network.Mode), Allow: append([]policy.Dest(nil), n.Network.Allow...)},
@@ -280,10 +492,31 @@ func FromPolicy(n policy.Normal) Spec {
 		ReadOnlyRoot:   n.Filesystem.ReadOnlyRoot,
 		Workdir:        n.Process.Workdir,
 	}
-	if s.Limits.DiskBytes > 0 {
-		s.Limits.DiskInodes = InodesFor(s.Limits.DiskBytes)
+	if v, limited := s.Limits.DiskBytes.Get(); limited && v > 0 {
+		s.Limits.DiskInodes = AtMost(InodesFor(v))
 	}
-	return s
+	if len(faults) == 0 {
+		faults = s.Limits.faults(s.Storage)
+	}
+	switch s.Storage {
+	case StorageDisk, StorageTmpfs:
+	default:
+		faults = append(faults, fmt.Sprintf("storage.upper is %q", n.Storage.Upper))
+	}
+	switch s.Network.Mode {
+	case NetworkNone, NetworkProxy:
+	default:
+		faults = append(faults, fmt.Sprintf("network.mode is %q", n.Network.Mode))
+	}
+	switch s.SyscallProfile {
+	case policy.ProfileDefault, policy.ProfileCompat, policy.ProfileOff:
+	default:
+		faults = append(faults, fmt.Sprintf("syscalls.profile is %q", n.Syscalls.Profile))
+	}
+	if len(faults) > 0 {
+		return Spec{}, fmt.Errorf("%w: the policy in force cannot be turned into a sandbox: %s", ErrInvalid, strings.Join(faults, "; "))
+	}
+	return s, nil
 }
 
 // ExecOptions are the options of one command.
@@ -300,8 +533,9 @@ type ExecOptions struct {
 	Stdout io.Writer
 	Stderr io.Writer
 	// Timeout shortens the wall limit for this command. Zero means the
-	// limit of the Spec. A value above that limit is refused: an option
-	// never widens what the policy set.
+	// limit of the Spec, which may be none. A negative value, and a value
+	// above that limit, is refused: an option never widens what the policy
+	// set.
 	Timeout time.Duration
 	// Workdir replaces Spec.Workdir for this command when not empty.
 	Workdir string
@@ -587,6 +821,12 @@ type StorageFacts struct {
 }
 
 // Result is the outcome of one command, as observed from the host.
+//
+// A Result has no exit status of its own to offer a shell. The status a
+// sandmeter command ends with is decided in one place, from the outcome a
+// record carries (package exit): a command killed at its time limit, for
+// instance, ends with the status reserved for that and not with 128 plus the
+// signal that happened to do the killing.
 type Result struct {
 	// Status says how the command ended and which of ExitCode, Signal,
 	// KillReason and Error are meaningful.
@@ -619,22 +859,6 @@ type Result struct {
 	// that ran it exits with the status reserved for a failed teardown, so
 	// that a leak is never silent.
 	CleanupErr error
-}
-
-// ExitStatus returns the number a shell would report for the result: the
-// exit status of the command when it exited or could not be started, and 128
-// plus the signal number when a signal ended it. It returns -1 for a set-up
-// failure, which has no exit status, and for a kill without a signal.
-func (r Result) ExitStatus() int {
-	switch r.Status {
-	case StatusExited, StatusExecFailed:
-		return r.ExitCode
-	case StatusSignalled, StatusKilled:
-		if r.Signal > 0 {
-			return 128 + r.Signal
-		}
-	}
-	return -1
 }
 
 // BaseKind says what a writable layer sits on.
@@ -746,9 +970,10 @@ type Backend interface {
 	// to keep for the session exists inside spec.Dir, and nothing that has
 	// to be taken down after a command does. No process runs.
 	//
-	// Start refuses, with ErrUnsupported, a spec it cannot honour in full.
-	// When it fails it leaves nothing behind outside spec.Dir. After a
-	// successful Start the caller must call Stop.
+	// Start first calls spec.Validate and refuses, with its error, a spec
+	// that is malformed. It then refuses, with ErrUnsupported, a spec it
+	// cannot honour in full. When it fails it leaves nothing behind outside
+	// spec.Dir. After a successful Start the caller must call Stop.
 	Start(ctx context.Context, spec Spec) (Sandbox, error)
 }
 

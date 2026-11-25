@@ -6,6 +6,8 @@
 // that those layers rely on, so that a test which passes against it is a
 // test of the caller and not of a lenient double:
 //
+//   - a Spec that sandbox.Spec.Validate refuses is refused by Start: the
+//     double does not run what a real backend would not;
 //   - one thing at a time: a second Exec, a Snapshot or a Restore during a
 //     command answers sandbox.ErrBusy;
 //   - Stop kills a running command, whose result says KillStopped, and waits
@@ -33,9 +35,48 @@ import (
 
 	"github.com/camilbenameur/sandmeter/internal/hostprobe"
 	"github.com/camilbenameur/sandmeter/internal/ids"
+	"github.com/camilbenameur/sandmeter/internal/layout"
 	"github.com/camilbenameur/sandmeter/internal/sandbox"
 	"github.com/camilbenameur/sandmeter/policy"
 )
+
+// TB is the part of testing.TB that NewSpec uses.
+type TB interface {
+	Helper()
+	Fatalf(format string, args ...any)
+	TempDir() string
+}
+
+// NewSpec returns a Spec that every backend accepts as well formed, for a
+// session of its own in a new temporary directory: the limits of the default
+// policy, the writable layer on disk, no network, the default syscall
+// profile, a read-only root and the default id range. A test changes the
+// fields it is about.
+func NewSpec(t TB) sandbox.Spec {
+	t.Helper()
+	id, err := ids.New()
+	if err != nil {
+		t.Fatalf("sandboxtest: a session identifier: %v", err)
+	}
+	return sandbox.Spec{
+		ID:  id,
+		Dir: t.TempDir(),
+		Limits: sandbox.Limits{
+			CPUMillis:   sandbox.AtMost(1000),
+			MemoryBytes: sandbox.AtMost(512 << 20),
+			PIDs:        sandbox.AtMost(256),
+			Wall:        sandbox.AtMost(int64(time.Minute)),
+			DiskBytes:   sandbox.NoLimit(),
+			DiskInodes:  sandbox.NoLimit(),
+		},
+		Storage:        sandbox.StorageDisk,
+		Floor:          sandbox.Floor{MinFreeBytes: 1 << 30, MinFreeInodes: 10000},
+		Network:        sandbox.Network{Mode: sandbox.NetworkNone},
+		SyscallProfile: policy.ProfileDefault,
+		ReadOnlyRoot:   true,
+		IDBase:         layout.DefaultIDBase,
+	}
+}
 
 // Call is one command given to the fake.
 type Call struct {
@@ -199,10 +240,14 @@ func (b *Backend) Capabilities(report hostprobe.Report) sandbox.Capabilities {
 	return caps
 }
 
-// Start implements sandbox.Backend. It creates the writable layer inside
+// Start implements sandbox.Backend. It refuses what every backend refuses, a
+// spec that is not well formed, then creates the writable layer inside
 // spec.Dir, which must exist.
 func (b *Backend) Start(ctx context.Context, spec sandbox.Spec) (sandbox.Sandbox, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
 	b.mu.Lock()
@@ -210,12 +255,6 @@ func (b *Backend) Start(ctx context.Context, spec sandbox.Spec) (sandbox.Sandbox
 	b.mu.Unlock()
 	if startErr != nil {
 		return nil, startErr
-	}
-	if spec.ID.IsZero() {
-		return nil, errors.New("sandboxtest: the spec has no session identifier")
-	}
-	if !filepath.IsAbs(spec.Dir) {
-		return nil, fmt.Errorf("sandboxtest: the spec's directory %q is not an absolute path", spec.Dir)
 	}
 	if fi, err := os.Stat(spec.Dir); err != nil || !fi.IsDir() {
 		return nil, fmt.Errorf("sandboxtest: the session directory must exist before Start: %v", err)
@@ -337,12 +376,12 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string, opts sandbox.ExecOpti
 			return sandbox.Result{}, fmt.Errorf("sandboxtest: argument %d is not valid UTF-8 or holds a NUL byte", i)
 		}
 	}
-	wall := s.spec.Limits.Wall
-	if opts.Timeout < 0 || (wall > 0 && opts.Timeout > wall) {
+	wall, limited := s.spec.Limits.Wall.Duration()
+	if opts.Timeout < 0 || (limited && opts.Timeout > wall) {
 		return sandbox.Result{}, fmt.Errorf("%w: a timeout of %v is not within the limit of %v", sandbox.ErrUnsupported, opts.Timeout, wall)
 	}
 	if opts.Timeout > 0 {
-		wall = opts.Timeout
+		wall, limited = opts.Timeout, true
 	}
 	if err := s.begin(); err != nil {
 		return sandbox.Result{}, err
@@ -369,7 +408,7 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string, opts sandbox.ExecOpti
 
 	stopWatch := context.AfterFunc(ctx, func() { kill(sandbox.KillCancelled) })
 	var timer *time.Timer
-	if wall > 0 {
+	if limited {
 		timer = time.AfterFunc(wall, func() { kill(sandbox.KillWallTimeout) })
 	}
 
