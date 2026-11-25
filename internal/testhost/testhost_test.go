@@ -42,7 +42,14 @@ func TestMain(m *testing.M) {
 		fmt.Println(cmd.Process.Pid)
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	// The tests below call AssertClean on fixtures. They take a lock of
+	// their own, so that they neither wait for a root test that holds the
+	// host's for minutes nor make one wait.
+	private := filepath.Join(os.TempDir(), "sandmeter-testhost-selftest-"+strconv.Itoa(os.Getpid())+".lock")
+	lockPath = func() string { return private }
+	code := m.Run()
+	os.Remove(private)
+	os.Exit(code)
 }
 
 // recorder stands for a test: it records what Require and AssertClean do to
@@ -603,7 +610,7 @@ func TestAssertCleanTakesTurns(t *testing.T) {
 	taken := make(chan func(), 1)
 	go func() {
 		// Another test binary: a lock of its own on the same file.
-		u, err := lockHost(hostLockPath())
+		u, err := lockHost(lockPath())
 		if err != nil {
 			t.Error(err)
 		}
@@ -627,7 +634,9 @@ func TestAssertCleanTakesTurns(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("AssertClean did not give the host lock back")
 	}
-	if !strings.Contains(hostLockPath(), strconv.Itoa(os.Getuid())) {
-		t.Errorf("the lock file %s is not one per user", hostLockPath())
+	// The real lock: one file per user, in the temporary directory, the same
+	// for every test binary of that user.
+	if real := hostLockPath(); filepath.Dir(real) != filepath.Clean(os.TempDir()) || !strings.Contains(filepath.Base(real), strconv.Itoa(os.Getuid())) || real != hostLockPath() {
+		t.Errorf("the lock file is %s", real)
 	}
 }

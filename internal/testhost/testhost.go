@@ -680,7 +680,7 @@ func holdHost() (letGo func(), err error) {
 	held.Lock()
 	defer held.Unlock()
 	if held.holders == 0 {
-		release, err := lockHost(hostLockPath())
+		release, err := lockHost(lockPath())
 		if err != nil {
 			return nil, err
 		}
@@ -699,6 +699,11 @@ func holdHost() (letGo func(), err error) {
 		})
 	}, nil
 }
+
+// lockPath says where the lock file of AssertClean is. The tests of this
+// package replace it: they must not wait for, nor hold up, the real tests
+// that run on the same host.
+var lockPath = hostLockPath
 
 // hostLockPath is the lock file of AssertClean: one per user, in the
 // temporary directory, so that every test binary of that user finds the
