@@ -133,13 +133,16 @@ func TestStopKillsARunningCommandAndIsFinal(t *testing.T) {
 	if err := s.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	// Stop waits for the command to end, but the goroutine that called Exec
+	// still has to hand its result over: give it time instead of looking
+	// once. A command that Stop did not kill blocks for good and fails here.
 	select {
 	case res := <-out:
 		if res.KillReason != sandbox.KillStopped {
 			t.Errorf("the stopped command says %q", res.KillReason)
 		}
-	default:
-		t.Fatal("Stop returned before the command it killed")
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop returned and the command it should have killed is still running")
 	}
 	if _, err := s.Exec(context.Background(), []string{"true"}, sandbox.ExecOptions{}); !errors.Is(err, sandbox.ErrStopped) {
 		t.Errorf("Exec after Stop: %v, want ErrStopped", err)
