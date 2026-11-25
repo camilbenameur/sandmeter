@@ -282,6 +282,13 @@ func TestServiceUnit(t *testing.T) {
 	if got := one(t, u, "Service.ReadWritePaths"); got != layout.DefaultHome {
 		t.Errorf("ReadWritePaths = %q, want the home %q", got, layout.DefaultHome)
 	}
+	// A core limit of 0 does not keep a piped core handler from starting,
+	// and as a hard limit it would keep the first process of a sandbox from
+	// setting the one value that does: 1. The unit sets that value, for the
+	// service and for everything it starts.
+	if got := one(t, u, "Service.LimitCORE"); got != "1" {
+		t.Errorf("LimitCORE = %q, want 1: 0 neither stops a piped core handler nor lets a sandbox set the limit that does", got)
+	}
 	// Invariant: no directive that works through seccomp. A filter on the
 	// service is inherited by every sandbox it starts, and the profile a
 	// receipt records would no longer be the one in force.

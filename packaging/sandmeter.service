@@ -60,9 +60,18 @@ ProtectSystem=strict
 ReadWritePaths=/var/lib/sandmeter
 # to be proven
 PrivateTmp=yes
-# The service holds the signing key: it leaves no core dump.
+# The service holds the signing key: neither it nor anything it starts leaves
+# a core dump. The limit is 1, not 0, on purpose. Where the kernel pipes core
+# dumps to a handler (systemd-coredump, apport), a limit of 0 is not honoured:
+# the handler is started all the same, as root and outside every namespace,
+# for a crash inside a sandbox too. The kernel skips a piped handler only
+# when the limit is exactly 1, and one byte is under the smallest core file
+# it writes. The limit set here is the hard limit of everything the service
+# starts: the first process of a sandbox keeps it at 1, and could not get
+# there from 0, since raising a hard limit takes a privilege in the host's
+# own user namespace, which it does not have.
 # to be proven
-LimitCORE=0
+LimitCORE=1
 # Capabilities the root side has no use for. Sandboxes are not affected: a
 # new user namespace starts with a full bounding set of its own.
 # to be proven
