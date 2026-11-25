@@ -1,14 +1,49 @@
 package testhost
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
+
+// helperEnv selects, in a copy of this test binary started by a test, what
+// the copy does instead of running tests.
+const helperEnv = "SANDMETER_TESTHOST_HELPER"
+
+// TestMain lets the test binary stand in for the helpers of the root side,
+// which are re-executions of a binary by itself.
+func TestMain(m *testing.M) {
+	switch os.Getenv(helperEnv) {
+	case "wait":
+		// Stay until whoever holds the other end of standard input lets go:
+		// the test, or the kernel when the test dies.
+		io.Copy(io.Discard, os.Stdin)
+		os.Exit(0)
+	case "orphan":
+		// Start a waiting copy through /proc/self/exe, as the root side
+		// starts its helpers, say its pid and leave it without a parent.
+		cmd := exec.Command("/proc/self/exe")
+		cmd.Env = []string{helperEnv + "=wait"}
+		cmd.Stdin = os.Stdin
+		if err := cmd.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(cmd.Process.Pid)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 // recorder stands for a test: it records what Require and AssertClean do to
 // it. Skipf and Fatalf end the calling function, as the real ones do.
@@ -279,9 +314,9 @@ func TestDiffNamesEveryLeftover(t *testing.T) {
 		"+ network link: veth0",
 		"+ network namespace: sandmeter-ns",
 		"+ loop device: loop0 " + state + "/s1/disk.img",
-		"+ process: native.test (pid 200)",
-		"+ process: runsc-sandbox (pid 201)",
-		"+ process: sandmeterd (pid 203)",
+		"+ process: native.test (pid 200, started by this test)",
+		"+ process: runsc-sandbox (pid 201, named like a process of sandmeter)",
+		"+ process: sandmeterd (pid 203, named like a process of sandmeter)",
 		"+ state entry: " + state + "/s1",
 	}
 	// Kinds come in a fixed order, mounts first; within a kind the lines are
@@ -375,5 +410,205 @@ func TestTakeOnThisHost(t *testing.T) {
 	}
 	if strings.Join(a.Mounts, "\n") != strings.Join(b.Mounts, "\n") || strings.Join(a.Links, "\n") != strings.Join(b.Links, "\n") {
 		t.Log("the mounts or links of this host changed between two snapshots")
+	}
+}
+
+// TestAHelperIsKnownByItsExecutable is the case of everything the root side
+// starts: a re-execution of /proc/self/exe, which the kernel names "exe"
+// whatever the binary is called. Its name says nothing, and once its parent
+// is gone its ancestry says nothing either: only the file it executes does.
+func TestAHelperIsKnownByItsExecutable(t *testing.T) {
+	scope := fixture(t)
+	binary := filepath.Join(t.TempDir(), "native.test")
+	other := filepath.Join(t.TempDir(), "bash")
+	installed := filepath.Join(t.TempDir(), "sandmeterd")
+	for _, p := range []string{binary, other, installed} {
+		if err := os.WriteFile(p, []byte(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := func(pid int, target string) {
+		t.Helper()
+		if err := os.Symlink(target, filepath.Join(scope.Proc, strconv.Itoa(pid), "exe")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link(100, binary) // the test itself
+	before := Take(scope)
+
+	// A leaked init: named "exe", adopted by process 1, same executable.
+	write(t, scope.Proc, "300/stat", "300 (exe) S 1 300 300 0 -1")
+	link(300, binary)
+	// A process that is also named "exe" and executes something else.
+	write(t, scope.Proc, "301/stat", "301 (exe) S 1 301 301 0 -1")
+	link(301, other)
+	// A daemon started from the binary the test installed.
+	write(t, scope.Proc, "302/stat", "302 (exe) S 1 302 302 0 -1")
+	link(302, installed)
+	// A runtime that re-executed itself and kept its name in its arguments.
+	write(t, scope.Proc, "303/stat", "303 (exe) S 1 303 303 0 -1")
+	link(303, other)
+	write(t, scope.Proc, "303/cmdline", "runsc-gofer\x00--root\x00/x\x00")
+	// A process whose arguments merely mention sandmeter.
+	write(t, scope.Proc, "304/stat", "304 (vi) S 1 304 304 0 -1")
+	write(t, scope.Proc, "304/cmdline", "vi\x00sandmeter.go\x00")
+
+	withBinary := scope
+	withBinary.Binaries = []string{installed, filepath.Join(t.TempDir(), "absent")}
+	got := strings.Join(Take(withBinary).Processes, "\n")
+	want := strings.Join([]string{
+		"exe (pid 300, runs the executable of this test)",
+		"exe (pid 302, runs " + installed + ")",
+		"exe (pid 303, started as runsc-gofer)",
+	}, "\n")
+	if got != want {
+		t.Errorf("Processes =\n%s\nwant\n%s", got, want)
+	}
+	// Without the binary in the scope, its daemon is not this test's to see.
+	diff := strings.Join(before.Diff(Take(scope)), "\n")
+	if !strings.Contains(diff, "+ process: exe (pid 300, runs the executable of this test)") || strings.Contains(diff, "pid 302") || strings.Contains(diff, "pid 301") || strings.Contains(diff, "pid 304") {
+		t.Errorf("Diff =\n%s", diff)
+	}
+}
+
+// TestTakeSeesAnOrphanedCopyOfThisBinary does it for real: a copy of this
+// test binary, started through /proc/self/exe by a process that exits at
+// once, as a leaked helper of the root side would be. The kernel names it
+// "exe" and it is nobody's child.
+func TestTakeSeesAnOrphanedCopyOfThisBinary(t *testing.T) {
+	before := Take(Scope{})
+
+	// The helper lives exactly as long as this pipe has a writer.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	starter := exec.Command("/proc/self/exe")
+	starter.Env = []string{helperEnv + "=orphan"}
+	starter.Stdin = r
+	out, err := starter.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := starter.Start(); err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	line, _ := bufio.NewReader(out).ReadString('\n')
+	if err := starter.Wait(); err != nil {
+		t.Fatalf("the starter: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil {
+		t.Fatalf("the starter printed %q", line)
+	}
+	gone := func() bool { return syscall.Kill(pid, 0) != nil }
+	defer func() {
+		w.Close()
+		for deadline := time.Now().Add(5 * time.Second); !gone(); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Errorf("the helper %d is still running after its pipe was closed", pid)
+				return
+			}
+		}
+	}()
+
+	// What the old rule looked at: the name, which says nothing.
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		t.Fatalf("the helper %d is not running: %v", pid, err)
+	}
+	if !strings.Contains(string(stat), "(exe)") {
+		t.Logf("the kernel named the helper otherwise than expected: %s", stat)
+	}
+	if strings.Contains(string(stat), ") S "+strconv.Itoa(os.Getpid())+" ") {
+		t.Fatalf("the helper is still a child of this test: %s", stat)
+	}
+
+	want := "(pid " + strconv.Itoa(pid) + ", runs the executable of this test)"
+	found := false
+	for _, line := range Take(Scope{}).Processes {
+		found = found || strings.HasSuffix(line, want)
+	}
+	if !found {
+		t.Errorf("a snapshot does not list the leaked helper %d:\n%s", pid, strings.Join(Take(Scope{}).Processes, "\n"))
+	}
+	diff := strings.Join(before.Diff(Take(Scope{})), "\n")
+	if !strings.Contains(diff, "+ process: ") || !strings.Contains(diff, want) {
+		t.Errorf("the leak is not a difference:\n%s", diff)
+	}
+}
+
+// TestAssertCleanTakesTurns: the comparison is of the whole host, so two
+// tests never make it at the same time, in one test binary or in two.
+func TestAssertCleanTakesTurns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "host.lock")
+	unlock, err := lockHost(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second taker waits for as long as the first holds the lock.
+	acquired := make(chan func(), 1)
+	go func() {
+		again, err := lockHost(path)
+		if err != nil {
+			t.Error(err)
+		}
+		acquired <- again
+	}()
+	select {
+	case <-acquired:
+		t.Fatal("the lock was taken twice")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case again := <-acquired:
+		again()
+	case <-time.After(5 * time.Second):
+		t.Fatal("the lock was not handed over when it was released")
+	}
+
+	// A link planted under the predictable name is not followed.
+	target := filepath.Join(t.TempDir(), "victim")
+	planted := filepath.Join(t.TempDir(), "host.lock")
+	if err := os.Symlink(target, planted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockHost(planted); err == nil {
+		t.Error("a symbolic link was taken for the lock file")
+	}
+	if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Error("the file behind the link was created")
+	}
+
+	// AssertClean holds the real lock from the call to the end of the
+	// comparison, and gives it back after it.
+	scope := fixture(t)
+	rec := &recorder{}
+	AssertClean(rec, scope)
+	held := make(chan func(), 1)
+	go func() {
+		u, err := lockHost(hostLockPath())
+		if err != nil {
+			t.Error(err)
+		}
+		held <- u
+	}()
+	select {
+	case <-held:
+		t.Fatal("the host lock is free while a test that called AssertClean runs")
+	case <-time.After(100 * time.Millisecond):
+	}
+	rec.finish()
+	select {
+	case u := <-held:
+		u()
+	case <-time.After(5 * time.Second):
+		t.Fatal("AssertClean did not give the host lock back")
+	}
+	if !strings.Contains(hostLockPath(), strconv.Itoa(os.Getuid())) {
+		t.Errorf("the lock file %s is not one per user", hostLockPath())
 	}
 }

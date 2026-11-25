@@ -19,7 +19,9 @@
 // network links and namespaces, loop devices, processes and state
 // directories.
 //
-// The package reads the host and changes nothing on it.
+// The package reads the host and changes nothing on it, with one exception:
+// AssertClean keeps an empty lock file in the temporary directory, so that
+// two tests never compare the host at the same time.
 package testhost
 
 import (
@@ -28,10 +30,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 )
 
@@ -243,6 +247,10 @@ type Scope struct {
 	// StateRoots lists directories whose entries a snapshot lists: the state
 	// directory a test gave to what it tests. No default.
 	StateRoots []string
+	// Binaries lists the paths of executables, besides the test's own, whose
+	// processes a snapshot lists: the sandmeterd a test installed and
+	// started, the runsc it was given. No default.
+	Binaries []string
 	// Self is the pid of the process the snapshot is taken for; it and its
 	// ancestors are not listed among the processes. Default: this process.
 	Self int
@@ -285,8 +293,18 @@ type Snapshot struct {
 	// Loops holds the loop devices that have a backing file, with it.
 	Loops []string
 	// Processes holds the processes, other than this one and its ancestors,
-	// whose name starts with "sandmeter" or "runsc" or is this process's own
-	// name: the helpers a test started and should have reaped.
+	// that a test may have started and should have reaped. A process is
+	// listed when it executes the same file as this process, or one of the
+	// scope's binaries; when this process is one of its ancestors; or when
+	// its name, or the name it was started under, begins with "sandmeter" or
+	// "runsc". Each line says which.
+	//
+	// The first rule is the one that finds what the root side leaves behind.
+	// Every helper it starts (the first process of a sandbox, a worker, the
+	// egress proxy, the image fetcher) is a re-execution of /proc/self/exe,
+	// and the kernel names such a process "exe" whatever the binary is
+	// called: no rule on names can see it, and once its parent is gone no
+	// rule on parents can either.
 	Processes []string
 	// State holds the entries of the state roots of the scope.
 	State []string
@@ -405,6 +423,13 @@ func loops(block string) []string {
 	return out
 }
 
+// leftoverName reports whether a process name is one of sandmeter's or of
+// the runtime it wraps.
+func leftoverName(name string) bool {
+	name = filepath.Base(name)
+	return strings.HasPrefix(name, "sandmeter") || strings.HasPrefix(name, "runsc")
+}
+
 // processes lists the processes a test may have left behind.
 func processes(scope Scope) []string {
 	entries, err := os.ReadDir(scope.Proc)
@@ -443,14 +468,69 @@ func processes(scope Scope) []string {
 	for pid := scope.Self; pid > 0 && !skip[pid]; pid = all[pid].ppid {
 		skip[pid] = true
 	}
-	own := all[scope.Self].comm
+	// A process is known by the file it executes. The link /proc/<pid>/exe
+	// leads to that file even when it was renamed or removed since; two
+	// processes execute the same file when the links lead to the same inode
+	// of the same device.
+	exe := func(pid int) os.FileInfo {
+		fi, err := os.Stat(scope.Proc + "/" + strconv.Itoa(pid) + "/exe")
+		if err != nil {
+			return nil // a kernel thread, a process that is gone or not ours to see
+		}
+		return fi
+	}
+	type binary struct {
+		what string
+		file os.FileInfo
+	}
+	var known []binary
+	if fi := exe(scope.Self); fi != nil {
+		known = append(known, binary{"runs the executable of this test", fi})
+	}
+	for _, path := range scope.Binaries {
+		if fi, err := os.Stat(path); err == nil {
+			known = append(known, binary{"runs " + path, fi})
+		}
+	}
+	descends := func(pid int) bool {
+		for steps := 0; pid > 0 && steps <= len(all); steps++ {
+			if pid = all[pid].ppid; pid == scope.Self {
+				return true
+			}
+		}
+		return false
+	}
 	var out []string
 	for pid, p := range all {
 		if skip[pid] {
 			continue
 		}
-		if strings.HasPrefix(p.comm, "sandmeter") || strings.HasPrefix(p.comm, "runsc") || (own != "" && p.comm == own) {
-			out = append(out, fmt.Sprintf("%s (pid %d)", p.comm, pid))
+		why := ""
+		if fi := exe(pid); fi != nil {
+			for _, b := range known {
+				if os.SameFile(fi, b.file) {
+					why = b.what
+					break
+				}
+			}
+		}
+		if why == "" && descends(pid) {
+			why = "started by this test"
+		}
+		if why == "" && leftoverName(p.comm) {
+			why = "named like a process of sandmeter"
+		}
+		if why == "" {
+			// The name a process was started under: runsc re-executes itself
+			// too, and keeps its name only there.
+			if b, err := os.ReadFile(scope.Proc + "/" + strconv.Itoa(pid) + "/cmdline"); err == nil {
+				if argv0, _, _ := strings.Cut(string(b), "\x00"); argv0 != "" && leftoverName(argv0) {
+					why = "started as " + filepath.Base(argv0)
+				}
+			}
+		}
+		if why != "" {
+			out = append(out, fmt.Sprintf("%s (pid %d, %s)", p.comm, pid, why))
 		}
 	}
 	sort.Strings(out)
@@ -528,13 +608,25 @@ func (before Snapshot) Diff(after Snapshot) []string {
 // creates anything on the host, before the clean-ups it is meant to judge
 // are registered.
 //
-// The scope is the default one, extended by the state roots and cgroup
-// parents of the scopes given: a test names the state directory and the
-// cgroup parent it handed to what it tests.
+// The scope is the default one, extended by the state roots, the cgroup
+// parents and the binaries of the scopes given: a test names the state
+// directory and the cgroup parent it handed to what it tests.
 //
-// The whole host is compared, so two tests that create things at the same
-// time see each other's: a test that calls AssertClean does not run in
-// parallel with another.
+// The whole host is compared, not the part one test touches. Two things
+// follow.
+//
+// Tests that call AssertClean take turns, across test binaries: each holds a
+// lock on the host from this call until its comparison is done, and the next
+// one waits. A test that calls AssertClean therefore must not call
+// t.Parallel, and needs no other care to keep away from the others that call
+// it.
+//
+// Whatever else creates mounts, cgroups, links or processes of sandmeter on
+// the host during the test shows up as a difference, and the lock cannot
+// keep away what does not take it: a test of another package that starts a
+// sandbox without calling AssertClean, a service left running. A job that
+// runs root tests therefore runs its packages one at a time (go test -p 1),
+// and on a host that runs nothing else of sandmeter.
 func AssertClean(t TB, more ...Scope) {
 	t.Helper()
 	scope := Scope{}.withDefaults()
@@ -553,7 +645,15 @@ func AssertClean(t TB, more ...Scope) {
 		}
 		scope.CgroupParents = append(scope.CgroupParents, m.CgroupParents...)
 		scope.StateRoots = append(scope.StateRoots, m.StateRoots...)
+		scope.Binaries = append(scope.Binaries, m.Binaries...)
 	}
+	unlock, err := lockHost(hostLockPath())
+	if err != nil {
+		t.Fatalf("testhost: the host cannot be compared alone: %v", err)
+		return
+	}
+	// Registered first, so that it runs last: after the comparison below.
+	t.Cleanup(unlock)
 	before := Take(scope)
 	t.Cleanup(func() {
 		t.Helper()
@@ -561,4 +661,36 @@ func AssertClean(t TB, more ...Scope) {
 			t.Errorf("the test did not leave the host as it found it:\n%s", strings.Join(diff, "\n"))
 		}
 	})
+}
+
+// hostLockPath is the lock file of AssertClean: one per user, in the
+// temporary directory, so that every test binary of that user finds the
+// same one. Root tests, which are the ones that change the host, all run as
+// one user.
+func hostLockPath() string {
+	return filepath.Join(os.TempDir(), "sandmeter-testhost-"+strconv.Itoa(os.Getuid())+".lock")
+}
+
+// lockHost takes the lock, waiting for whoever holds it, and returns the
+// function that gives it back. The lock is an advisory lock on an open file:
+// the kernel releases it when the test binary dies, so a test that crashes
+// blocks nobody.
+func lockHost(path string) (unlock func(), err error) {
+	// O_NOFOLLOW: the name is predictable and lives in a directory everybody
+	// writes to. A link planted there is refused, not followed.
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+		if err != syscall.EINTR {
+			break
+		}
+	}
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	return func() { f.Close() }, nil
 }
