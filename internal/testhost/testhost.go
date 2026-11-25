@@ -703,7 +703,8 @@ func holdHost() (letGo func(), err error) {
 // hostLockPath is the lock file of AssertClean: one per user, in the
 // temporary directory, so that every test binary of that user finds the
 // same one. Root tests, which are the ones that change the host, all run as
-// one user.
+// one user. Test binaries that are given different temporary directories do
+// not exclude one another: a job that does that runs them one at a time.
 func hostLockPath() string {
 	return filepath.Join(os.TempDir(), "sandmeter-testhost-"+strconv.Itoa(os.Getuid())+".lock")
 }

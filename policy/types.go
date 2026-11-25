@@ -363,6 +363,10 @@ type Normal struct {
 	// nobody asked for that: the list is what keeps "no limit, because none
 	// could be enforced" from being read as "unlimited, as asked and
 	// granted". It is empty, never nil, when every default was applied.
+	//
+	// One policy file can therefore have two policies in force, with two
+	// hashes: one on a backend that enforces every default, another on a
+	// backend that does not. The hash names what ran, not what was written.
 	DefaultsNotApplied []string `json:"defaults_not_applied"`
 }
 
