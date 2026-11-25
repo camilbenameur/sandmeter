@@ -124,6 +124,11 @@ type Capabilities struct {
 	// from the map is not enforced: read the map through Control, which
 	// fails closed.
 	Controls map[ControlID]Control `json:"controls"`
+	// MinCPUMillis is the smallest CPU limit the backend can set, in
+	// thousandths of a core, and 0 when it has none of its own. A policy
+	// under it is refused: a limit is never rounded up to what the backend
+	// can express, since that would grant more than was written.
+	MinCPUMillis int64 `json:"min_cpu_millis"`
 	// MinMemoryBytes is the smallest memory limit under which the backend
 	// can run a command at all. A policy under it is refused.
 	MinMemoryBytes int64 `json:"min_memory_bytes"`

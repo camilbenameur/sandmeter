@@ -533,6 +533,30 @@ func TestStatesListsWhatWasNotApplied(t *testing.T) {
 	}
 }
 
+// TestCapabilitiesJSON pins the keys under which capabilities cross the
+// control protocol.
+func TestCapabilitiesJSON(t *testing.T) {
+	caps := Capabilities{
+		Backend:      BackendNative,
+		Controls:     map[ControlID]Control{ControlCPU: {Enforced: true}, ControlPIDs: {Reason: "no pids controller"}},
+		MinCPUMillis: 10, MinMemoryBytes: 6 << 20, MinPIDs: 2,
+		Problems: []Problem{{ID: "kernel", Detail: "5.15 is below 6.1", Fix: "upgrade"}},
+	}
+	b, err := json.Marshal(caps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"backend":"native","controls":{"limits.cpu":{"enforced":true},"limits.pids":{"enforced":false,"reason":"no pids controller"}},` +
+		`"min_cpu_millis":10,"min_memory_bytes":6291456,"min_pids":2,"problems":[{"id":"kernel","detail":"5.15 is below 6.1","fix":"upgrade"}]}`
+	if string(b) != want {
+		t.Errorf("capabilities encode as\n %s\nwant\n %s", b, want)
+	}
+	var back Capabilities
+	if err := json.Unmarshal(b, &back); err != nil || !reflect.DeepEqual(back, caps) {
+		t.Errorf("read back %+v, %v", back, err)
+	}
+}
+
 func TestUnappliedJSON(t *testing.T) {
 	b, err := json.Marshal(Unapplied{Key: KeyLimitPIDs, Control: ControlPIDs, Reason: "no task limit"})
 	if err != nil || string(b) != `{"key":"limits.pids","control":"limits.pids","reason":"no task limit"}` {

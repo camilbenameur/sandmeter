@@ -133,8 +133,8 @@ func Within(p Policy, c Ceiling) Violations {
 //   - in need of a control that caps does not report as enforced: a
 //     violation that carries the backend's reason. A setting somebody wrote
 //     is never weakened in silence, and never applied in part;
-//   - a limit under the backend's minimum (Capabilities.MinMemoryBytes,
-//     MinPIDs): a violation of that key.
+//   - a limit under the backend's minimum (Capabilities.MinCPUMillis,
+//     MinMemoryBytes, MinPIDs): a violation of that key.
 //
 // A key the file leaves out takes the value of Default, lowered to the
 // ceiling where the default is above it. Then:

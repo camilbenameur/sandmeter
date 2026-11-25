@@ -227,7 +227,10 @@ func moreSpecific(a, b Dest) bool {
 // with both entries is granted, since it then decides as the ceiling does.
 //
 // The entry returned for a request the ceiling would refuse, or check more
-// strictly, is the policy entry that decides that request.
+// strictly, is the policy entry that decides that request. The positions
+// are those of allow as given: a caller that keeps the place of an entry
+// which did not parse puts the zero Dest there, which admits nothing and is
+// never returned.
 //
 // Both lists hold values from ParseDest. The cost grows with the number of
 // entries of the two lists times the number of labels of their names, not
