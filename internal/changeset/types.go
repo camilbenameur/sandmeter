@@ -714,17 +714,47 @@ func (t Tier) String() string {
 	return "ordinary"
 }
 
-// Match says how a Rule is compared with a path. Every comparison ignores
-// the case of ASCII letters: a project may sit on a filesystem that does.
+// Match says how a Rule is compared with a path.
+//
+// A project may sit on a filesystem that does not tell apart names Linux
+// does: one that ignores case, that drops dots and spaces at the end of a
+// name, that reads "name:stream" as the file "name", that knows a file by a
+// second, short name, or that ignores certain characters. A path is written
+// on Linux and may be read there. Names are therefore compared after
+// Normalise, which reads each component the way such a filesystem would, and
+// the forms that cannot be compared at all are rules of their own
+// (MatchForm).
 type Match int
 
 const (
 	// MatchComponent: some component of the path, at any depth, equals the
-	// pattern. It covers the entry of that name and everything beneath it.
+	// pattern once normalised. It covers the entry of that name and
+	// everything beneath it.
 	MatchComponent Match = iota
-	// MatchBase: the last component of the path matches the pattern, in the
-	// syntax of path.Match.
+	// MatchBase: the last component of the path, once normalised, matches
+	// the pattern, in the syntax of path.Match.
 	MatchBase
+	// MatchForm: some component of the path has a form under which a
+	// filesystem may read another name than the one written. Pattern is one
+	// of the Form constants.
+	MatchForm
+)
+
+// Forms of a path component that a MatchForm rule names.
+const (
+	// FormShortName: a name of the kind some filesystems give every file as
+	// a second, short name: at most eight bytes ending in "~" and digits,
+	// and an extension of at most three. "git~1" is ".git" there, and
+	// nothing in the name says which file it stands for.
+	FormShortName = "short-name"
+	// FormIgnorable: the name holds a character that some filesystems ignore
+	// when they compare names, and that is not displayed: ".g", a zero-width
+	// character, "it" is ".git" there, and looks like it everywhere.
+	FormIgnorable = "ignorable"
+	// FormBlank: nothing is left of the name once the dots and spaces at its
+	// end and the part after a colon are dropped, or what is left is "." or
+	// "..": the name may be read as the directory itself, or as its parent.
+	FormBlank = "blank"
 )
 
 // Rule is one row of the table of sensitive paths.
@@ -743,6 +773,11 @@ type Rule struct {
 // It is an aid and it is not complete. It cannot be: any file a tool reads
 // is configuration for that tool.
 var Rules = []Rule{
+	// Names a filesystem may read as another name. These come first: what
+	// such a component stands for cannot be told from the path.
+	{TierRefused, MatchForm, FormShortName, "may be the short name of another file where the filesystem keeps short names"},
+	{TierRefused, MatchForm, FormIgnorable, "holds a character that is not shown and that some filesystems ignore"},
+	{TierRefused, MatchForm, FormBlank, "may be read as the directory itself or as its parent"},
 	// Version-control internals, at any depth, as a directory or as a file
 	// (a ".git" file redirects a work tree to a directory of its choice).
 	{TierRefused, MatchComponent, ".git", "version-control data and hooks"},
@@ -753,11 +788,18 @@ var Rules = []Rule{
 	// Hook managers and shell hooks.
 	{TierRefused, MatchComponent, ".husky", "version-control hooks"},
 	{TierRefused, MatchBase, ".pre-commit-config.yaml", "version-control hooks"},
-	{TierRefused, MatchBase, "lefthook.yml", "version-control hooks"},
-	{TierRefused, MatchBase, ".lefthook.yml", "version-control hooks"},
+	{TierRefused, MatchBase, "lefthook.*", "version-control hooks"},
+	{TierRefused, MatchBase, ".lefthook.*", "version-control hooks"},
+	{TierRefused, MatchBase, "lefthook-local.*", "version-control hooks"},
 	{TierRefused, MatchBase, ".envrc", "shell code run on entering the directory"},
+	{TierRefused, MatchBase, "mise.toml", "tasks, hooks and environment loaded on entering the directory"},
+	{TierRefused, MatchBase, ".mise.toml", "tasks, hooks and environment loaded on entering the directory"},
+	{TierRefused, MatchBase, "mise.*.toml", "tasks, hooks and environment loaded on entering the directory"},
+	{TierRefused, MatchBase, ".mise.*.toml", "tasks, hooks and environment loaded on entering the directory"},
+	{TierRefused, MatchComponent, ".mise", "tasks, hooks and environment loaded on entering the directory"},
 	// Continuous integration.
 	{TierRefused, MatchComponent, ".github", "CI workflows and repository automation"},
+	{TierRefused, MatchComponent, ".gitlab", "CI templates and repository automation"},
 	{TierRefused, MatchComponent, ".circleci", "CI configuration"},
 	{TierRefused, MatchComponent, ".buildkite", "CI configuration"},
 	{TierRefused, MatchBase, ".gitlab-ci.yml", "CI configuration"},
@@ -769,6 +811,7 @@ var Rules = []Rule{
 	// Editors and development containers.
 	{TierRefused, MatchComponent, ".vscode", "editor tasks and settings"},
 	{TierRefused, MatchComponent, ".idea", "editor run configurations"},
+	{TierRefused, MatchComponent, ".zed", "editor tasks and settings"},
 	{TierRefused, MatchComponent, ".devcontainer", "commands run when a development container starts"},
 	// Coding agents: their settings, their tool servers and the instruction
 	// files they read as part of their prompt.
@@ -777,6 +820,8 @@ var Rules = []Rule{
 	{TierRefused, MatchComponent, ".codex", "agent settings"},
 	{TierRefused, MatchComponent, ".gemini", "agent settings"},
 	{TierRefused, MatchComponent, ".continue", "agent settings"},
+	{TierRefused, MatchComponent, ".windsurf", "agent settings and rules"},
+	{TierRefused, MatchComponent, ".clinerules", "instructions an agent obeys"},
 	{TierRefused, MatchBase, ".mcp.json", "tool servers an agent starts"},
 	{TierRefused, MatchBase, "AGENTS.md", "instructions an agent obeys"},
 	{TierRefused, MatchBase, "CLAUDE.md", "instructions an agent obeys"},
@@ -832,22 +877,33 @@ var Rules = []Rule{
 // strictest rule that matches wins, and among those the first of the table.
 // A path no rule names is TierOrdinary, with the zero Rule.
 //
-// The path is one from a manifest, relative with "/" between components. An
-// escaped name (ExportEntry.PathEscaped) is classified in its quoted form
-// and is never applied anyway.
+// The path is one from a manifest, relative with "/" between components. A
+// backslash separates components too: it does on some of the filesystems a
+// project can sit on. An escaped name (ExportEntry.PathEscaped) is
+// classified in its quoted form and is never applied anyway.
 func Classify(p string) (Tier, Rule) {
-	lower := asciiLower(p)
-	parts := strings.Split(lower, "/")
+	raw := strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' })
+	if len(raw) == 0 {
+		raw = []string{""}
+	}
+	parts := make([]string, len(raw))
+	forms := map[string]bool{}
+	for i, c := range raw {
+		parts[i] = Normalise(c)
+		if form := formOf(c, parts[i]); form != "" {
+			forms[form] = true
+		}
+	}
 	base := parts[len(parts)-1]
 	best, bestRule := TierOrdinary, Rule{}
 	for _, r := range Rules {
 		if r.Tier <= best {
 			continue
 		}
-		pattern := asciiLower(r.Pattern)
 		matched := false
 		switch r.Match {
 		case MatchComponent:
+			pattern := Normalise(r.Pattern)
 			for _, c := range parts {
 				if c == pattern {
 					matched = true
@@ -855,7 +911,9 @@ func Classify(p string) (Tier, Rule) {
 				}
 			}
 		case MatchBase:
-			matched, _ = path.Match(pattern, base)
+			matched, _ = path.Match(Normalise(r.Pattern), base)
+		case MatchForm:
+			matched = forms[r.Pattern]
 		}
 		if matched {
 			best, bestRule = r.Tier, r
@@ -864,21 +922,97 @@ func Classify(p string) (Tier, Rule) {
 	return best, bestRule
 }
 
-// asciiLower lowers ASCII letters and leaves every other byte alone, so that
-// the comparison cannot be confused by the case rules of other scripts.
-func asciiLower(s string) string {
-	for i := 0; i < len(s); i++ {
-		if c := s[i]; c >= 'A' && c <= 'Z' {
-			b := []byte(s)
-			for j := i; j < len(b); j++ {
-				if b[j] >= 'A' && b[j] <= 'Z' {
-					b[j] += 'a' - 'A'
-				}
-			}
-			return string(b)
+// Normalise returns one path component as the least discerning filesystem a
+// project can sit on would read it: everything from the first colon dropped
+// (a stream of the file before it), then the dots and spaces at the end
+// dropped, then letters folded to lower case. Folding covers the ASCII
+// letters and the three other letters that such filesystems fold onto ASCII
+// ones: the dotless i, the long s and the Kelvin sign. No other character is
+// touched, so that the case rules of other scripts cannot be used to slip a
+// name past the table.
+//
+// It is the comparison key of the table of sensitive paths and nothing else:
+// no path is ever written under a normalised name.
+func Normalise(component string) string {
+	if i := strings.IndexByte(component, ':'); i >= 0 {
+		component = component[:i]
+	}
+	component = strings.TrimRight(component, ". ")
+	var b strings.Builder
+	b.Grow(len(component))
+	for _, r := range component {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			r += 'a' - 'A'
+		case r == 0x0131: // dotless i
+			r = 'i'
+		case r == 0x017f: // long s
+			r = 's'
+		case r == 0x212a: // Kelvin sign
+			r = 'k'
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// formOf returns the Form constant that applies to a component, given as
+// written and as normalised, or "" for a name that is compared as a name.
+func formOf(written, normalised string) string {
+	switch {
+	case normalised == "" || normalised == "." || normalised == "..":
+		return FormBlank
+	case hasIgnorable(written):
+		return FormIgnorable
+	case shortName(normalised):
+		return FormShortName
+	}
+	return ""
+}
+
+// shortName reports whether a normalised component has the shape of a short
+// name: a base of at most eight bytes that ends in "~" and digits, and no
+// extension or one of at most three bytes.
+func shortName(c string) bool {
+	base, ext, hasExt := strings.Cut(c, ".")
+	if hasExt && (len(ext) > 3 || strings.Contains(ext, ".")) {
+		return false
+	}
+	tilde := strings.LastIndexByte(base, '~')
+	if tilde < 1 || tilde == len(base)-1 || len(base) > 8 {
+		return false
+	}
+	for i := tilde + 1; i < len(base); i++ {
+		if base[i] < '0' || base[i] > '9' {
+			return false
 		}
 	}
-	return s
+	return true
+}
+
+// ignorable lists the code points that are ignored by default when text is
+// shown or compared (the Unicode property Default_Ignorable_Code_Point), as
+// inclusive ranges: joiners, direction marks, variation selectors and the
+// like. It is a superset of what any one filesystem ignores.
+var ignorable = [][2]rune{
+	{0x00ad, 0x00ad}, {0x034f, 0x034f}, {0x061c, 0x061c}, {0x115f, 0x1160}, {0x17b4, 0x17b5},
+	{0x180b, 0x180f}, {0x200b, 0x200f}, {0x202a, 0x202e}, {0x2060, 0x206f}, {0x3164, 0x3164},
+	{0xfe00, 0xfe0f}, {0xfeff, 0xfeff}, {0xffa0, 0xffa0}, {0xfff0, 0xfff8}, {0x1bca0, 0x1bca3},
+	{0x1d173, 0x1d17a}, {0xe0000, 0xe0fff},
+}
+
+func hasIgnorable(s string) bool {
+	for _, r := range s {
+		if r < 0x00ad {
+			continue
+		}
+		for _, span := range ignorable {
+			if r >= span[0] && r <= span[1] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Names of the files of the client's spool. The spool is a directory of the

@@ -541,8 +541,72 @@ func TestClassify(t *testing.T) {
 		{"requirements-dev.txt", TierHighlighted},
 		{"Dockerfile.prod", TierHighlighted},
 		{"rules.mk", TierHighlighted},
+		{"mise.toml", TierRefused},
+		{".mise.toml", TierRefused},
+		{"mise.local.toml", TierRefused},
+		{".mise/config.toml", TierRefused},
+		{"lefthook.yml", TierRefused},
+		{"lefthook.yaml", TierRefused},
+		{".lefthook.toml", TierRefused},
+		{".zed/tasks.json", TierRefused},
+		{".gitlab/ci/build.yml", TierRefused},
+		{".windsurf/rules/style.md", TierRefused},
+		{".clinerules", TierRefused},
+		{".clinerules/01-style.md", TierRefused},
+		// The same names as a filesystem that is less discerning than Linux
+		// reads them: trailing dots and spaces dropped, a stream after a
+		// colon dropped, letters folded, a backslash as a separator.
+		{".git./hooks/pre-commit", TierRefused},
+		{".git /hooks/pre-commit", TierRefused},
+		{".git. . ./config", TierRefused},
+		{".git::$INDEX_ALLOCATION/hooks/pre-commit", TierRefused},
+		{".git:stream", TierRefused},
+		{"sub/.GIT ./config", TierRefused},
+		{".g\u0131t/hooks/pre-commit", TierRefused},
+		{".\u212aeep/.hu\u017fky/pre-commit", TierRefused},
+		{".github./workflows/ci.yml", TierRefused},
+		{".vscode /tasks.json", TierRefused},
+		{"AGENTS.md.", TierRefused},
+		{"agents.md::$DATA", TierRefused},
+		{".git\\hooks\\pre-commit", TierRefused},
+		{"sub\\.vscode\\tasks.json", TierRefused},
+		{"Makefile.", TierHighlighted},
+		{"package.json ", TierHighlighted},
+		// Short names: whatever they stand for is not in the name.
+		{"git~1/hooks/pre-commit", TierRefused},
+		{"GIT~1/config", TierRefused},
+		{"git~2/config", TierRefused},
+		{"git~12/config", TierRefused},
+		{"gitmod~1", TierRefused},
+		{"github~1/workflows/ci.yml", TierRefused},
+		{"vscode~1/tasks.json", TierRefused},
+		{"pre-co~1.yam", TierRefused},
+		{"src/claude~1/settings.json", TierRefused},
+		{"git~1.", TierRefused},
+		// Characters that are not shown, and that some filesystems ignore.
+		{".g\u200cit/hooks/pre-commit", TierRefused},
+		{".git\u200d/config", TierRefused},
+		{"\ufeff.git/config", TierRefused},
+		{"src/ma\u00adin.go", TierRefused},
+		{"a\u202eb.txt", TierRefused},
+		// Names that are nothing but dots and spaces.
+		{"...", TierRefused},
+		{"a/. ./b", TierRefused},
+		{"a/ /b", TierRefused},
+		{":stream", TierRefused},
 		// Ordinary files, including names that merely contain a sensitive one.
 		{"src/main.go", TierOrdinary},
+		{"notes.", TierOrdinary},
+		{"a b/c d.txt", TierOrdinary},
+		{"caf\u00e9/menu.txt", TierOrdinary},
+		{"backup~", TierOrdinary},
+		{"~", TierOrdinary},
+		{"~1", TierOrdinary},
+		{"file~x.txt", TierOrdinary},
+		{"longername~1.txt", TierOrdinary},
+		{"report~1.json5", TierOrdinary},
+		{"mise.tomlx", TierOrdinary},
+		{"promise.toml", TierOrdinary},
 		{"README.md", TierOrdinary},
 		{"gitignore", TierOrdinary},
 		{".gitignore", TierOrdinary},
@@ -585,6 +649,24 @@ func TestRulesTable(t *testing.T) {
 		if r.Why == "" || r.Pattern == "" || strings.Contains(r.Pattern, "/") {
 			t.Errorf("rule %+v: a pattern without a slash and a reason are required", r)
 		}
+		switch r.Match {
+		case MatchComponent, MatchBase:
+			// A pattern is compared with normalised names: one that
+			// normalisation would change, apart from its case, matches
+			// nothing.
+			if !strings.EqualFold(Normalise(r.Pattern), r.Pattern) {
+				t.Errorf("rule %q can never match: names are compared as %q", r.Pattern, Normalise(r.Pattern))
+			}
+		case MatchForm:
+			if r.Pattern != FormShortName && r.Pattern != FormIgnorable && r.Pattern != FormBlank {
+				t.Errorf("rule %q names no form", r.Pattern)
+			}
+			if r.Tier != TierRefused {
+				t.Errorf("rule %q: a name that may stand for another is refused, not highlighted", r.Pattern)
+			}
+		default:
+			t.Errorf("rule %q has no way to match", r.Pattern)
+		}
 		if _, err := path.Match(r.Pattern, "x"); err != nil {
 			t.Errorf("rule %q is not a valid pattern: %v", r.Pattern, err)
 		}
@@ -625,6 +707,35 @@ func TestSpoolNames(t *testing.T) {
 	for _, bad := range []string{"", SpoolImportFile, "7.changeset", "0000000000.changeset", "000000000x.record.json", "0000000007.changeset.tmp", "../0000000007.changeset", "0000000007.record"} {
 		if _, _, ok := ParseSpoolFile(bad); ok {
 			t.Errorf("ParseSpoolFile accepted %q", bad)
+		}
+	}
+}
+
+func TestNormalise(t *testing.T) {
+	for in, want := range map[string]string{
+		".git":                    ".git",
+		".GIT":                    ".git",
+		".git.":                   ".git",
+		".git ":                   ".git",
+		".git. . .":               ".git",
+		".git::$INDEX_ALLOCATION": ".git",
+		".git:x:y":                ".git",
+		".git .:x":                ".git",
+		"Makefile":                "makefile",
+		"README.md":               "readme.md",
+		".g\u0131t":               ".git",
+		".\u017fvn":               ".svn",
+		"\u212aube":               "kube",
+		"\u00c9t\u00e9":           "\u00c9t\u00e9",
+		"a.b.c":                   "a.b.c",
+		" lead":                   " lead",
+		"...":                     "",
+		" ":                       "",
+		":":                       "",
+		"":                        "",
+	} {
+		if got := Normalise(in); got != want {
+			t.Errorf("Normalise(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
