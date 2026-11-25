@@ -224,8 +224,13 @@ func TestTheFirstInitTakesItsConfigurationFromAPipeOnly(t *testing.T) {
 	if code != exit.Failure || !strings.Contains(stderr, "refused to run") || !strings.Contains(stderr, "not a pipe or a socket") || !strings.Contains(stderr, "internal entry point") {
 		t.Errorf("with a file as configuration: exit %d, stderr:\n%s", code, stderr)
 	}
+	// With nothing handed over, descriptor 3 is either closed or held by the
+	// child's own Go runtime, which keeps its cgroup's processor limit file
+	// open from before main when the cgroup has one (the CI runners' do).
+	// Both are refused; which message comes depends on the host.
 	code, stderr = enter(t, native.InitArg, nil)
-	if code != exit.Failure || !strings.Contains(stderr, "refused to run") || !strings.Contains(stderr, "no control channel") {
+	if code != exit.Failure || !strings.Contains(stderr, "refused to run") ||
+		!(strings.Contains(stderr, "no control channel") || strings.Contains(stderr, "not a pipe or a socket")) {
 		t.Errorf("with nothing on the descriptor: exit %d, stderr:\n%s", code, stderr)
 	}
 
