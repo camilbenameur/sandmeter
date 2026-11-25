@@ -24,46 +24,73 @@ type pkg struct {
 	XTestImports []string
 }
 
-var (
-	loadOnce sync.Once
-	loaded   map[string]pkg
-	loadErr  error
-)
+// tagSets are the sets of build tags under which the rules are held. The
+// tests that need root are behind the "integration" tag: without the second
+// set, no rule would ever see the files that start real sandboxes, which are
+// the ones most tempted to reach across the layers.
+var tagSets = []string{"", "integration"}
+
+// loadedGraph is the import graph for one set of tags, loaded once.
+type loadedGraph struct {
+	once sync.Once
+	pkgs map[string]pkg
+	err  error
+}
+
+var graphs = map[string]*loadedGraph{"": {}, "integration": {}}
 
 // graph returns every package of the module, keyed by its path below the
-// module root, as the go command resolves it for this platform.
-func graph(t *testing.T) map[string]pkg {
+// module root, as the go command resolves it for this platform with the
+// given build tags.
+func graph(t *testing.T, tags string) map[string]pkg {
 	t.Helper()
-	loadOnce.Do(func() {
-		cmd := exec.Command("go", "list", "-json=ImportPath,Imports,Deps,TestImports,XTestImports", "./...")
+	g := graphs[tags]
+	g.once.Do(func() {
+		args := []string{"list", "-json=ImportPath,Imports,Deps,TestImports,XTestImports"}
+		if tags != "" {
+			args = append(args, "-tags", tags)
+		}
+		cmd := exec.Command("go", append(args, "./...")...)
 		cmd.Dir = "../.."
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
 		if err != nil {
-			loadErr = errors.New("go list: " + err.Error() + ": " + stderr.String())
+			g.err = errors.New("go list: " + err.Error() + ": " + stderr.String())
 			return
 		}
-		loaded = map[string]pkg{}
+		g.pkgs = map[string]pkg{}
 		dec := json.NewDecoder(bytes.NewReader(out))
 		for {
 			var p pkg
 			if err := dec.Decode(&p); err == io.EOF {
 				break
 			} else if err != nil {
-				loadErr = err
+				g.err = err
 				return
 			}
-			loaded[strings.TrimPrefix(p.ImportPath, module)] = p
+			g.pkgs[strings.TrimPrefix(p.ImportPath, module)] = p
 		}
 	})
-	if loadErr != nil {
-		t.Fatal(loadErr)
+	if g.err != nil {
+		t.Fatal(g.err)
 	}
-	if len(loaded) < 30 {
-		t.Fatalf("go list reports %d packages: the rules below would pass on too little", len(loaded))
+	if len(g.pkgs) < 30 {
+		t.Fatalf("go list reports %d packages: the rules below would pass on too little", len(g.pkgs))
 	}
-	return loaded
+	return g.pkgs
+}
+
+// eachGraph holds a rule for every set of build tags.
+func eachGraph(t *testing.T, rule func(t *testing.T, g map[string]pkg)) {
+	t.Helper()
+	for _, tags := range tagSets {
+		name := "default"
+		if tags != "" {
+			name = "tags=" + tags
+		}
+		t.Run(name, func(t *testing.T) { rule(t, graph(t, tags)) })
+	}
 }
 
 // local strips the module prefix, and reports whether the path is in the
@@ -98,7 +125,10 @@ func matching(g map[string]pkg, dir string) []string {
 // another program may import. They link nothing internal, so their exported
 // identifiers cannot mention an internal type either.
 func TestImportablePackagesStandAlone(t *testing.T) {
-	g := graph(t)
+	eachGraph(t, checkImportablePackagesStandAlone)
+}
+
+func checkImportablePackagesStandAlone(t *testing.T, g map[string]pkg) {
 	for _, name := range []string{"policy", "receipt"} {
 		p, ok := g[name]
 		if !ok {
@@ -130,7 +160,10 @@ func TestImportablePackagesStandAlone(t *testing.T) {
 // to be written beside the contract of a package (the probe itself, the
 // handling of change sets), and for nothing else.
 func TestContractPackagesStaySmall(t *testing.T) {
-	g := graph(t)
+	eachGraph(t, checkContractPackagesStaySmall)
+}
+
+func checkContractPackagesStaySmall(t *testing.T, g map[string]pkg) {
 	for name, allowed := range map[string][]string{
 		"internal/ids":          {},
 		"internal/iox":          {},
@@ -162,7 +195,10 @@ func TestContractPackagesStaySmall(t *testing.T) {
 // TestLayers holds the direction of the dependencies: a package on the left
 // never depends, directly or not, on anything on the right.
 func TestLayers(t *testing.T) {
-	g := graph(t)
+	eachGraph(t, checkLayers)
+}
+
+func checkLayers(t *testing.T, g map[string]pkg) {
 	for _, rule := range []struct {
 		why       string
 		from      []string // these packages and everything below them
@@ -226,7 +262,10 @@ func TestLayers(t *testing.T) {
 // that use them. Nothing that parses what an agent or a model wrote can then
 // run as root, in the address space that holds the signing key.
 func TestRootSideParsesNoAgentOrModelText(t *testing.T) {
-	g := graph(t)
+	eachGraph(t, checkRootSideParsesNoAgentOrModelText)
+}
+
+func checkRootSideParsesNoAgentOrModelText(t *testing.T, g map[string]pkg) {
 	root, ok := g["cmd/sandmeterd"]
 	if !ok {
 		t.Fatal("cmd/sandmeterd is not in the module")
@@ -265,6 +304,129 @@ func TestRootSideParsesNoAgentOrModelText(t *testing.T) {
 	}
 }
 
+// clientMustNotLink is what the unprivileged client binary must not contain:
+// the engine, the backends and the registry client, and with them everything
+// that only the root side has a use for. What a program does not link it
+// cannot be tricked into running as the user who started it, and the code
+// that parses what a registry or a sandbox sent stays on the side that has
+// the service ids and the budgets to parse it under.
+var clientMustNotLink = []string{
+	"internal/engine", "internal/backend", "internal/serve=", "internal/hidden=",
+	"internal/layers", "internal/state", "internal/cgroup", "internal/seccomp", "internal/egress",
+	"internal/image", "internal/differ", "internal/config", "internal/escape/probe",
+	"internal/agenteval", "internal/bench",
+	"github.com/google/go-containerregistry", "github.com/anthropics/", "github.com/openai/",
+}
+
+// clientStillLinks is the closed list of what the client binary links today
+// against that rule: it is still the program that runs the first engine in
+// its own process, as root. The list only shrinks. An entry that is no
+// longer linked simply stops counting, so that moving the client off one of
+// them needs no edit here; anything forbidden that is not listed fails the
+// test. When nothing of it is linked any more, the list is deleted.
+var clientStillLinks = []string{
+	"internal/engine", "internal/backend/native", "internal/backend/gvisor", "internal/serve", "internal/hidden",
+	"internal/layers", "internal/cgroup", "internal/seccomp", "internal/egress",
+	"internal/image", "internal/differ",
+	"github.com/google/go-containerregistry",
+}
+
+// forbiddenToClient reports whether the client binary must not link dep, an
+// import path. name is the path as the rules write it and rule the entry of
+// clientMustNotLink that forbids it.
+func forbiddenToClient(dep string) (name, rule string, forbidden bool) {
+	name = dep
+	if rel, in := local(dep); in {
+		name = rel
+	}
+	for _, bad := range clientMustNotLink {
+		switch {
+		case strings.Contains(bad, ".") && !strings.HasPrefix(bad, "internal/"):
+			// Another module, by the prefix of its import paths.
+			if dep == strings.TrimSuffix(bad, "/") || strings.HasPrefix(dep, strings.TrimSuffix(bad, "/")+"/") {
+				return name, bad, true
+			}
+		case name != dep && under(name, bad):
+			return name, bad, true
+		}
+	}
+	return name, "", false
+}
+
+// TestClientBinaryLinksNoRootSide holds the client binary to its side of the
+// boundary, with the exceptions of today spelled out.
+func TestClientBinaryLinksNoRootSide(t *testing.T) {
+	eachGraph(t, checkClientBinaryLinksNoRootSide)
+}
+
+func checkClientBinaryLinksNoRootSide(t *testing.T, g map[string]pkg) {
+	client, ok := g["cmd/sandmeter"]
+	if !ok {
+		t.Fatal("cmd/sandmeter is not in the module")
+	}
+	if len(client.Deps) < 50 {
+		t.Fatalf("cmd/sandmeter has %d dependencies: the check below would pass on too little", len(client.Deps))
+	}
+	excused := func(name string) (string, bool) {
+		for _, e := range clientStillLinks {
+			if name == e || strings.HasPrefix(name, e+"/") {
+				return e, true
+			}
+		}
+		return "", false
+	}
+	used := map[string]bool{}
+	// One line per rule that is broken, with the first package found and
+	// how many more: a module that is linked brings dozens of packages.
+	first, more := map[string]string{}, map[string]int{}
+	for _, dep := range client.Deps {
+		name, rule, forbidden := forbiddenToClient(dep)
+		if !forbidden {
+			continue
+		}
+		if e, ok := excused(name); ok {
+			used[e] = true
+			continue
+		}
+		if _, seen := first[rule]; seen {
+			more[rule]++
+		} else {
+			first[rule] = name
+		}
+	}
+	for _, rule := range clientMustNotLink {
+		if name, broken := first[rule]; broken {
+			t.Errorf("cmd/sandmeter links %s and %d more under %q: the client contains neither the engine, nor a backend, nor the registry client, nor anything only the root side uses",
+				name, more[rule], strings.TrimSuffix(rule, "="))
+		}
+	}
+	// An exception is an exception to the rule: one that the rule does not
+	// forbid would be a way to excuse something else later.
+	for _, e := range clientStillLinks {
+		probe := e
+		if !strings.Contains(e, ".") || strings.HasPrefix(e, "internal/") {
+			probe = module + e
+		}
+		if _, _, forbidden := forbiddenToClient(probe); !forbidden {
+			t.Errorf("clientStillLinks excuses %s, which the rule does not forbid", e)
+		}
+	}
+	t.Logf("cmd/sandmeter still links %d of the %d listed exceptions", len(used), len(clientStillLinks))
+	if len(used) == 0 {
+		t.Log("the client links nothing of the root side any more: clientStillLinks can be deleted")
+	}
+	// The other programs a user runs unprivileged are held to the same rule,
+	// with no exception: the probe that runs inside a sandbox links nothing
+	// of sandmeter's root side either.
+	if probe, ok := g["cmd/sandmeter-probe"]; ok {
+		for _, dep := range probe.Deps {
+			if name, _, forbidden := forbiddenToClient(dep); forbidden && name != "internal/escape/probe" {
+				t.Errorf("cmd/sandmeter-probe links %s", name)
+			}
+		}
+	}
+}
+
 // prototypeImporters is the closed list of packages that were written
 // against the contract and the policy of the prototype, and may go on
 // importing them until they move to internal/sandbox and policy. Nothing
@@ -285,7 +447,10 @@ var prototypeImporters = []string{
 }
 
 func TestNothingNewImportsThePrototype(t *testing.T) {
-	g := graph(t)
+	eachGraph(t, checkNothingNewImportsThePrototype)
+}
+
+func checkNothingNewImportsThePrototype(t *testing.T, g map[string]pkg) {
 	allowed := map[string]bool{}
 	for _, name := range prototypeImporters {
 		allowed[name] = true
@@ -324,7 +489,10 @@ func TestNothingNewImportsThePrototype(t *testing.T) {
 // points at the top of the graph: it imports the packages that own an entry
 // point, and only commands, and tests that start a sandbox, import it.
 func TestOnlyCommandsImportTheEntryPointTable(t *testing.T) {
-	g := graph(t)
+	eachGraph(t, checkOnlyCommandsImportTheEntryPointTable)
+}
+
+func checkOnlyCommandsImportTheEntryPointTable(t *testing.T, g map[string]pkg) {
 	for name, p := range g {
 		if under(name, "cmd") {
 			continue
