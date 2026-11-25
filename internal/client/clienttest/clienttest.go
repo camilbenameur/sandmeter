@@ -120,6 +120,10 @@ type Fake struct {
 	ImagesReply ctl.ImagesReply
 	// CheckFunc answers Check; when nil, every check is accepted.
 	CheckFunc func(ctl.Check) (ctl.CheckReply, error)
+	// Unapplied is what every start and every accepted check answer as the
+	// built-in default limits that are not in force. None by default; a test
+	// of how a client reports a limit that could not be enforced sets it.
+	Unapplied []policy.Unapplied
 	// Step plays every command of every session; Exit(0) when nil.
 	Step Step
 	// OnStart, when not nil, is called with each new session before Start
@@ -240,7 +244,12 @@ func (f *Fake) Check(ctx context.Context, req ctl.Check) (ctl.CheckReply, error)
 	if f.CheckFunc != nil {
 		return f.CheckFunc(req)
 	}
-	return ctl.CheckReply{Reasons: []ctl.Reason{}, Backend: policy.BackendNative, Policy: json.RawMessage(`{"version":2}`)}, nil
+	return ctl.CheckReply{Reasons: []ctl.Reason{}, Backend: policy.BackendNative, Policy: json.RawMessage(`{"version":2}`), Unapplied: f.unapplied()}, nil
+}
+
+// unapplied returns a copy of Unapplied that is never nil.
+func (f *Fake) unapplied() []policy.Unapplied {
+	return append([]policy.Unapplied{}, f.Unapplied...)
 }
 
 // Images implements client.Client.
@@ -326,6 +335,7 @@ func (f *Fake) Start(ctx context.Context, req client.StartRequest) (client.Sessi
 	s.started = ctl.Started{
 		Session: id, Backend: backend, ImageRequested: image, ImageDigest: "sha256:" + fmt.Sprintf("%064x", 1),
 		Policy: json.RawMessage(`{"version":2}`), PolicySHA256: policy.HashBytes([]byte(`{"version":2}`)), CeilingSHA256: f.InfoReply.CeilingSHA256,
+		Unapplied: f.unapplied(),
 	}
 	if req.Workspace != nil {
 		b, err := io.ReadAll(req.Workspace)
@@ -377,8 +387,11 @@ type Session struct {
 	// files. The manifest starts out complete and empty.
 	Manifest changeset.Export
 	Stream   []byte
-	// Superseded is what the next Refresh answers, once.
-	Superseded []receipt.SupersededV2
+	// Superseded is what the next Refresh answers, once. SupersededTotal,
+	// when it is larger than the list, plays a list that was cut at its
+	// bound.
+	Superseded      []receipt.SupersededV2
+	SupersededTotal int64
 
 	fake    *Fake
 	id      ids.ID
@@ -526,11 +539,14 @@ func (s *Session) Refresh(ctx context.Context, delta io.Reader) (ctl.Refreshed, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refreshes = append(s.refreshes, b)
-	reply := ctl.Refreshed{Workspace: *s.started.Workspace, Superseded: s.Superseded}
+	reply := ctl.Refreshed{Workspace: *s.started.Workspace, Superseded: s.Superseded, SupersededTotal: int64(len(s.Superseded))}
 	if reply.Superseded == nil {
 		reply.Superseded = []receipt.SupersededV2{}
 	}
-	s.Superseded = nil
+	if s.SupersededTotal > reply.SupersededTotal {
+		reply.SupersededTotal, reply.SupersededTruncated = s.SupersededTotal, true
+	}
+	s.Superseded, s.SupersededTotal = nil, 0
 	return reply, nil
 }
 
@@ -670,7 +686,10 @@ func (s *Session) Export(ctx context.Context, w io.Writer) (ctl.Exported, error)
 		return ctl.Exported{}, err
 	}
 	entries, skipped, size := manifest.Totals()
-	reply := ctl.Exported{ManifestSHA256: hash, Entries: entries, Skipped: skipped, Bytes: size}
+	reply := ctl.Exported{
+		ManifestSHA256: hash, Status: manifest.Status, Reasons: append([]string{}, manifest.Reasons...),
+		Entries: entries, Skipped: skipped, Bytes: size, Omitted: manifest.Omitted,
+	}
 	reply.Seq = s.append(receipt.KindExport, reply)
 	return reply, nil
 }

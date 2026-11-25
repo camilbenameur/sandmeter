@@ -217,12 +217,18 @@ type Session interface {
 	// ID returns the identifier of the session.
 	ID() ids.ID
 	// Started returns what the root side answered to the start: the policy
-	// in force, the image, the backend, the project as it was imported.
+	// in force, the image, the backend, the project as it was imported, and
+	// the built-in default limits that are not in force because the backend
+	// cannot enforce them here (Started.Unapplied). A caller that shows a
+	// session to a person or to an agent shows that list: a limit they may
+	// count on is not there.
 	Started() ctl.Started
 	// Refresh brings the session's copy of the project up to date. delta is
 	// the stream package workspace makes from the project as it is now. The
 	// reply lists what the session had written at paths that changed on the
-	// host and that was dropped in favour of the host's version.
+	// host and that was dropped in favour of the host's version; the list is
+	// bounded, and the reply says when it was cut and how many entries were
+	// dropped in all.
 	Refresh(ctx context.Context, delta io.Reader) (ctl.Refreshed, error)
 	// Run runs one command and returns when it has ended and its record is
 	// stored. Output reaches the request's writers while the command runs.
@@ -244,12 +250,16 @@ type Session interface {
 	Restore(ctx context.Context, snapshot ids.ID) (ctl.Restored, error)
 	// Changes returns the manifest of what the session changed under the
 	// project directory so far. Nothing leaves the service and no record is
-	// written. Every name in it was chosen in the sandbox.
+	// written. Every name in it was chosen in the sandbox. The manifest says
+	// whether it lists everything (its Status): a caller never presents a
+	// truncated one as the whole of what changed.
 	Changes(ctx context.Context) (changeset.Export, error)
 	// Export writes the change set of the session to w, in the stream
 	// format of package changeset, and returns the sequence number of the
 	// signed export record that vouches for it. What was written to w is to
-	// be trusted only after it has been checked against that record.
+	// be trusted only after it has been checked against that record. The
+	// reply repeats the record's status: a change set that does not hold
+	// everything the session changed says so, with the reasons.
 	Export(ctx context.Context, w io.Writer) (ctl.Exported, error)
 	// Records and Record are those of Client for this session. They work
 	// after Stop, until Close.

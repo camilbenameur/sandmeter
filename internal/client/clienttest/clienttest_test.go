@@ -15,6 +15,7 @@ import (
 	"github.com/camilbenameur/sandmeter/internal/ctl"
 	"github.com/camilbenameur/sandmeter/internal/exit"
 	"github.com/camilbenameur/sandmeter/internal/ids"
+	"github.com/camilbenameur/sandmeter/policy"
 	"github.com/camilbenameur/sandmeter/receipt"
 )
 
@@ -207,14 +208,27 @@ func TestRecordsFollowTheOperations(t *testing.T) {
 	if err != nil || out.String() != "stream bytes" || exported.Seq != 5 || exported.ManifestSHA256 != wantHash || exported.Entries != 1 || exported.Bytes != 2 {
 		t.Errorf("Export = %+v, %v, wrote %q", exported, err, out.String())
 	}
+	// A change set says whether it holds everything, and the answer to an
+	// export repeats it.
+	if exported.Status != receipt.ExportComplete || exported.Reasons == nil || len(exported.Reasons) != 0 || exported.Omitted != 0 {
+		t.Errorf("a complete export is answered as %+v", exported)
+	}
 
 	s.Superseded = []receipt.SupersededV2{{Path: "src/x.go", Type: receipt.TypeFile, Layer: "upper"}}
 	refreshed, err := s.Refresh(ctx, strings.NewReader("delta"))
 	if err != nil || len(refreshed.Superseded) != 1 || string(s.Refreshes()[0]) != "delta" {
 		t.Errorf("Refresh = %+v, %v", refreshed, err)
 	}
-	if again, _ := s.Refresh(ctx, strings.NewReader("")); len(again.Superseded) != 0 || again.Superseded == nil {
+	if refreshed.SupersededTotal != 1 || refreshed.SupersededTruncated {
+		t.Errorf("a refresh that dropped one entry counts %d, truncated %v", refreshed.SupersededTotal, refreshed.SupersededTruncated)
+	}
+	if again, _ := s.Refresh(ctx, strings.NewReader("")); len(again.Superseded) != 0 || again.Superseded == nil || again.SupersededTotal != 0 {
 		t.Errorf("a second refresh repeats the superseded paths: %+v", again)
+	}
+	// A list that was cut at its bound says how long it really is.
+	s.Superseded, s.SupersededTotal = []receipt.SupersededV2{{Path: "a", Type: receipt.TypeFile, Layer: "upper"}}, 90000
+	if cut, _ := s.Refresh(ctx, strings.NewReader("")); len(cut.Superseded) != 1 || cut.SupersededTotal != 90000 || !cut.SupersededTruncated {
+		t.Errorf("a refresh whose list was cut: %+v", cut)
 	}
 
 	stopped, err := s.Stop(ctx)
@@ -282,6 +296,36 @@ func TestStopCancelsARunningCommandAndRecordsItFirst(t *testing.T) {
 	res := <-results
 	if res.Outcome.KillReason != receipt.KillCancelled || res.Seq != 1 || stopped.Seq != 2 {
 		t.Errorf("the command was recorded as %d (%s) and the stop as %d", res.Seq, res.Outcome.KillReason, stopped.Seq)
+	}
+}
+
+// TestATruncatedExportAndUnappliedDefaults plays the two answers a client
+// must not present as the ordinary case: a change set that does not hold
+// everything, and a session in which a default limit is not in force.
+func TestATruncatedExportAndUnappliedDefaults(t *testing.T) {
+	f := New()
+	f.Unapplied = []policy.Unapplied{{Key: policy.KeyLimitPIDs, Control: policy.ControlPIDs, Reason: "no task limit on this backend"}}
+	s := start(t, f, client.StartRequest{})
+	if got := s.Started().Unapplied; len(got) != 1 || got[0].Key != policy.KeyLimitPIDs {
+		t.Errorf("Started().Unapplied = %+v", got)
+	}
+	if reply, err := f.Check(context.Background(), ctl.Check{}); err != nil || len(reply.Unapplied) != 1 {
+		t.Errorf("Check = %+v, %v", reply, err)
+	}
+	// Without the script the list is empty, and never nil.
+	plain := New()
+	if got := start(t, plain, client.StartRequest{}).Started().Unapplied; got == nil || len(got) != 0 {
+		t.Errorf("by default Started().Unapplied = %#v", got)
+	}
+
+	s.Manifest.Status, s.Manifest.Reasons, s.Manifest.Omitted = changeset.StatusTruncated, []string{receipt.DiffReasonEntries}, 12
+	exported, err := s.Export(context.Background(), io.Discard)
+	if err != nil || exported.Status != receipt.ExportTruncated || len(exported.Reasons) != 1 || exported.Omitted != 12 {
+		t.Errorf("a truncated export is answered as %+v, %v", exported, err)
+	}
+	manifest, err := s.Changes(context.Background())
+	if err != nil || manifest.Status != changeset.StatusTruncated || manifest.Validate() != nil {
+		t.Errorf("Changes = %+v, %v", manifest, err)
 	}
 }
 

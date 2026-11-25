@@ -389,6 +389,11 @@ type CheckReply struct {
 	// is the JSON value null and PolicySHA256 is empty.
 	Policy       json.RawMessage `json:"policy"`
 	PolicySHA256 string          `json:"policy_sha256"`
+	// Unapplied lists the built-in default limits that would not be in
+	// force, because the policy file leaves them out and the backend cannot
+	// enforce them on this host: see Started.Unapplied. Empty, never null,
+	// when there is none or the policy was refused.
+	Unapplied []policy.Unapplied `json:"unapplied"`
 	// CeilingSHA256 identifies the ceiling the policy was checked against.
 	CeilingSHA256 string `json:"ceiling_sha256"`
 }
@@ -572,6 +577,15 @@ type Started struct {
 	// them. What is off, or wider than the default, is read from here.
 	Policy       json.RawMessage `json:"policy"`
 	PolicySHA256 string          `json:"policy_sha256"`
+	// Unapplied lists the built-in default limits that are not in force for
+	// this session: the policy file left them out, and the backend cannot
+	// enforce them on this host. Each has the control that is missing and
+	// the backend's reason. The policy bytes above show such a limit as
+	// null and name its key; every record of the session lists the control
+	// as not enforced. A client tells the user at once, since a limit they
+	// may count on is not there. Empty, never null, when every default was
+	// applied.
+	Unapplied []policy.Unapplied `json:"unapplied"`
 	// CeilingSHA256 identifies the ceiling the policy was checked against.
 	CeilingSHA256 string `json:"ceiling_sha256"`
 	// Workspace describes the imported project; null without one.
@@ -591,8 +605,15 @@ type Refreshed struct {
 	// Superseded lists what the session had written at a path that changed
 	// on the host, and that was dropped so that the host's version is the
 	// one the next command sees. The names in it were chosen in the sandbox:
-	// they are data. The record of the next command carries the same list.
+	// they are data. The record of the next command carries the same list,
+	// under the same bounds: receipt.MaxSupersededEntries entries and
+	// receipt.MaxSupersededBytes once encoded.
 	Superseded []receipt.SupersededV2 `json:"superseded"`
+	// SupersededTotal is the number of entries that were dropped, whatever
+	// the list holds, and SupersededTruncated says that the list was cut at
+	// one of its bounds. Everything counted was dropped.
+	SupersededTotal     int64 `json:"superseded_total"`
+	SupersededTruncated bool  `json:"superseded_truncated"`
 }
 
 // Run asks for one command in the session.
@@ -707,10 +728,17 @@ type Exported struct {
 	// fetches that record and applies nothing it has not checked against it.
 	Seq            uint64 `json:"seq"`
 	ManifestSHA256 string `json:"manifest_sha256"`
-	// Entries, Skipped and Bytes are those of the export record.
-	Entries int64 `json:"entries"`
-	Skipped int64 `json:"skipped"`
-	Bytes   int64 `json:"bytes"`
+	// Status, Reasons, Entries, Skipped, Bytes and Omitted are those of the
+	// export record. Status is receipt.ExportTruncated when the change set
+	// does not hold everything the session changed: Reasons then says why
+	// and Omitted how many paths, at least, are missing from the manifest.
+	// Reasons is empty, never null, otherwise.
+	Status  string   `json:"status"`
+	Reasons []string `json:"reasons"`
+	Entries int64    `json:"entries"`
+	Skipped int64    `json:"skipped"`
+	Bytes   int64    `json:"bytes"`
+	Omitted int64    `json:"omitted"`
 }
 
 // Stop asks the worker to end the session.
