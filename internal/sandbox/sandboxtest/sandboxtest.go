@@ -11,10 +11,11 @@
 //   - one thing at a time: a second Exec, a Snapshot or a Restore during a
 //     command answers sandbox.ErrBusy;
 //   - Stop kills a running command, whose result says KillStopped, and waits
-//     for it; a cancelled context gives KillCancelled, a command that
-//     outlives its time limit KillWallTimeout;
+//     for it, however closely the two calls race; a cancelled context gives
+//     KillCancelled, a command that outlives its time limit KillWallTimeout;
 //   - once the command is under way every outcome is a Result with a nil
-//     error, and a stopped sandbox answers sandbox.ErrStopped;
+//     error, and from the first call of Stop on, even one that failed, every
+//     operation but Stop answers sandbox.ErrStopped;
 //   - the layers are real directories inside Spec.Dir: a step can write
 //     files where a command would, and a diff of the layers finds them.
 //
@@ -296,15 +297,20 @@ type Sandbox struct {
 	spec    sandbox.Spec
 
 	mu sync.Mutex
-	// busy is true while Exec, Snapshot or Restore runs.
+	// busy is true while Exec, Snapshot or Restore runs. kill and done
+	// belong to that operation and are set and cleared with busy, in the
+	// same critical section: kill ends a running command with a reason and
+	// is nil for an operation that is not a command, done is closed when the
+	// operation has returned.
 	busy bool
-	// kill ends the running command with a reason; nil when none runs.
 	kill func(sandbox.KillReason)
-	// done is closed when the running command has returned.
-	done    chan struct{}
-	stopped bool
-	stops   int
-	calls   []Call
+	done chan struct{}
+	// stopping is set by the first call of Stop and never cleared: nothing
+	// starts after it. stopped says that a Stop succeeded.
+	stopping bool
+	stopped  bool
+	stops    int
+	calls    []Call
 	// snaps lists the snapshots the writable layer sits on, oldest first;
 	// all holds every snapshot ever taken and its parent chain.
 	snaps []ids.ID
@@ -332,7 +338,8 @@ func (s *Sandbox) Calls() []Call {
 	return append([]Call(nil), s.calls...)
 }
 
-// Stopped reports whether a Stop succeeded.
+// Stopped reports whether a Stop succeeded. A Stop that failed leaves it
+// false, although the sandbox already refuses everything but another Stop.
 func (s *Sandbox) Stopped() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -346,24 +353,37 @@ func (s *Sandbox) StopCalls() int {
 	return s.stops
 }
 
-// begin takes the one slot of the sandbox.
-func (s *Sandbox) begin() error {
+// begin takes the one slot of the sandbox. For a command, kill is what ends
+// it and call is recorded.
+//
+// Invariant: taking the slot and publishing kill and done are one step under
+// the lock, and Stop reads them and forbids later starts in one step under
+// the same lock. A Stop therefore either sees the command and kills it, or
+// comes first and makes begin fail: there is no moment at which a command
+// has started and a Stop cannot reach it.
+func (s *Sandbox) begin(kill func(sandbox.KillReason), call *Call) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stopped {
+	if s.stopping {
 		return sandbox.ErrStopped
 	}
 	if s.busy {
 		return sandbox.ErrBusy
 	}
-	s.busy = true
+	s.busy, s.kill, s.done = true, kill, make(chan struct{})
+	if call != nil {
+		s.calls = append(s.calls, *call)
+	}
 	return nil
 }
 
+// end gives the slot back and releases whoever waits for the operation.
 func (s *Sandbox) end() {
 	s.mu.Lock()
-	s.busy = false
+	done := s.done
+	s.busy, s.kill, s.done = false, nil, nil
 	s.mu.Unlock()
+	close(done)
 }
 
 // Exec implements sandbox.Sandbox.
@@ -383,11 +403,7 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string, opts sandbox.ExecOpti
 	if opts.Timeout > 0 {
 		wall, limited = opts.Timeout, true
 	}
-	if err := s.begin(); err != nil {
-		return sandbox.Result{}, err
-	}
 
-	// From here on the command is under way: whatever happens is a Result.
 	runCtx, cancel := context.WithCancel(context.Background())
 	var (
 		once   sync.Once
@@ -399,12 +415,12 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string, opts sandbox.ExecOpti
 			cancel()
 		})
 	}
-	done := make(chan struct{})
 	call := Call{Argv: append([]string(nil), argv...), Opts: opts, Upper: s.upper(), Spec: s.spec}
-	s.mu.Lock()
-	s.kill, s.done = kill, done
-	s.calls = append(s.calls, call)
-	s.mu.Unlock()
+	if err := s.begin(kill, &call); err != nil {
+		cancel()
+		return sandbox.Result{}, err
+	}
+	// From here on the command is under way: whatever happens is a Result.
 
 	stopWatch := context.AfterFunc(ctx, func() { kill(sandbox.KillCancelled) })
 	var timer *time.Timer
@@ -446,11 +462,7 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string, opts sandbox.ExecOpti
 		res.Enforcement.SyscallProfile = s.spec.SyscallProfile
 	}
 
-	s.mu.Lock()
-	s.kill, s.done = nil, nil
-	s.busy = false
-	s.mu.Unlock()
-	close(done)
+	s.end()
 	cancel()
 	if err != nil {
 		return sandbox.Result{}, err
@@ -458,14 +470,20 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string, opts sandbox.ExecOpti
 	return res, nil
 }
 
-// Stop implements sandbox.Sandbox.
+// Stop implements sandbox.Sandbox. From its first call on, successful or
+// not, the sandbox starts nothing more; Stop itself can be repeated until it
+// succeeds.
 func (s *Sandbox) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	s.stops++
+	// See begin: this flag and the read of kill are one step.
+	s.stopping = true
 	kill, done := s.kill, s.done
 	s.mu.Unlock()
 	if kill != nil {
 		kill(sandbox.KillStopped)
+	}
+	if done != nil {
 		select {
 		case <-done:
 		case <-ctx.Done():
@@ -487,7 +505,7 @@ func (s *Sandbox) Snapshot(ctx context.Context) (ids.ID, error) {
 	if err := ctx.Err(); err != nil {
 		return ids.ID{}, err
 	}
-	if err := s.begin(); err != nil {
+	if err := s.begin(nil, nil); err != nil {
 		return ids.ID{}, err
 	}
 	defer s.end()
@@ -517,7 +535,7 @@ func (s *Sandbox) Restore(ctx context.Context, to sandbox.Base) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.begin(); err != nil {
+	if err := s.begin(nil, nil); err != nil {
 		return err
 	}
 	defer s.end()
@@ -557,7 +575,7 @@ func (s *Sandbox) Restore(ctx context.Context, to sandbox.Base) error {
 func (s *Sandbox) Layers() (sandbox.LayerView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stopped {
+	if s.stopping {
 		return sandbox.LayerView{}, sandbox.ErrStopped
 	}
 	if s.busy {

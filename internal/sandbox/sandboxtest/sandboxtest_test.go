@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,14 +157,165 @@ func TestStopCanFailAndBeRepeated(t *testing.T) {
 	boom := errors.New("the cgroup would not empty")
 	b.StopErrs = []error{boom}
 	s := start(t, b, nil)
-	if err := s.Stop(context.Background()); !errors.Is(err, boom) {
+	ctx := context.Background()
+	if err := s.Stop(ctx); !errors.Is(err, boom) {
 		t.Fatalf("first Stop: %v", err)
 	}
 	if s.Stopped() {
-		t.Error("a failed Stop left the sandbox stopped")
+		t.Error("a failed Stop is reported as a Stop that succeeded")
 	}
-	if err := s.Stop(context.Background()); err != nil || !s.Stopped() || s.StopCalls() != 2 {
+
+	// The contract: once Stop was called, every operation but Stop answers
+	// ErrStopped. A Stop that failed is a Stop that was called. A caller
+	// that goes on using the sandbox after it must not pass its tests here.
+	if res, err := s.Exec(ctx, []string{"true"}, sandbox.ExecOptions{}); !errors.Is(err, sandbox.ErrStopped) {
+		t.Errorf("Exec after a failed Stop: %+v, %v; want ErrStopped", res, err)
+	}
+	if _, err := s.Layers(); !errors.Is(err, sandbox.ErrStopped) {
+		t.Errorf("Layers after a failed Stop: %v, want ErrStopped", err)
+	}
+	if _, err := s.Snapshot(ctx); !errors.Is(err, sandbox.ErrStopped) {
+		t.Errorf("Snapshot after a failed Stop: %v, want ErrStopped", err)
+	}
+	if err := s.Restore(ctx, sandbox.ImageBase); !errors.Is(err, sandbox.ErrStopped) {
+		t.Errorf("Restore after a failed Stop: %v, want ErrStopped", err)
+	}
+	if len(s.Calls()) != 0 {
+		t.Errorf("a command ran after a failed Stop: %+v", s.Calls())
+	}
+
+	// Stop itself can be repeated, and then succeeds.
+	if err := s.Stop(ctx); err != nil || !s.Stopped() || s.StopCalls() != 2 {
 		t.Errorf("second Stop: %v, stopped %v, calls %d", err, s.Stopped(), s.StopCalls())
+	}
+}
+
+// TestStopAgainstAStartingCommand races Stop with an Exec that is just
+// starting, many times. Whichever comes first, the promise holds: when Stop
+// has returned nothing runs any more. Either the command never started and
+// Exec answers ErrStopped, or it started and Stop killed it and waited.
+//
+// The step blocks until it is killed, so a Stop that misses a command leaves
+// it running for ever: the test then fails on its deadline instead of
+// passing by luck.
+func TestStopAgainstAStartingCommand(t *testing.T) {
+	const rounds = 2000
+	b := New()
+	b.Step = Block
+	dir := t.TempDir()
+	base := NewSpec(t)
+	base.Limits.Wall = sandbox.NoLimit()
+	for round := 0; round < rounds; round++ {
+		spec := base
+		id, err := ids.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec.ID, spec.Dir = id, filepath.Join(dir, id.String())
+		if err := os.Mkdir(spec.Dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		sb, err := b.Start(context.Background(), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := sb.(*Sandbox)
+
+		type outcome struct {
+			res sandbox.Result
+			err error
+		}
+		var (
+			gate    = make(chan struct{})
+			ready   sync.WaitGroup
+			execOut = make(chan outcome, 1)
+			stopOut = make(chan error, 1)
+		)
+		ready.Add(2)
+		go func() {
+			ready.Done()
+			<-gate
+			res, err := s.Exec(context.Background(), []string{"sleep", "1000"}, sandbox.ExecOptions{})
+			execOut <- outcome{res, err}
+		}()
+		go func() {
+			ready.Done()
+			<-gate
+			stopOut <- s.Stop(context.Background())
+		}()
+		ready.Wait()
+		close(gate)
+
+		deadline := time.After(10 * time.Second)
+		select {
+		case err := <-stopOut:
+			if err != nil {
+				t.Fatalf("round %d: Stop: %v", round, err)
+			}
+		case <-deadline:
+			t.Fatalf("round %d: Stop did not return", round)
+		}
+		// Stop has returned: the command, if it ever started, is over.
+		select {
+		case out := <-execOut:
+			switch {
+			case errors.Is(out.err, sandbox.ErrStopped):
+				if len(s.Calls()) != 0 {
+					t.Fatalf("round %d: Exec answered ErrStopped and a command was recorded", round)
+				}
+			case out.err == nil && out.res.Status == sandbox.StatusKilled && out.res.KillReason == sandbox.KillStopped:
+			default:
+				t.Fatalf("round %d: the racing Exec gave %+v, %v", round, out.res, out.err)
+			}
+		case <-deadline:
+			t.Fatalf("round %d: Stop returned nil and the command is still running: Stopped() = %v", round, s.Stopped())
+		}
+		if !s.Stopped() {
+			t.Fatalf("round %d: Stop returned nil and the sandbox is not stopped", round)
+		}
+		if err := os.RemoveAll(spec.Dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestStopWaitsForASnapshot: an operation that is not a command cannot be
+// killed, and Stop still does not return before it is over.
+func TestStopWaitsForASnapshot(t *testing.T) {
+	s := start(t, New(), nil)
+	if err := s.begin(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- s.Stop(context.Background()) }()
+	select {
+	case err := <-stopped:
+		t.Fatalf("Stop returned (%v) while an operation held the sandbox", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	s.end()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not return after the operation ended")
+	}
+
+	// A Stop whose context ends first gives up, and can be repeated.
+	s = start(t, New(), nil)
+	if err := s.begin(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := s.Stop(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Stop under a short deadline: %v", err)
+	}
+	s.end()
+	if err := s.Stop(context.Background()); err != nil || !s.Stopped() {
+		t.Errorf("Stop after the operation ended: %v, stopped %v", err, s.Stopped())
 	}
 }
 

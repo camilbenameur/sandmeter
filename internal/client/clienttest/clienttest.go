@@ -9,9 +9,12 @@
 //     command is still going;
 //   - cancelling the context of Run gives a result that says cancelled, with
 //     a nil error; closing the session under a run gives client.ErrClosed;
+//   - Stop and Close end a running command however closely they race with
+//     its start: when either has returned, no step is left running;
 //   - every operation that the root side records (a command, a snapshot, a
 //     restore, an export, a stop) takes the next sequence number of the
-//     session, and the record can be fetched under it;
+//     session, and the record can be fetched under it; the record of a
+//     command that a Stop ended comes before the stop record;
 //   - a session is over after Stop, answers its records until Close, and
 //     refuses everything after;
 //   - a refusal is a *client.Error with a code.
@@ -385,7 +388,9 @@ type Session struct {
 	runs      []client.RunRequest
 	refreshes [][]byte
 	snapshots []ids.ID
-	// cancelRun and runDone belong to the command that runs, if any.
+	// cancelRun and runDone belong to the command that runs, if any. They
+	// are set in the critical section that checks stopped and closed, and
+	// stay set until the record of the command is stored.
 	cancelRun context.CancelFunc
 	runDone   chan struct{}
 	stopped   bool
@@ -436,6 +441,11 @@ func (s *Session) enter(ctx context.Context, method string, afterStop bool) erro
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.open(afterStop)
+}
+
+// open says whether the session still takes a call. The caller holds s.mu.
+func (s *Session) open(afterStop bool) error {
 	switch {
 	case s.closed:
 		return client.ErrClosed
@@ -523,26 +533,42 @@ func (s *Session) Refresh(ctx context.Context, delta io.Reader) (ctl.Refreshed, 
 
 // Run implements client.Session.
 func (s *Session) Run(ctx context.Context, req client.RunRequest) (ctl.Result, error) {
-	if err := s.enter(ctx, "Run", false); err != nil {
+	if err := s.fake.enterSession(ctx, "Run"); err != nil {
 		return ctl.Result{}, err
-	}
-	if len(req.Argv) == 0 {
-		return ctl.Result{}, Refusal(ctl.CodeInvalid, "the command is empty")
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	s.mu.Lock()
-	if s.cancelRun != nil {
-		s.mu.Unlock()
-		return ctl.Result{}, Refusal(ctl.CodeProtocol, "a command is running in this session")
-	}
 	done := make(chan struct{})
+	// Invariant: checking that the session is neither stopped nor closed and
+	// publishing how to cancel this command are one step under the lock, and
+	// Stop and Close mark the session and read that handle in one step under
+	// the same lock. Either they see the command and cancel it, or they come
+	// first and the command never starts.
+	s.mu.Lock()
+	err := s.open(false)
+	switch {
+	case err != nil:
+	case len(req.Argv) == 0:
+		err = Refusal(ctl.CodeInvalid, "the command is empty")
+	case s.cancelRun != nil:
+		err = Refusal(ctl.CodeProtocol, "a command is running in this session")
+	}
+	if err != nil {
+		s.mu.Unlock()
+		return ctl.Result{}, err
+	}
 	s.cancelRun, s.runDone = cancel, done
 	s.runs = append(s.runs, req)
 	s.mu.Unlock()
-	// Whoever waits for this command (Stop) is released only when its
-	// record is stored, so that records keep the order of events.
-	defer close(done)
+	// The command stays the running one until its record is stored, and
+	// whoever waits for it (Stop) is released only then: a stop record never
+	// gets a sequence number before that of the command it ended.
+	defer func() {
+		s.mu.Lock()
+		s.cancelRun, s.runDone = nil, nil
+		s.mu.Unlock()
+		close(done)
+	}()
 
 	stdout, stderr := iox.NewHashingTee(req.Stdout, 0), iox.NewHashingTee(req.Stderr, 0)
 	call := RunCall{Request: req, Session: s}
@@ -555,7 +581,6 @@ func (s *Session) Run(ctx context.Context, req client.RunRequest) (ctl.Result, e
 	outcome := step(runCtx, call)
 
 	s.mu.Lock()
-	s.cancelRun, s.runDone = nil, nil
 	closed := s.closed
 	s.mu.Unlock()
 	if closed {
@@ -665,10 +690,15 @@ func (s *Session) Record(ctx context.Context, seq uint64) ([]byte, error) {
 
 // Stop implements client.Session. A running command is cancelled first.
 func (s *Session) Stop(ctx context.Context) (ctl.Stopped, error) {
-	if err := s.enter(ctx, "Stop", false); err != nil {
+	if err := s.fake.enterSession(ctx, "Stop"); err != nil {
 		return ctl.Stopped{}, err
 	}
+	// See Run: the check, the mark and the read of the handle are one step.
 	s.mu.Lock()
+	if err := s.open(false); err != nil {
+		s.mu.Unlock()
+		return ctl.Stopped{}, err
+	}
 	cancel, done := s.cancelRun, s.runDone
 	s.stopped = true
 	s.mu.Unlock()

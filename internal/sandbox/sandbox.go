@@ -87,7 +87,8 @@ var (
 	// Commands are never queued.
 	ErrBusy = errors.New("a command is running in this sandbox")
 	// ErrStopped is returned by every operation but Stop once Stop was
-	// called.
+	// called, whether that call succeeded or not: a session that somebody
+	// began to stop runs nothing more. Only Stop itself may be repeated.
 	ErrStopped = errors.New("the sandbox is stopped")
 	// ErrUnknownSnapshot is returned by Restore for a snapshot the sandbox
 	// does not have.

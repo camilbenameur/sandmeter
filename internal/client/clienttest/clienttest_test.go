@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -331,6 +332,153 @@ func TestSequence(t *testing.T) {
 		res, err := s.Run(context.Background(), client.RunRequest{Argv: []string{"x"}})
 		if err != nil || *res.Outcome.ExitCode != want {
 			t.Errorf("command %d: %+v, %v", i+1, res.Outcome, err)
+		}
+	}
+}
+
+// race runs two calls at the same moment and returns when both are done, or
+// fails the test when one of them is still going after the deadline.
+func race(t *testing.T, round int, first, second func()) {
+	t.Helper()
+	var ready, done sync.WaitGroup
+	gate := make(chan struct{})
+	for _, call := range []func(){first, second} {
+		ready.Add(1)
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			ready.Done()
+			<-gate
+			call()
+		}()
+	}
+	ready.Wait()
+	close(gate)
+	finished := make(chan struct{})
+	go func() { done.Wait(); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("round %d: a call is still going: a command was left running after Stop or Close returned", round)
+	}
+}
+
+// TestStopAgainstAStartingRun races Stop with a Run that is just starting,
+// many times. The step blocks until it is cancelled, so a Stop that misses
+// the command leaves it running for ever and the round never ends.
+func TestStopAgainstAStartingRun(t *testing.T) {
+	const rounds = 3000
+	f := New()
+	f.Step = Block
+	c, err := f.Connect()(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < rounds; round++ {
+		sess, err := c.Start(context.Background(), client.StartRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := sess.(*Session)
+		var (
+			res     ctl.Result
+			runErr  error
+			stopped ctl.Stopped
+			stopErr error
+		)
+		race(t, round,
+			func() { res, runErr = s.Run(context.Background(), client.RunRequest{Argv: []string{"sleep", "1000"}}) },
+			func() { stopped, stopErr = s.Stop(context.Background()) },
+		)
+		if stopErr != nil {
+			t.Fatalf("round %d: Stop: %v", round, stopErr)
+		}
+		switch {
+		case client.CodeOf(runErr) == ctl.CodeProtocol:
+			// Stop came first: the command never started, and has no record.
+			if stopped.Seq != 1 || len(s.Runs()) != 0 {
+				t.Fatalf("round %d: the run was refused, the stop record is %d and %d commands were taken", round, stopped.Seq, len(s.Runs()))
+			}
+		case runErr == nil && res.Outcome.KillReason == receipt.KillCancelled:
+			// The command started and Stop ended it: its record comes first.
+			if res.Seq != 1 || stopped.Seq != 2 {
+				t.Fatalf("round %d: the command is record %d and the stop record %d", round, res.Seq, stopped.Seq)
+			}
+		default:
+			t.Fatalf("round %d: the racing Run gave %+v, %v", round, res, runErr)
+		}
+	}
+}
+
+// TestCloseAgainstAStartingRun is the same race with Close: once Close has
+// returned, the run fails with ErrClosed and nothing is left running.
+func TestCloseAgainstAStartingRun(t *testing.T) {
+	const rounds = 3000
+	f := New()
+	f.Step = Block
+	c, err := f.Connect()(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < rounds; round++ {
+		sess, err := c.Start(context.Background(), client.StartRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := sess.(*Session)
+		var runErr error
+		race(t, round,
+			func() { _, runErr = s.Run(context.Background(), client.RunRequest{Argv: []string{"sleep", "1000"}}) },
+			func() { s.Close() },
+		)
+		if !errors.Is(runErr, client.ErrClosed) {
+			t.Fatalf("round %d: the racing Run gave %v, want ErrClosed", round, runErr)
+		}
+	}
+}
+
+// TestStopAfterACommandThatJustEnded calls Stop at the moment a command ends
+// by itself. The command happened first and is recorded first: its record
+// never follows the stop record.
+func TestStopAfterACommandThatJustEnded(t *testing.T) {
+	const rounds = 3000
+	f := New()
+	c, err := f.Connect()(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < rounds; round++ {
+		ended := make(chan struct{})
+		f.Step = func(context.Context, RunCall) receipt.OutcomeV2 {
+			defer close(ended)
+			zero := 0
+			return receipt.OutcomeV2{Status: receipt.StatusExited, ExitCode: &zero}
+		}
+		sess, err := c.Start(context.Background(), client.StartRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := sess.(*Session)
+		results := make(chan ctl.Result, 1)
+		go func() {
+			res, err := s.Run(context.Background(), client.RunRequest{Argv: []string{"true"}})
+			if err != nil {
+				t.Errorf("round %d: Run: %v", round, err)
+			}
+			results <- res
+		}()
+		<-ended
+		stopped, err := s.Stop(context.Background())
+		if err != nil {
+			t.Fatalf("round %d: Stop: %v", round, err)
+		}
+		res := <-results
+		if res.Seq != 1 || stopped.Seq != 2 {
+			t.Fatalf("round %d: the command that ended first is record %d and the stop record %d", round, res.Seq, stopped.Seq)
+		}
+		list, err := s.Records(context.Background(), 0)
+		if err != nil || len(list.Records) != 2 || list.Records[0].Kind != receipt.KindCommand || list.Records[1].Kind != receipt.KindStop {
+			t.Fatalf("round %d: records %+v, %v", round, list.Records, err)
 		}
 	}
 }
