@@ -322,8 +322,8 @@ func TestDiffNamesEveryLeftover(t *testing.T) {
 		"+ network namespace: sandmeter-ns",
 		"+ loop device: loop0 " + state + "/s1/disk.img",
 		"+ process: native.test (pid 200, started by this test)",
-		"+ process: runsc-sandbox (pid 201, named like a process of sandmeter)",
-		"+ process: sandmeterd (pid 203, named like a process of sandmeter)",
+		"+ process: runsc-sandbox (pid 201, named sandmeter* or runsc*)",
+		"+ process: sandmeterd (pid 203, named sandmeter* or runsc*)",
 		"+ state entry: " + state + "/s1",
 	}
 	// Kinds come in a fixed order, mounts first; within a kind the lines are

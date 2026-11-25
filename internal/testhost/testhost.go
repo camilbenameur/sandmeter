@@ -519,11 +519,11 @@ func processes(scope Scope) []string {
 			why = "started by this test"
 		}
 		if why == "" && leftoverName(p.comm) {
-			why = "named like a process of sandmeter"
+			why = "named sandmeter* or runsc*"
 		}
 		if why == "" {
-			// The name a process was started under: runsc re-executes itself
-			// too, and keeps its name only there.
+			// The name a process was started under: a runtime that
+			// re-executes itself keeps its name only there.
 			if b, err := os.ReadFile(scope.Proc + "/" + strconv.Itoa(pid) + "/cmdline"); err == nil {
 				if argv0, _, _ := strings.Cut(string(b), "\x00"); argv0 != "" && leftoverName(argv0) {
 					why = "started as " + filepath.Base(argv0)
