@@ -589,7 +589,7 @@ func (s *Session) Run(ctx context.Context, req client.RunRequest) (ctl.Result, e
 		close(done)
 	}()
 
-	stdout, stderr := iox.NewHashingTee(req.Stdout, 0), iox.NewHashingTee(req.Stderr, 0)
+	stdout, stderr := iox.NewUncappedHashingTee(req.Stdout), iox.NewUncappedHashingTee(req.Stderr)
 	call := RunCall{Request: req, Session: s}
 	call.Request.Stdout, call.Request.Stderr = stdout, stderr
 	step := s.fake.Step

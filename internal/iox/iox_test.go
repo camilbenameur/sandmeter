@@ -37,7 +37,7 @@ func sum(s string) string {
 
 func TestHashingTeeStreamsHashesAndCounts(t *testing.T) {
 	var dst bytes.Buffer
-	tee := NewHashingTee(&dst, 0)
+	tee := NewUncappedHashingTee(&dst)
 	for _, s := range []string{"hello ", "", "world\n"} {
 		if n, err := tee.Write([]byte(s)); n != len(s) || err != nil {
 			t.Fatalf("Write(%q) = %d, %v", s, n, err)
@@ -52,7 +52,7 @@ func TestHashingTeeStreamsHashesAndCounts(t *testing.T) {
 	if got != want {
 		t.Errorf("Sum() = %+v, want %+v", got, want)
 	}
-	if empty := NewHashingTee(nil, 0).Sum(); empty.SHA256 != sum("") || empty.Bytes != 0 {
+	if empty := NewUncappedHashingTee(nil).Sum(); empty.SHA256 != sum("") || empty.Bytes != 0 {
 		t.Errorf("an unused tee: %+v", empty)
 	}
 }
@@ -78,6 +78,49 @@ func TestHashingTeeCap(t *testing.T) {
 	}
 }
 
+// TestHashingTeeWithNothingLeft is the case of a caller that passes what
+// remains of a budget: when nothing remains, nothing is delivered. A limit
+// of zero used to mean "no cap", which turned a spent budget into an
+// unbounded stream of sandbox output.
+func TestHashingTeeWithNothingLeft(t *testing.T) {
+	const budget = 8
+	for _, used := range []int64{8, 9, 1 << 40} {
+		var dst bytes.Buffer
+		tee := NewHashingTee(&dst, budget-used)
+		for _, s := range []string{"abc", strings.Repeat("x", 4096)} {
+			if n, err := tee.Write([]byte(s)); n != len(s) || err != nil {
+				t.Fatalf("Write = %d, %v: the writer must never see the cap", n, err)
+			}
+		}
+		got := tee.Sum()
+		if dst.Len() != 0 || got.Delivered != 0 || !got.Truncated || got.Bytes != 4099 || got.Err != nil {
+			t.Errorf("with %d of %d bytes used, the destination got %d bytes: %+v", used, budget, dst.Len(), got)
+		}
+		if got.SHA256 != sum("abc"+strings.Repeat("x", 4096)) {
+			t.Errorf("the hash does not cover what was not delivered")
+		}
+	}
+	// Nothing written, nothing cut.
+	if s := NewHashingTee(io.Discard, 0).Sum(); s.Truncated || s.Bytes != 0 {
+		t.Errorf("an unused tee with no room: %+v", s)
+	}
+	// The bounded writers of the package agree on what zero means.
+	var buf LimitedBuffer
+	buf.Write([]byte("abc"))
+	kept := NewHeadTail(0, 0)
+	kept.Write([]byte("abc"))
+	if len(buf.Bytes()) != 0 || !buf.Truncated() || len(kept.Kept().Head) != 0 || kept.Kept().Dropped != 3 {
+		t.Errorf("zero keeps something elsewhere: %q, %+v", buf.Bytes(), kept.Kept())
+	}
+	// Without a cap, everything goes through.
+	var dst bytes.Buffer
+	all := NewUncappedHashingTee(&dst)
+	all.Write(bytes.Repeat([]byte("y"), 1<<20))
+	if s := all.Sum(); dst.Len() != 1<<20 || s.Delivered != 1<<20 || s.Truncated {
+		t.Errorf("an uncapped tee delivered %d bytes: %+v", dst.Len(), s)
+	}
+}
+
 // failAfter accepts n bytes in all, then fails.
 type failAfter struct {
 	n     int
@@ -99,7 +142,7 @@ func (f *failAfter) Write(p []byte) (int, error) {
 
 func TestHashingTeeDestinationFailure(t *testing.T) {
 	dst := &failAfter{n: 4}
-	tee := NewHashingTee(dst, 0)
+	tee := NewUncappedHashingTee(dst)
 	for _, s := range []string{"abc", "def", "ghi", "jkl"} {
 		if n, err := tee.Write([]byte(s)); n != len(s) || err != nil {
 			t.Fatalf("Write(%q) = %d, %v: a reader that went away must not stop the command", s, n, err)
@@ -116,7 +159,7 @@ func TestHashingTeeDestinationFailure(t *testing.T) {
 
 	// A destination that takes fewer bytes without an error broke the
 	// io.Writer contract: it is treated as failed.
-	short := NewHashingTee(shortWriter{}, 0)
+	short := NewUncappedHashingTee(shortWriter{})
 	short.Write([]byte("abcdef"))
 	if s := short.Sum(); !errors.Is(s.Err, io.ErrShortWrite) || s.Delivered != 1 {
 		t.Errorf("a short write: %+v", s)
@@ -128,7 +171,7 @@ type shortWriter struct{}
 func (shortWriter) Write(p []byte) (int, error) { return 1, nil }
 
 func TestHashingTeeNilDestination(t *testing.T) {
-	tee := NewHashingTee(nil, 0)
+	tee := NewUncappedHashingTee(nil)
 	tee.Write([]byte("abc"))
 	if s := tee.Sum(); s.Bytes != 3 || s.Delivered != 0 || s.Truncated || s.SHA256 != sum("abc") {
 		t.Errorf("a tee to nothing: %+v", s)
@@ -137,7 +180,7 @@ func TestHashingTeeNilDestination(t *testing.T) {
 
 func TestHashingTeeConcurrentWrites(t *testing.T) {
 	var dst bytes.Buffer
-	tee := NewHashingTee(&dst, 0)
+	tee := NewUncappedHashingTee(&dst)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)

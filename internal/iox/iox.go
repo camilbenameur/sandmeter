@@ -90,8 +90,11 @@ type StreamSum struct {
 // for use by several goroutines; the bytes of concurrent writes are hashed
 // and delivered in the order the writes are served.
 type HashingTee struct {
-	mu        sync.Mutex
-	dst       io.Writer
+	mu  sync.Mutex
+	dst io.Writer
+	// capped says that limit applies. It is a field of its own, and not a
+	// value of limit, so that no arithmetic on a budget can produce "no cap".
+	capped    bool
 	limit     int64
 	h         hash.Hash
 	bytes     int64
@@ -100,11 +103,25 @@ type HashingTee struct {
 	err       error
 }
 
-// NewHashingTee returns a tee to dst. A nil dst delivers nothing: the tee
-// then only hashes and counts. limit is the largest number of bytes handed to
-// dst; zero or less means no cap.
+// NewHashingTee returns a tee to dst that hands it at most limit bytes. A
+// nil dst delivers nothing: the tee then only hashes and counts.
+//
+// A limit of zero, or less, delivers nothing, like the other bounded writers
+// of this package: a caller that passes what is left of a budget gets an
+// empty stream when the budget is spent, and never an unbounded one. A tee
+// without a cap is asked for by name, with NewUncappedHashingTee.
 func NewHashingTee(dst io.Writer, limit int64) *HashingTee {
-	return &HashingTee{dst: dst, limit: limit, h: sha256.New()}
+	if limit < 0 {
+		limit = 0
+	}
+	return &HashingTee{dst: dst, capped: true, limit: limit, h: sha256.New()}
+}
+
+// NewUncappedHashingTee returns a tee that hands dst everything written,
+// until dst fails. It is for a destination that bounds itself, or for a
+// stream whose size something else bounds.
+func NewUncappedHashingTee(dst io.Writer) *HashingTee {
+	return &HashingTee{dst: dst, h: sha256.New()}
 }
 
 // Write implements io.Writer. It always returns len(p) and a nil error.
@@ -117,7 +134,9 @@ func (t *HashingTee) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	out := p
-	if t.limit > 0 {
+	if t.capped {
+		// Invariant: a capped tee never hands its destination more than its
+		// limit, and a limit of zero is a limit.
 		room := t.limit - t.delivered
 		if room <= 0 {
 			t.truncated = true
