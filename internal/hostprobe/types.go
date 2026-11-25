@@ -65,9 +65,13 @@ const (
 	// continuous integration did not run.
 	CheckKernel CheckID = "kernel"
 	// CheckInstall: the running executable and every directory above it are
-	// owned by root and not writable by group or others, and so are the home
-	// and state directories when they exist. The sandbox's first process is
-	// this executable.
+	// owned by root and not writable by group or others. The sandbox's first
+	// process is this executable. The home and state directories, when they
+	// exist, and every directory above them, are owned by root and not
+	// writable by group or others either; the home and the state directory
+	// themselves give the group and others nothing at all (the mode package
+	// layout prescribes): what they hold includes files owned by the ids of
+	// sandboxes, set-user-ID bits included, which no other user may reach.
 	CheckInstall CheckID = "install"
 	// CheckCgroupV2: the unified cgroup hierarchy is mounted and the cgroup
 	// the service was given can hold a subtree. Commands are killed through
@@ -88,6 +92,22 @@ const (
 	// CheckNamespaces: user namespaces can be created
 	// (user.max_user_namespaces is above zero). Every sandbox is one.
 	CheckNamespaces CheckID = "namespaces"
+	// CheckUsernsLimit: a sandbox can be kept from creating user namespaces
+	// of its own, by the mechanism the native backend uses, tried here in a
+	// throwaway child. In a new user namespace, with a procfs the child
+	// mounted itself and checked to be one, the child writes 0 to
+	// user.max_user_namespaces through that procfs and reads it back; it
+	// then tries to create a user namespace, which must fail; and it tries
+	// to write a larger value back, which must fail too. The answer is yes
+	// only when the three did what is expected. Nothing of the host is
+	// touched: the setting written is that of the child's own namespace.
+	//
+	// That user namespaces can be created says nothing about whether their
+	// creation can be bounded from inside one: only the trial does. The
+	// check concerns the native backend, whose sandboxes run on the host's
+	// kernel. A user namespace created inside a gVisor sandbox is one of
+	// gVisor's kernel, not of the host's.
+	CheckUsernsLimit CheckID = "userns.limit"
 	// CheckIDRange: the ids given to sandboxes, and the service ids just
 	// above them, overlap no entry of /etc/subuid or /etc/subgid and no
 	// account of the host.
@@ -159,6 +179,7 @@ var Checks = []Spec{
 	{ID: CheckCgroupPIDs, Title: "pids controller", Backs: []policy.ControlID{policy.ControlPIDs}},
 	{ID: CheckCgroupCounters, Title: "peak counters"},
 	{ID: CheckNamespaces, Title: "user namespaces", Required: true, Backs: []policy.ControlID{policy.ControlNetworkNone, policy.ControlNoNestedUserns}},
+	{ID: CheckUsernsLimit, Title: "nested user namespaces can be refused", Required: true, Backs: []policy.ControlID{policy.ControlNoNestedUserns}, Backend: policy.BackendNative},
 	{ID: CheckIDRange, Title: "sandbox id range is free", Required: true},
 	{ID: CheckStateSpace, Title: "free space on the state filesystem", Required: true, Backs: []policy.ControlID{policy.ControlDiskFloor}},
 	{ID: CheckOverlay, Title: "overlay on the state filesystem", Required: true, Backs: []policy.ControlID{policy.ControlReadOnlyRoot, policy.ControlWorkspace, policy.ControlSnapshot}},

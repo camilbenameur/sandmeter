@@ -100,6 +100,59 @@ func TestControlFollowsItsChecks(t *testing.T) {
 	}
 }
 
+// TestNoNestedUsernsRestsOnATrial: every session requires that a sandbox
+// cannot create user namespaces of its own. On the native backend that is
+// enforced only if the mechanism was tried on this host; the fact that user
+// namespaces can be created is a prerequisite, not the proof.
+func TestNoNestedUsernsRestsOnATrial(t *testing.T) {
+	required := false
+	for _, id := range policy.AlwaysRequired {
+		required = required || id == policy.ControlNoNestedUserns
+	}
+	if !required {
+		t.Fatal("the control is no longer required by every session: this test is about one that is")
+	}
+	spec, ok := SpecOf(CheckUsernsLimit)
+	if !ok || !backs(spec, policy.ControlNoNestedUserns) || spec.Backend != policy.BackendNative {
+		t.Fatalf("the trial is declared as %+v", spec)
+	}
+
+	for _, outcome := range []Outcome{No, Unknown} {
+		r := allYes()
+		r.Set(Check{ID: CheckUsernsLimit, Outcome: outcome, Detail: "a nested user namespace was created after the limit was written", Fix: "use a kernel that honours user.max_user_namespaces"})
+		c := r.Control(policy.ControlNoNestedUserns, policy.BackendNative)
+		if c.Enforced || !strings.Contains(c.Reason, "a nested user namespace was created") {
+			t.Errorf("%s trial: userns.nested on native is %+v, although user namespaces can be created", outcome, c)
+		}
+		// Every native session needs the control: the host cannot run the
+		// backend, and says so with the fix, instead of refusing each policy
+		// with a line of its own.
+		ps := r.Problems(policy.BackendNative)
+		if len(ps) != 1 || ps[0].ID != string(CheckUsernsLimit) || ps[0].Fix == "" {
+			t.Errorf("%s trial: problems of the native backend: %+v", outcome, ps)
+		}
+		// The other controls stand, and so does the other backend.
+		if c := r.Control(policy.ControlNetworkNone, policy.BackendNative); !c.Enforced {
+			t.Errorf("%s trial: network.none fell with it: %+v", outcome, c)
+		}
+		if c := r.Control(policy.ControlNoNestedUserns, policy.BackendGVisor); !c.Enforced {
+			t.Errorf("%s trial: userns.nested on gvisor is %+v", outcome, c)
+		}
+		if ps := r.Problems(policy.BackendGVisor); len(ps) != 0 {
+			t.Errorf("%s trial: a check of the native backend is a problem of gvisor: %+v", outcome, ps)
+		}
+	}
+
+	// The prerequisite alone does not enforce it either way round.
+	r := allYes()
+	r.Set(Check{ID: CheckNamespaces, Outcome: No, Detail: "user.max_user_namespaces is 0"})
+	for _, backend := range []string{policy.BackendNative, policy.BackendGVisor} {
+		if c := r.Control(policy.ControlNoNestedUserns, backend); c.Enforced {
+			t.Errorf("without user namespaces, userns.nested on %s is %+v", backend, c)
+		}
+	}
+}
+
 func TestBackendsAreToldApart(t *testing.T) {
 	r := allYes()
 	// The proxy listener is a check of the native backend: nothing backs the
