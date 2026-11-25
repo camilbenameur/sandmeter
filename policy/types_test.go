@@ -631,8 +631,15 @@ func TestDefaultAndBuiltinCeilingAreWrittenOut(t *testing.T) {
 	if c.Syscalls.Profile != ProfileCompat {
 		t.Errorf("the built-in ceiling's weakest profile is %q", c.Syscalls.Profile)
 	}
-	if c.Filesystem.ReadOnlyRoot == nil || !*c.Filesystem.ReadOnlyRoot {
-		t.Error("the built-in ceiling grants a writable root")
+	// A policy may ask for a writable root without an operator's leave: the
+	// writes land in the session's own writable layer, as those under /tmp
+	// and /workspace do. A policy written for the first schema with
+	// read_only_root = false therefore keeps working.
+	if c.Filesystem.ReadOnlyRoot == nil || *c.Filesystem.ReadOnlyRoot {
+		t.Error("the built-in ceiling requires a read-only root")
+	}
+	if c.Storage.Upper != UpperTmpfs {
+		t.Errorf("the built-in ceiling's storage is %q: the hard quota must be available without an operator file", c.Storage.Upper)
 	}
 	for name, lim := range map[string]Number{"cpu": c.Limits.CPU, "pids": c.Limits.PIDs} {
 		if _, ok := lim.Value(); !ok {

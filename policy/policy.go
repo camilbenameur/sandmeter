@@ -44,12 +44,21 @@ func Default() Policy {
 // BuiltinCeiling returns the ceiling in force when the operator file has no
 // [ceiling] table, or does not exist: the limits of Default, a disk quota no
 // larger than the memory limit that backs it, no network, no passed
-// variable, a read-only root, and ProfileCompat as the weakest profile. A
-// field that an operator's [ceiling] leaves out takes its value from here.
+// variable, and ProfileCompat as the weakest profile. A field that an
+// operator's [ceiling] leaves out takes its value from here.
 //
-// With this ceiling a client can make its sandbox smaller and nothing else.
+// With this ceiling a client can make its sandbox smaller, and can ask for
+// two things the default policy does not give: a writable layer in memory
+// under a hard quota, and a writable root filesystem. Neither reaches
+// outside the sandbox. What a command writes to a writable root lands in the
+// session's own writable layer, exactly as what it writes under /tmp and
+// /workspace does with a read-only root: the image is never modified, the
+// same quota or free-space guard applies and the diff of every record lists
+// it. A read-only root is a default that keeps a command from changing the
+// system it runs on by accident; an operator who wants it for every session
+// sets read_only_root = true in the [ceiling] table.
 func BuiltinCeiling() Ceiling {
-	readOnly := true
+	readOnly := false
 	return Ceiling{
 		Limits: Limits{
 			CPU:    Num(1),

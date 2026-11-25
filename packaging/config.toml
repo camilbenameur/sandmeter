@@ -94,7 +94,9 @@ deny_extra = []
 # The ceiling: the largest policy a member may ask for. A policy is accepted
 # only if every one of its keys is within the ceiling, and a key the policy
 # leaves out takes the built-in default lowered to the ceiling. With the
-# values below a member can make a sandbox smaller and nothing else.
+# values below a member can make a sandbox smaller, put its writable layer
+# in memory under a quota, and ask for a writable root filesystem; nothing
+# that reaches outside the sandbox.
 
 [ceiling.limits]
 # Cores, memory, tasks, and the longest one command may run.
@@ -121,9 +123,12 @@ mode = "none"
 allow = []
 
 [ceiling.filesystem]
-# true: every sandbox has a read-only root filesystem, except /tmp and
-# /workspace. false lets a policy ask for a writable root.
-read_only_root = true
+# false lets a policy ask for a writable root filesystem (the default policy
+# still has a read-only one, except /tmp and /workspace). What a command
+# writes to a writable root stays in the session's own writable layer and is
+# listed in its receipts; the image is never changed. true gives every
+# sandbox a read-only root, whatever its policy says.
+read_only_root = false
 
 [ceiling.syscalls]
 # Weakest syscall profile a policy may ask for: "default" (allow list),

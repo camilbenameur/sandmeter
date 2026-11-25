@@ -248,23 +248,27 @@ type Workspace struct {
 // How each field bounds a policy:
 //
 //   - Limits: a policy value must be at most the ceiling's. "unlimited" in a
-//     policy needs "unlimited" here. A field this struct leaves unset takes a
-//     finite built-in value; it never means unlimited.
-//   - Storage.Upper: UpperTmpfs grants both storage modes; UpperDisk, or
-//     nothing, grants UpperDisk only.
-//   - Network.Mode: NetworkProxy grants both modes; NetworkNone, or nothing,
-//     grants NetworkNone only. Network.Allow lists the destinations a policy
-//     may name. The two lists are compared as wholes, on what each would
-//     decide for a request, not entry against entry: see Uncovered.
-//   - Filesystem.ReadOnlyRoot: false grants a writable root; true, or
-//     nothing, requires a read-only one.
+//     policy needs "unlimited" here.
+//   - Storage.Upper: UpperTmpfs grants both storage modes; UpperDisk grants
+//     UpperDisk only.
+//   - Network.Mode: NetworkProxy grants both modes; NetworkNone grants
+//     NetworkNone only. Network.Allow lists the destinations a policy may
+//     name. The two lists are compared as wholes, on what each would decide
+//     for a request, not entry against entry: see Uncovered.
+//   - Filesystem.ReadOnlyRoot: false grants a writable root; true requires a
+//     read-only one.
 //   - Syscalls.Profile: the weakest profile a policy may ask for.
 //   - Process.EnvPass: the names a policy may pass from the client's
 //     environment, each written out in full. There is no pattern.
 //
+// A key that the [ceiling] table leaves out takes its value from
+// BuiltinCeiling, which is finite everywhere: leaving a key out never means
+// "no bound".
+//
 // The built-in ceiling, used when there is no operator file, is what
-// BuiltinCeiling returns: the default limits, no network, no passed variable,
-// ProfileCompat at the weakest and a read-only root.
+// BuiltinCeiling returns: the default limits, no network, no passed variable
+// and ProfileCompat at the weakest; both storage modes, and a root that a
+// policy may ask to be writable.
 type Ceiling struct {
 	Limits     Limits         `toml:"limits,omitempty" json:"limits"`
 	Storage    Storage        `toml:"storage,omitempty" json:"storage"`
