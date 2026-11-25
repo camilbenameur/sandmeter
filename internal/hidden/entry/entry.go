@@ -25,6 +25,18 @@
 // where a user was granted sudo on the bare binary: that grant is root, with
 // or without a greeting.
 //
+// # Environment
+//
+// An entry point is started with an environment that sandmeter wrote out,
+// never with the one its parent happened to have: the variables of a root
+// shell, of "sudo -E" or of a unit's drop-in (a proxy, a certificate file, a
+// debugging switch of the Go runtime) must not reach a worker, and from it
+// the proxy and the fetcher. Environ is that environment and the one place
+// that lists what it may hold. A parent sets it, whole, on every child it
+// starts. The handshake checks it on the other side: an entry point that
+// finds anything else in its environment refuses to run, so a parent that
+// forgot is found by its first test and not by an operator.
+//
 // This package is a leaf, on purpose: the packages that own an entry point
 // import it for the handshake, and the table of entry points (package
 // hidden) imports those packages.
@@ -35,6 +47,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -86,6 +100,111 @@ func greeting(name string) []byte { return []byte(protocol + " " + name + "\n") 
 // ErrRefused is the error of Accept, wrapped with the reason.
 var ErrRefused = errors.New("refused to run")
 
+// SearchPath is the PATH of every entry point and of every process one
+// starts: the system directories, in a fixed order, and nothing a user can
+// write to. No entry point finds a program through it (each is started by an
+// absolute path); it is there so that code which consults PATH anyway finds
+// nothing surprising.
+const SearchPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// The variables an entry point may hold.
+const (
+	envPath = "PATH"
+	// envLog is the log level (layout.EnvLog).
+	envLog = "SANDMETER_LOG"
+	// envThreads bounds the threads of the Go runtime. The first process of
+	// a sandbox is given GOMAXPROCS=1, so that it stays within the few tasks
+	// reserved for it.
+	envThreads = "GOMAXPROCS"
+)
+
+// allowed reports whether an entry point may hold the variable name with
+// this value. The list is closed: PATH with the fixed search path, the log
+// level with one of its four values, and GOMAXPROCS with a small number.
+func allowed(name, value string) bool {
+	switch name {
+	case envPath:
+		return value == SearchPath
+	case envLog:
+		return value == "debug" || value == "info" || value == "warn" || value == "error"
+	case envThreads:
+		if len(value) == 0 || len(value) > 3 || value[0] == '0' {
+			return false
+		}
+		for i := 0; i < len(value); i++ {
+			if value[i] < '0' || value[i] > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// Environ returns the whole environment of a hidden entry point: what a
+// parent sets on the entry point it starts, and what an entry point sets on
+// the children it starts in turn. It holds the fixed search path and, when
+// from holds a valid one, the log level. Nothing else of from gets through.
+//
+// from is where the log level is taken from: os.Environ() in a process a
+// person started, and in an entry point its own environment, which already
+// went through here. A caller may append GOMAXPROCS and nothing else.
+//
+// Invariant: every process the root side starts for itself gets exactly
+// this, set explicitly. An exec.Cmd whose Env is nil inherits the whole
+// environment of its parent, which is how a variable of a root shell would
+// reach the process that talks to a registry.
+func Environ(from []string) []string {
+	env := []string{envPath + "=" + SearchPath}
+	for _, kv := range from {
+		if name, value, ok := strings.Cut(kv, "="); ok && name == envLog && allowed(name, value) {
+			env = append(env, kv)
+			break
+		}
+	}
+	return env
+}
+
+// CheckEnviron reports whether env is an environment an entry point may run
+// with: nothing but the variables Environ sets, and GOMAXPROCS. The error
+// names the variables that are not, and never their values.
+func CheckEnviron(env []string) error {
+	var bad []string
+	seen := map[string]bool{}
+	for _, kv := range env {
+		name, value, _ := strings.Cut(kv, "=")
+		if !allowed(name, value) && !seen[name] {
+			seen[name] = true
+			bad = append(bad, name)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	sort.Strings(bad)
+	const show = 8
+	list := strings.Join(bad[:min(len(bad), show)], ", ")
+	if len(bad) > show {
+		list += fmt.Sprintf(" and %d more", len(bad)-show)
+	}
+	return fmt.Errorf("the environment holds what an entry point is never given (%s)", list)
+}
+
+// CheckChannel reports whether descriptor fd is open and is a pipe or a
+// socket, which is what sandmeter hands a child as its control channel. A
+// regular file, a directory, a terminal or a device is what a person or a
+// script would put there.
+func CheckChannel(fd uintptr) error {
+	var st unix.Stat_t
+	if err := unix.Fstat(int(fd), &st); err != nil {
+		return fmt.Errorf("no control channel on descriptor %d (%v)", fd, err)
+	}
+	if kind := st.Mode & unix.S_IFMT; kind != unix.S_IFIFO && kind != unix.S_IFSOCK {
+		return fmt.Errorf("descriptor %d is not a pipe or a socket", fd)
+	}
+	return nil
+}
+
 // Offer is the parent's half of the handshake: it writes the greeting for
 // the named entry point on the control channel it hands to the child. The
 // write does not wait for the child; on a pipe or a socket it may be done
@@ -111,34 +230,41 @@ func known(name string) bool {
 
 // Accept is the child's half of the handshake, and the first thing an entry
 // point does. It checks that descriptor fd is open and is a pipe or a
-// socket, marks it close-on-exec, waits up to Timeout for the greeting of
-// the named entry point and returns the descriptor as a file, positioned
-// right after the greeting, for the rest of the conversation.
+// socket, marks it close-on-exec, checks that the environment of the process
+// is one an entry point is given (CheckEnviron), waits up to Timeout for the
+// greeting of the named entry point and returns the descriptor as a file,
+// positioned right after the greeting, for the rest of the conversation.
 //
 // Any other outcome is ErrRefused and the entry point must exit without
 // having done anything: see MustAccept.
+//
+// The file returned owns the descriptor: closing it, or letting it be
+// collected, closes descriptor fd.
 func Accept(fd uintptr, name string) (*os.File, error) {
-	return accept(fd, name, Timeout)
+	return accept(fd, name, Timeout, os.Environ())
 }
 
-func accept(fd uintptr, name string, timeout time.Duration) (*os.File, error) {
+func accept(fd uintptr, name string, timeout time.Duration, env []string) (*os.File, error) {
 	refuse := func(format string, args ...any) (*os.File, error) {
 		return nil, fmt.Errorf("%s: %w: %s", name, ErrRefused, fmt.Sprintf(format, args...))
 	}
 	if !known(name) {
 		return refuse("not a hidden entry point")
 	}
-	var st unix.Stat_t
-	if err := unix.Fstat(int(fd), &st); err != nil {
-		return refuse("no control channel on descriptor %d (%v)", fd, err)
-	}
 	// Invariant: the control channel is a pipe or a socket. A regular file,
 	// a directory, a terminal or a device is what a person or a script would
 	// put there, never what sandmeter does.
-	if kind := st.Mode & unix.S_IFMT; kind != unix.S_IFIFO && kind != unix.S_IFSOCK {
-		return refuse("descriptor %d is not a pipe or a socket", fd)
+	if err := CheckChannel(fd); err != nil {
+		return refuse("%v", err)
 	}
 	unix.CloseOnExec(int(fd))
+	// Invariant: an entry point runs with the environment sandmeter wrote
+	// for it and no other. This is checked, not repaired: the Go runtime has
+	// read its own variables before this line, so an environment that holds
+	// one cannot be made safe after the fact.
+	if err := CheckEnviron(env); err != nil {
+		return refuse("%v", err)
+	}
 
 	want := greeting(name)
 	got := make([]byte, 0, len(want))
