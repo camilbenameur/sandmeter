@@ -34,7 +34,7 @@ func envOr(k, def string) string {
 
 func TestMain(m *testing.M) {
 	// The native backend re-executes this test binary as the sandbox init.
-	hidden.Dispatch(os.Args)
+	hidden.DispatchLegacy(os.Args)
 	os.Exit(m.Run())
 }
 

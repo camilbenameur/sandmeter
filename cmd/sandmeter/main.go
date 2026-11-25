@@ -19,7 +19,7 @@ var version = "dev"
 func main() {
 	// The sandbox init is this same binary, re-executed inside the new
 	// namespaces. It must take over before anything else runs.
-	hidden.Dispatch(os.Args)
+	hidden.DispatchLegacy(os.Args)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()

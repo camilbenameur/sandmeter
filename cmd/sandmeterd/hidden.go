@@ -7,7 +7,9 @@ import (
 )
 
 // dispatchHidden hands the process over to a hidden entry point when the
-// command line selects one, and returns otherwise.
+// command line selects one, and returns otherwise. It dispatches the table
+// in which every entry point begins with the handshake, and never the one
+// that also holds the init of the first backend.
 //
 // Invariant: it is the first statement of main, before a flag is parsed, a
 // file is opened or a goroutine is started. This binary is what the root

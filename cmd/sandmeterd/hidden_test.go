@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,5 +53,34 @@ func TestMainDispatchesFirst(t *testing.T) {
 	}
 	if found != 1 {
 		t.Fatalf("found %d main functions in %v, want one", found, files)
+	}
+}
+
+// TestTheRootServiceDispatchesTheHandshakeTableOnly reads the source of this
+// command once more. The root service answers to the entry points that begin
+// with the handshake and to no other: the dispatch that also answers to the
+// init of the first backend, which has none, is for the binaries that still
+// run that backend in their own process, and this is not one of them.
+func TestTheRootServiceDispatchesTheHandshakeTableOnly(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(src), "DispatchLegacy") {
+			t.Errorf("%s uses the dispatch that answers to an entry point without a handshake", name)
+		}
+		calls += strings.Count(string(src), "hidden.Dispatch(os.Args)")
+	}
+	if calls != 1 {
+		t.Errorf("found %d calls of hidden.Dispatch(os.Args) in %v, want the one of dispatchHidden", calls, files)
 	}
 }

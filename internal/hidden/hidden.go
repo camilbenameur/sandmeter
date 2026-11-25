@@ -17,6 +17,15 @@
 // each of those functions starts with the handshake of package entry: an
 // entry point that is not started by sandmeter itself exits at once.
 //
+// One entry point is older than the handshake: the init of the first native
+// backend, which today's commands still start. It is not in the table. It
+// has a table of its own, which only the binaries that still run the first
+// backend dispatch (DispatchLegacy), and the root service is not one of
+// them: no argument makes sandmeterd read a sandbox configuration from a
+// descriptor without a handshake. Until that init is deleted, this package
+// checks for it what it does not check itself, that its configuration
+// arrives on a pipe.
+//
 // # Tests that need Dispatch
 //
 // This package imports every package that owns an entry point. A test inside
@@ -27,8 +36,12 @@
 package hidden
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/camilbenameur/sandmeter/internal/backend/native"
 	"github.com/camilbenameur/sandmeter/internal/egress"
+	"github.com/camilbenameur/sandmeter/internal/exit"
 	"github.com/camilbenameur/sandmeter/internal/hidden/entry"
 	"github.com/camilbenameur/sandmeter/internal/image"
 	"github.com/camilbenameur/sandmeter/internal/serve"
@@ -45,7 +58,8 @@ type EntryPoint struct {
 	Run func()
 }
 
-// entryPoints is the table. Keep every entry here, spelled out.
+// entryPoints is the table. Keep every entry here, spelled out. Every Run in
+// it begins with the handshake.
 var entryPoints = []EntryPoint{
 	{
 		Arg: entry.Worker,
@@ -77,14 +91,34 @@ var entryPoints = []EntryPoint{
 			"talks to the registry and decompresses layers so that no root process parses what a registry sent",
 		Run: image.FetchMain,
 	},
+}
+
+// legacyConfigFD is the descriptor on which the init of the first native
+// backend reads its configuration.
+const legacyConfigFD = 3
+
+// legacyEntryPoints holds the one entry point that has no handshake. It
+// serves the sandboxes of today's commands and goes away, with this table
+// and DispatchLegacy, when the native backend starts its commands through
+// entry.Init and entry.Exec.
+var legacyEntryPoints = []EntryPoint{
 	{
-		// The init of the first native backend. It serves the sandboxes of
-		// today's commands and goes away, with this entry, when the native
-		// backend starts its commands through entry.Init and entry.Exec.
 		Arg: native.InitArg,
 		Doc: "init of a native sandbox as the first backend builds it, started inside the new namespaces: " +
 			"builds the root filesystem, drops capabilities, installs the syscall filter and execs the command",
-		Run: native.Init,
+		Run: func() {
+			// Invariant: this init takes a root filesystem, a host name and a
+			// command from its configuration, and acts on them. It must not
+			// take them from a file somebody redirected onto the descriptor:
+			// its backend hands it a pipe, and anything else is refused here,
+			// before a byte is read.
+			if err := entry.CheckChannel(legacyConfigFD); err != nil {
+				fmt.Fprintf(os.Stderr, "sandmeter: %s: %v: %v\n%s is an internal entry point: sandmeter starts it itself, and it does nothing when it is started any other way.\n",
+					native.InitArg, entry.ErrRefused, err, native.InitArg)
+				os.Exit(exit.Failure)
+			}
+			native.Init()
+		},
 	},
 }
 
@@ -95,7 +129,19 @@ var entryPoints = []EntryPoint{
 // Only the first argument selects an entry point, and only by exact match:
 // an argument further along the command line is data for a visible command
 // and never changes what the binary is.
+//
+// This is the table of the root service: every entry point it reaches
+// begins with the handshake.
 func Dispatch(args []string) {
+	dispatch(entryPoints, args)
+}
+
+// DispatchLegacy is Dispatch for the binaries that still run sandboxes with
+// the first native backend, in their own process: it also answers to that
+// backend's init. The root service never calls it. It goes away with the
+// first backend.
+func DispatchLegacy(args []string) {
+	dispatch(legacyEntryPoints, args)
 	dispatch(entryPoints, args)
 }
 
