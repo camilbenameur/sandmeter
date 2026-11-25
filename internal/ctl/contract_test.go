@@ -116,9 +116,9 @@ func TestConversation(t *testing.T) {
 		StateHello:   {KindHello},
 		StateOpen:    append([]Kind{KindStart}, questions...),
 		StateStream:  {KindAbort},
-		StateIdle:    append([]Kind{KindRefresh, KindRun, KindSnapshot, KindRestore, KindChanges, KindExport, KindStop}, questions...),
+		StateIdle:    append([]Kind{KindRefresh, KindRun, KindSnapshot, KindRestore, KindChanges, KindExport, KindStop, KindCancel}, questions...),
 		StateRunning: {KindCancel},
-		StateEnded:   questions,
+		StateEnded:   append([]Kind{KindCancel}, questions...),
 	}
 	for state, kinds := range legal {
 		want := map[Kind]bool{}
@@ -157,6 +157,33 @@ func TestConversation(t *testing.T) {
 	}
 	if Legal(StateIdle, "no-such-kind") {
 		t.Error("an unknown kind is legal")
+	}
+}
+
+// TestALateCancelDoesNotEndTheConversation: a client that cancels cannot know
+// that the result is already on its way. The cancel then reaches a worker
+// whose command is over. Were it illegal there, the conversation would end
+// with a protocol error and the session with it, with every change it had
+// not exported: a session could be lost to a cancel sent a moment too late.
+func TestALateCancelDoesNotEndTheConversation(t *testing.T) {
+	// Every state a conversation can be in after a run was sent.
+	for _, s := range []State{StateRunning, StateIdle, StateEnded} {
+		if !Legal(s, KindCancel) {
+			t.Errorf("a cancel is not legal %s: a late one would end the conversation", s)
+		}
+	}
+	// It stays illegal where no run can have been sent, and while the
+	// client is sending a stream: a client only cancels while it waits for
+	// a result.
+	for _, s := range []State{StateHello, StateOpen, StateStream} {
+		if Legal(s, KindCancel) {
+			t.Errorf("a cancel is legal %s", s)
+		}
+	}
+	// A cancel carries nothing: there is no field by which it could name a
+	// command, so there is nothing a stale one could be matched against.
+	if n := reflect.TypeFor[Cancel]().NumField(); n != 0 {
+		t.Errorf("Cancel has %d fields", n)
 	}
 }
 

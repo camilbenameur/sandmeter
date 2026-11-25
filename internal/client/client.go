@@ -227,10 +227,13 @@ type Session interface {
 	// Run runs one command and returns when it has ended and its record is
 	// stored. Output reaches the request's writers while the command runs.
 	//
-	// Cancelling ctx kills the command: Run then returns the result, which
-	// says that it was cancelled, with a nil error. The error is not nil
-	// only when there is no result: the request was refused, or the
-	// connection was lost.
+	// Cancelling ctx asks for the command to be killed: Run still waits for
+	// the result and returns it with a nil error. The result says that the
+	// command was cancelled, unless the command had already ended when the
+	// cancel reached the root side: the result is then that of the command,
+	// and the session goes on either way. The error is not nil only when
+	// there is no result: the request was refused, or the connection was
+	// lost.
 	Run(ctx context.Context, req RunRequest) (ctl.Result, error)
 	// Snapshot freezes the writable layer and returns the identifier of the
 	// snapshot.

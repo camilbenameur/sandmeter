@@ -23,7 +23,9 @@ import (
 // The worker is in one of these states, and the table Kinds says for every
 // message in which states it is legal. A message that is not legal in the
 // current state ends the conversation with CodeProtocol: it is never
-// queued, ignored or answered as if it had been understood.
+// queued, ignored or answered as if it had been understood. One message is
+// legal where it has nothing left to do: a cancel that arrives after its
+// command ended is dropped (see Cancel).
 //
 //   - Before the hello (StateHello). The client sends hello; the worker
 //     answers with its own hello, or with an error when the protocol numbers
@@ -36,14 +38,14 @@ import (
 //     Then the worker sends the answer to the request that opened the
 //     stream: started or refreshed, or an error.
 //   - Session at rest (StateIdle). The questions again, and refresh, run,
-//     snapshot, restore, changes, export and stop.
+//     snapshot, restore, changes, export and stop. A cancel is dropped.
 //   - A command runs (StateRunning). The worker sends output frames, then
 //     one result. The only message the client may send is cancel, which has
 //     no answer of its own: the result says that the command was cancelled.
 //   - The session is over (StateEnded), after stop. The questions only: this
-//     is when a client fetches the last records of its session. A second
-//     start is refused; a client that wants another session opens another
-//     connection.
+//     is when a client fetches the last records of its session. A cancel is
+//     dropped. A second start is refused; a client that wants another
+//     session opens another connection.
 //
 // Three answers are followed by a stream from the worker: record-reply (the
 // bytes of one signed record), changes-reply (the canonical bytes of an
@@ -203,7 +205,7 @@ var Kinds = []KindSpec{
 	{KindAbort, true, []State{StateStream}, func() Message { return new(Abort) }},
 	{KindRefresh, true, []State{StateIdle}, func() Message { return new(Refresh) }},
 	{KindRun, true, []State{StateIdle}, func() Message { return new(Run) }},
-	{KindCancel, true, []State{StateRunning}, func() Message { return new(Cancel) }},
+	{KindCancel, true, []State{StateIdle, StateRunning, StateEnded}, func() Message { return new(Cancel) }},
 	{KindSnapshot, true, []State{StateIdle}, func() Message { return new(Snapshot) }},
 	{KindRestore, true, []State{StateIdle}, func() Message { return new(Restore) }},
 	{KindChanges, true, []State{StateIdle}, func() Message { return new(Changes) }},
@@ -601,6 +603,17 @@ type Run struct {
 
 // Cancel asks the worker to kill the running command. It has no answer: the
 // result of the command follows, and says that it was cancelled.
+//
+// A cancel can cross the result of the command it was sent for: the client
+// sends it while the result is already on its way. The worker then reads it
+// with the session at rest, or over, where no command runs. It drops it:
+// there a cancel is legal and does nothing. A client that cancels a moment
+// too late therefore keeps its session and what the session holds.
+//
+// A late cancel never reaches a later command. A client sends a cancel only
+// while it waits for the result of a run, so every cancel is on the
+// connection before the client's next request, and the worker reads them in
+// that order.
 type Cancel struct{}
 
 // Result ends a run. A record with the same facts, and many more, is stored
