@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/camilbenameur/sandmeter/internal/backend/native"
 	"github.com/camilbenameur/sandmeter/internal/exit"
 	"github.com/camilbenameur/sandmeter/internal/hidden/entry"
@@ -142,6 +144,12 @@ func enter(t *testing.T, name string, control *os.File, env ...string) (int, str
 	cmd.Env = append(entry.Environ(nil), env...)
 	if control != nil {
 		cmd.ExtraFiles = []*os.File{control}
+	} else {
+		// The child must find descriptor 3 closed. A descriptor this test
+		// process inherited without close-on-exec (a CI runner leaves one)
+		// would otherwise be passed on and be taken for a control channel
+		// of the wrong kind.
+		unix.CloseOnExec(3)
 	}
 	err := cmd.Run()
 	var ee *exec.ExitError
