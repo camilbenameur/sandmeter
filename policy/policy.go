@@ -53,10 +53,10 @@ func Default() Policy {
 // outside the sandbox. What a command writes to a writable root lands in the
 // session's own writable layer, exactly as what it writes under /tmp and
 // /workspace does with a read-only root: the image is never modified, the
-// same quota or free-space guard applies and the diff of every record lists
-// it. A read-only root is a default that keeps a command from changing the
-// system it runs on by accident; an operator who wants it for every session
-// sets read_only_root = true in the [ceiling] table.
+// same quota or free-space guard applies and the diff in the record of every
+// command lists it. A read-only root is a default that keeps a command from
+// changing the system it runs on by accident; an operator who wants it for
+// every session sets read_only_root = true in the [ceiling] table.
 func BuiltinCeiling() Ceiling {
 	readOnly := false
 	return Ceiling{
@@ -145,8 +145,8 @@ func Within(p Policy, c Ceiling) Violations {
 //     the key is listed in Normal.DefaultsNotApplied, and the second result
 //     holds one Unapplied for it with the control and the backend's reason.
 //     Nothing was asked for, so nothing is refused; nothing is hidden
-//     either, since the policy in force and every record say that the limit
-//     is not there;
+//     either, since the policy in force and the record of every command say
+//     that the limit is not there;
 //   - any other default the backend cannot enforce (the closed network, the
 //     read-only root, the syscall profile) is a violation, as if the file
 //     had set it. Such a protection has no weaker form to fall back on that

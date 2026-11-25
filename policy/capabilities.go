@@ -175,16 +175,17 @@ type ControlState struct {
 	Reason   string
 }
 
-// States returns what a record lists as the enforcement around a session
-// that runs under n: first every control n requires, once each, in the order
-// of Requires, with the state caps reports for it; then the control of each
-// default that was not applied, not enforced, with the reason it carries.
+// ControlStates returns what a record lists as the enforcement around a
+// session that runs under n: first every control n requires, once each, in
+// the order of Requires, with the state caps reports for it; then the
+// control of each default that was not applied, not enforced, with the
+// reason it carries.
 //
 // The second part is what makes a limit that is absent because it could not
 // be enforced visible to whoever reads a record: the control is named and
 // marked as not enforced, where a limit that is absent because "unlimited"
 // was asked and granted leaves no line at all.
-func (n Normal) States(caps Capabilities, unapplied []Unapplied) []ControlState {
+func (n Normal) ControlStates(caps Capabilities, unapplied []Unapplied) []ControlState {
 	var out []ControlState
 	seen := map[ControlID]bool{}
 	for _, r := range n.Requires() {

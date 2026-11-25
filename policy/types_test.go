@@ -459,10 +459,10 @@ func TestControlsListIsClosedAndComplete(t *testing.T) {
 	}
 }
 
-// TestStatesListsWhatWasNotApplied is how a limit that is absent because it
-// could not be enforced differs, in a record, from one that is absent
-// because "unlimited" was granted.
-func TestStatesListsWhatWasNotApplied(t *testing.T) {
+// TestControlStatesListWhatWasNotApplied is how a limit that is absent
+// because it could not be enforced differs, in a record, from one that is
+// absent because "unlimited" was granted.
+func TestControlStatesListWhatWasNotApplied(t *testing.T) {
 	const why = "the host limit counts the runtime's threads, not the sandbox's tasks"
 	controls := map[ControlID]Control{}
 	for _, id := range Controls {
@@ -476,7 +476,7 @@ func TestStatesListsWhatWasNotApplied(t *testing.T) {
 	n.Limits.PIDs = nil
 	n.DefaultsNotApplied = []string{KeyLimitPIDs}
 	unapplied := []Unapplied{{Key: KeyLimitPIDs, Control: ControlPIDs, Reason: why}}
-	states := n.States(caps, unapplied)
+	states := n.ControlStates(caps, unapplied)
 	var pids *ControlState
 	seen := map[ControlID]bool{}
 	for i, s := range states {
@@ -503,7 +503,7 @@ func TestStatesListsWhatWasNotApplied(t *testing.T) {
 	}
 
 	// "unlimited", asked and granted: no line for the control at all.
-	for _, s := range n.States(caps, nil) {
+	for _, s := range n.ControlStates(caps, nil) {
 		if s.ID == ControlPIDs {
 			t.Errorf("a limit nobody required is listed: %+v", s)
 		}
@@ -512,7 +512,7 @@ func TestStatesListsWhatWasNotApplied(t *testing.T) {
 	// A line for a default that was not applied never reads as enforced,
 	// whatever the capabilities say and even without a reason.
 	all := Capabilities{Backend: BackendNative, Controls: map[ControlID]Control{ControlPIDs: {Enforced: true}}}
-	for _, s := range n.States(all, []Unapplied{{Key: KeyLimitPIDs, Control: ControlPIDs}}) {
+	for _, s := range n.ControlStates(all, []Unapplied{{Key: KeyLimitPIDs, Control: ControlPIDs}}) {
 		if s.ID == ControlPIDs && (s.Enforced || s.Reason == "") {
 			t.Errorf("an unapplied default reads as %+v", s)
 		}
@@ -523,7 +523,7 @@ func TestStatesListsWhatWasNotApplied(t *testing.T) {
 	n.Storage.Upper = UpperTmpfs
 	n.Limits.DiskBytes = int64p(1 << 20)
 	count := 0
-	for _, s := range n.States(caps, nil) {
+	for _, s := range n.ControlStates(caps, nil) {
 		if s.ID == ControlTmpfsUpper {
 			count++
 		}

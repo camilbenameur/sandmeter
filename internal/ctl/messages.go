@@ -581,7 +581,7 @@ type Started struct {
 	// this session: the policy file left them out, and the backend cannot
 	// enforce them on this host. Each has the control that is missing and
 	// the backend's reason. The policy bytes above show such a limit as
-	// null and name its key; every record of the session lists the control
+	// null and name its key; the record of every command lists the control
 	// as not enforced. A client tells the user at once, since a limit they
 	// may count on is not there. Empty, never null, when every default was
 	// applied.

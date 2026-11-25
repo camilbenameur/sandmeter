@@ -43,8 +43,8 @@
 // A built-in default limit that the backend cannot enforce here is not
 // applied: the session runs without that limit, and says so. The policy in
 // force lists the key (Normal.DefaultsNotApplied), Resolve returns the
-// control that was missing with the backend's reason (Unapplied), and every
-// record of the session lists that control as not enforced. This is what
+// control that was missing with the backend's reason (Unapplied), and the
+// record of every command lists that control as not enforced. This is what
 // lets a policy that says nothing about limits.pids run on a backend that
 // has no task limit, while a policy that writes limits.pids is refused
 // there. It applies to limits only: the other defaults (the closed network,
@@ -409,9 +409,9 @@ const (
 //
 // The root side returns the list with its answer to a start and to a check,
 // so that a client can show it, and records each entry in the enforcement
-// block of every record of the session, as a control that is not enforced
-// with this reason. A gate that requires the control then fails on the
-// record, whatever else the policy bytes say.
+// block of the record of every command, as a control that is not enforced
+// with this reason (see Normal.ControlStates). A gate that requires the
+// control then fails on the record, whatever else the policy bytes say.
 type Unapplied struct {
 	// Key is the policy key in dotted form: one of the KeyLimit constants.
 	Key string `json:"key"`
