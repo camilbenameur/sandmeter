@@ -100,6 +100,30 @@ func TestControlFollowsItsChecks(t *testing.T) {
 	}
 }
 
+// TestMissingControllerStopsTheBackend: the processor, memory and task limits
+// of the default policy are dropped, not refused, when their control is not
+// enforced. A host without one of the three controllers must therefore be
+// unable to run a backend at all, or every default session there would run
+// unbounded and only its record would say so.
+func TestMissingControllerStopsTheBackend(t *testing.T) {
+	for _, id := range []CheckID{CheckCgroupCPU, CheckCgroupMemory, CheckCgroupPIDs} {
+		spec, ok := SpecOf(id)
+		if !ok || !spec.Required {
+			t.Errorf("check %q is declared as %+v, want a required check", id, spec)
+			continue
+		}
+		for _, backend := range []string{policy.BackendNative, policy.BackendGVisor} {
+			for _, outcome := range []Outcome{No, Unknown} {
+				r := allYes()
+				r.Set(Check{ID: id, Outcome: outcome, Detail: "the controller is not in cgroup.controllers", Fix: "enable it for the subtree"})
+				if ps := r.Problems(backend); len(ps) == 0 {
+					t.Errorf("%s is %s and the %s backend has no problem", id, outcome, backend)
+				}
+			}
+		}
+	}
+}
+
 // TestNoNestedUsernsRestsOnATrial: every session requires that a sandbox
 // cannot create user namespaces of its own. On the native backend that is
 // enforced only if the mechanism was tried on this host; the fact that user

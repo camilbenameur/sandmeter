@@ -78,7 +78,13 @@ const (
 	// it, never by signalling a recorded pid.
 	CheckCgroupV2 CheckID = "cgroup.v2"
 	// CheckCgroupCPU, CheckCgroupMemory and CheckCgroupPIDs: the controller
-	// is available to that subtree.
+	// is available to that subtree. All three are required: the default
+	// policy bounds processor time, memory and the number of tasks, and a
+	// default limit that cannot be enforced is left out of a session rather
+	// than refused (policy.Resolve). Were a missing controller only a
+	// control that is not enforced, a host without it would run every
+	// default session unbounded. It is a host that cannot run the backend,
+	// and the report says which controller to enable.
 	CheckCgroupCPU    CheckID = "cgroup.cpu"
 	CheckCgroupMemory CheckID = "cgroup.memory"
 	CheckCgroupPIDs   CheckID = "cgroup.pids"
@@ -173,10 +179,10 @@ var Checks = []Spec{
 	{ID: CheckKernel, Title: "kernel release", Required: true},
 	{ID: CheckInstall, Title: "the installed files belong to root", Required: true},
 	{ID: CheckCgroupV2, Title: "cgroup v2 subtree", Required: true, Backs: []policy.ControlID{policy.ControlWall}},
-	{ID: CheckCgroupCPU, Title: "cpu controller", Backs: []policy.ControlID{policy.ControlCPU}},
-	{ID: CheckCgroupMemory, Title: "memory controller", Backs: []policy.ControlID{policy.ControlMemory}},
+	{ID: CheckCgroupCPU, Title: "cpu controller", Required: true, Backs: []policy.ControlID{policy.ControlCPU}},
+	{ID: CheckCgroupMemory, Title: "memory controller", Required: true, Backs: []policy.ControlID{policy.ControlMemory}},
 	{ID: CheckCgroupSwap, Title: "swap can be refused", Backs: []policy.ControlID{policy.ControlMemory}},
-	{ID: CheckCgroupPIDs, Title: "pids controller", Backs: []policy.ControlID{policy.ControlPIDs}},
+	{ID: CheckCgroupPIDs, Title: "pids controller", Required: true, Backs: []policy.ControlID{policy.ControlPIDs}},
 	{ID: CheckCgroupCounters, Title: "peak counters"},
 	{ID: CheckNamespaces, Title: "user namespaces", Required: true, Backs: []policy.ControlID{policy.ControlNetworkNone, policy.ControlNoNestedUserns}},
 	{ID: CheckUsernsLimit, Title: "nested user namespaces can be refused", Required: true, Backs: []policy.ControlID{policy.ControlNoNestedUserns}, Backend: policy.BackendNative},
