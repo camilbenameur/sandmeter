@@ -335,7 +335,10 @@ func (f *Fake) Start(ctx context.Context, req client.StartRequest) (client.Sessi
 		s.Workspace = b
 		s.started.Workspace = &ctl.WorkspaceInfo{ManifestSHA256: changeset.HashBytes(b), Bytes: int64(len(b))}
 	}
-	s.Manifest = changeset.Export{Format: changeset.ExportFormat, Session: id.String(), WorkspaceManifestSHA256: changeset.HashBytes(s.Workspace), Entries: []changeset.ExportEntry{}}
+	s.Manifest = changeset.Export{
+		Format: changeset.ExportFormat, Session: id.String(), WorkspaceManifestSHA256: changeset.HashBytes(s.Workspace),
+		Status: changeset.StatusComplete, Reasons: []string{}, Entries: []changeset.ExportEntry{},
+	}
 	s.Request.Workspace = nil
 	if f.OnStart != nil {
 		if err := f.OnStart(s); err != nil {
@@ -371,7 +374,7 @@ type Session struct {
 	Workspace []byte
 	// Manifest is what Changes answers and what Export announces; Stream is
 	// what Export writes. A test fills them to play a session that changed
-	// files.
+	// files. The manifest starts out complete and empty.
 	Manifest changeset.Export
 	Stream   []byte
 	// Superseded is what the next Refresh answers, once.

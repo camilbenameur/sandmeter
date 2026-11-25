@@ -55,6 +55,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/camilbenameur/sandmeter/internal/ids"
+	"github.com/camilbenameur/sandmeter/receipt"
 )
 
 // Formats of the two manifests. A manifest with another format is refused,
@@ -119,11 +120,47 @@ const (
 	// SkippedName: the name is not valid UTF-8, or is not a path CheckPath
 	// accepts.
 	SkippedName = "name"
+	// SkippedPathTooLong: the name is longer than MaxPathBytes. Such a name
+	// is not carried at all: the entry holds its length and the hash of its
+	// bytes in its place (see LongName), so that a manifest stays bounded
+	// whatever a program in a sandbox calls its files, and still says that
+	// the path was changed.
+	SkippedPathTooLong = "path_too_long"
+	// SkippedTarget: a symbolic link whose target cannot be carried as text:
+	// it is not valid UTF-8, or is longer than MaxPathBytes. The entry is
+	// listed without the target. Writing the link from a rewritten target
+	// would create another link than the one the sandbox made.
+	SkippedTarget = "target"
 	// SkippedBudget: the export reached its budget of entries or of bytes.
 	// Sizes count as the file's apparent size: a sparse file costs what it
 	// claims to hold.
 	SkippedBudget = "budget"
 )
+
+// Statuses of an export manifest, the values of Export.Status. They are the
+// words the signed export record uses.
+const (
+	// StatusComplete: the manifest lists every path the session changed
+	// under the project directory.
+	StatusComplete = receipt.ExportComplete
+	// StatusTruncated: it does not. Export.Reasons says what cut it short.
+	StatusTruncated = receipt.ExportTruncated
+)
+
+// Reasons is the closed list of what can cut an export manifest short, in
+// the order Export.Reasons lists them. They are the reasons of the diff the
+// export is built from, as a record names them: the bound on the number of
+// entries or on the size of the list, a directory too deep or with too long
+// a path to be entered, and a walk that reached its own bound or ran out of
+// time.
+var Reasons = []string{
+	receipt.DiffReasonEntries,
+	receipt.DiffReasonBytes,
+	receipt.DiffReasonDepth,
+	receipt.DiffReasonPath,
+	receipt.DiffReasonScan,
+	receipt.DiffReasonCancelled,
+}
 
 // ErrManifest is the error of the validation of a manifest, wrapped with
 // what was wrong.
@@ -183,6 +220,12 @@ type ImportEntry struct {
 // Import is the manifest of an imported project: every entry, sorted by Path
 // compared as bytes, each path once. It records no time, owner or attribute:
 // two packings of the same tree have the same manifest.
+//
+// An import manifest is complete or it does not exist: it has no entry that
+// stands for something left out. What it cannot name exactly is not
+// imported, and the client that packs the project says so, file by file: a
+// name that is not valid UTF-8 or that CheckPath refuses, and a symbolic
+// link whose target is not valid UTF-8 or is longer than MaxPathBytes.
 type Import struct {
 	// Format is ImportFormat.
 	Format string `json:"format"`
@@ -227,6 +270,14 @@ func checkContent(typ string, size int64, sum, target string, withoutBody bool) 
 	}
 	if len(target) > MaxPathBytes {
 		return fmt.Errorf("a link target of %d bytes, more than %d", len(target), MaxPathBytes)
+	}
+	// Invariant: a target in a manifest is the target, byte for byte. The
+	// canonical bytes are JSON, which replaces a byte that is not UTF-8 by
+	// another character: two different targets would then hash alike, and
+	// the link written from the manifest would not be the one that was
+	// signed. Such a target is never carried (SkippedTarget).
+	if !utf8.ValidString(target) || strings.ContainsRune(target, 0) {
+		return errors.New("a link target that is not valid UTF-8 or holds a NUL byte")
 	}
 	switch typ {
 	case TypeFile:
@@ -344,14 +395,28 @@ func marshalBounded(v any) ([]byte, error) {
 }
 
 // ExportEntry is one path the session changed under the project directory.
+//
+// The name of the entry is carried in one of three ways, and the three never
+// collide: a path that is valid UTF-8, as it is; a name that is not, in
+// quoted form with PathEscaped set; a name too long to carry, as its length
+// and its hash. The same text can be a plain path and the quoted form of
+// another name, so an entry is never identified by Path alone: see
+// ExportLess for the order, which is also what "the same name" means.
 type ExportEntry struct {
 	// Path is relative to the project directory. It passes CheckPath unless
-	// PathEscaped is set.
+	// PathEscaped is set or the entry is skipped for its name.
 	Path string `json:"path"`
 	// PathEscaped is set when the name the sandbox chose is not valid UTF-8.
 	// Path then holds its strconv.Quote form, quotes included, and the entry
 	// is Skipped with SkippedName.
 	PathEscaped bool `json:"path_escaped"`
+	// PathBytes and PathSHA256 stand for a name longer than MaxPathBytes,
+	// which is not carried: the length of the name in bytes and the
+	// lower-case hexadecimal SHA-256 of those bytes (see LongName). Path is
+	// then empty and the entry is Skipped with SkippedPathTooLong. They are
+	// zero and empty on every other entry.
+	PathBytes  int64  `json:"path_bytes"`
+	PathSHA256 string `json:"path_sha256"`
 	// Op is OpAdd, OpModify or OpDelete.
 	Op string `json:"op"`
 	// Type is the type of the entry as the session left it; for a deletion,
@@ -366,8 +431,10 @@ type ExportEntry struct {
 	// SHA256 is the hash of a regular file's content. Every regular file that
 	// is exported has one, and its body in the stream must match it.
 	SHA256 string `json:"sha256"`
-	// Target is the text of a symbolic link, verbatim. It is never resolved
-	// here.
+	// Target is the text of a symbolic link, verbatim: valid UTF-8, without
+	// a NUL byte, MaxPathBytes at most. It is never resolved here. A link
+	// whose target is anything else is listed without it, Skipped with
+	// SkippedTarget.
 	Target string `json:"target"`
 	// BaseSHA256 is, for OpModify and OpDelete of a path that is a regular
 	// file in the import manifest, the hash that manifest holds for it. A
@@ -379,7 +446,56 @@ type ExportEntry struct {
 	Skipped string `json:"skipped"`
 }
 
+// LongName returns what an export entry holds in place of a name that is
+// longer than MaxPathBytes: its length in bytes and the lower-case
+// hexadecimal SHA-256 of its bytes. The name is the path relative to the
+// project directory with "/" between components, as the bytes the
+// filesystem holds, valid UTF-8 or not.
+func LongName(raw string) (length int64, sum string) {
+	h := sha256.Sum256([]byte(raw))
+	return int64(len(raw)), hex.EncodeToString(h[:])
+}
+
+// ExportLess reports whether entry a is listed before entry b in an export
+// manifest. Entries come in three groups, in this order: the names that are
+// carried as they are, sorted by the bytes of Path; the names in quoted form
+// (PathEscaped), sorted by the bytes of that form; the names that are not
+// carried, sorted by PathSHA256, then by PathBytes.
+//
+// Two entries of which neither is less than the other name the same path,
+// and a manifest holds each path once.
+func ExportLess(a, b ExportEntry) bool {
+	ga, gb := a.group(), b.group()
+	if ga != gb {
+		return ga < gb
+	}
+	if ga == 2 {
+		if a.PathSHA256 != b.PathSHA256 {
+			return a.PathSHA256 < b.PathSHA256
+		}
+		return a.PathBytes < b.PathBytes
+	}
+	return a.Path < b.Path
+}
+
+func (e ExportEntry) group() int {
+	switch {
+	case e.PathSHA256 != "" || e.Skipped == SkippedPathTooLong:
+		return 2
+	case e.PathEscaped:
+		return 1
+	}
+	return 0
+}
+
 // Export is the manifest of an exported change set.
+//
+// A manifest says whether it is complete. A program in a sandbox decides how
+// many paths it creates, how deep and under what names, and can always
+// create more than any bound a manifest has. What does not fit is then left
+// out, and the manifest says so: Status, Reasons and Omitted are part of the
+// bytes that are hashed and signed, so that a change set which lists less
+// than what the session changed can never be taken for all of it.
 type Export struct {
 	// Format is ExportFormat.
 	Format string `json:"format"`
@@ -389,8 +505,21 @@ type Export struct {
 	// WorkspaceManifestSHA256 is the hash of the import manifest the changes
 	// are relative to: the project as the session last saw it.
 	WorkspaceManifestSHA256 string `json:"workspace_manifest_sha256"`
-	// Entries is sorted by Path compared as bytes, each path once. It is
-	// empty, never nil, when the session changed nothing.
+	// Status is StatusComplete when Entries lists every path the session
+	// changed under the project directory, and StatusTruncated when it does
+	// not.
+	Status string `json:"status"`
+	// Reasons lists, with StatusTruncated, what cut the manifest short:
+	// values of the list Reasons, each at most once, in its order. Empty,
+	// never nil, with StatusComplete.
+	Reasons []string `json:"reasons"`
+	// Omitted is the number of changed paths that are known to exist and
+	// that Entries does not list. It is a lower bound when a directory was
+	// not entered or the walk of the writable layer stopped early: what lies
+	// there was never counted. It is 0 with StatusComplete.
+	Omitted int64 `json:"omitted"`
+	// Entries is sorted by ExportLess, each path once. It is empty, never
+	// nil, when the session changed nothing.
 	Entries []ExportEntry `json:"entries"`
 }
 
@@ -405,6 +534,9 @@ func (m Export) Validate() error {
 	if !isSHA256(m.WorkspaceManifestSHA256) {
 		return fmt.Errorf("%w: the hash of the import manifest is not 64 lower-case hexadecimal digits", ErrManifest)
 	}
+	if err := m.checkStatus(); err != nil {
+		return fmt.Errorf("%w: %v", ErrManifest, err)
+	}
 	if len(m.Entries) > MaxEntries {
 		return fmt.Errorf("%w: %d entries, more than %d", ErrManifest, len(m.Entries), MaxEntries)
 	}
@@ -412,31 +544,82 @@ func (m Export) Validate() error {
 		if err := e.validate(); err != nil {
 			return fmt.Errorf("%w: entry %d: %v", ErrManifest, i, err)
 		}
-		if i > 0 && m.Entries[i-1].Path >= e.Path {
-			return fmt.Errorf("%w: entry %d is not after entry %d in the order of paths", ErrManifest, i, i-1)
+		// Invariant: each name once, in one order. The order is on the whole
+		// name (the text and how it is carried), not on Path: a plain path
+		// and the quoted form of another name can be the same text.
+		if i > 0 && !ExportLess(m.Entries[i-1], e) {
+			return fmt.Errorf("%w: entry %d is not after entry %d in the order of names", ErrManifest, i, i-1)
 		}
 	}
 	return nil
 }
 
+// checkStatus holds the three fields that say whether the manifest is
+// complete to one another.
+func (m Export) checkStatus() error {
+	if m.Omitted < 0 {
+		return errors.New("a negative number of omitted paths")
+	}
+	switch m.Status {
+	case StatusComplete:
+		if len(m.Reasons) != 0 || m.Omitted != 0 {
+			return errors.New("a complete manifest with reasons or omitted paths")
+		}
+	case StatusTruncated:
+		if len(m.Reasons) == 0 {
+			return errors.New("a truncated manifest without a reason")
+		}
+		next := 0
+		for _, r := range m.Reasons {
+			found := false
+			for ; next < len(Reasons) && !found; next++ {
+				found = Reasons[next] == r
+			}
+			if !found {
+				return fmt.Errorf("the reason %s is unknown, repeated or out of order", strconv.Quote(r))
+			}
+		}
+	default:
+		return fmt.Errorf("status %s: a manifest says %s or %s", strconv.Quote(m.Status), StatusComplete, StatusTruncated)
+	}
+	return nil
+}
+
 func (e ExportEntry) validate() error {
-	if e.PathEscaped {
+	switch {
+	case e.group() == 2 || e.PathBytes != 0:
+		if e.Skipped != SkippedPathTooLong {
+			return errors.New("a name given by its hash on an entry that is not skipped for the length of its name")
+		}
+		if e.Path != "" || e.PathEscaped {
+			return errors.New("a name that is too long to carry, and carried")
+		}
+		if !isSHA256(e.PathSHA256) || e.PathBytes <= MaxPathBytes {
+			return fmt.Errorf("a name too long to carry needs its length, above %d, and the SHA-256 of its bytes", MaxPathBytes)
+		}
+	case e.PathEscaped:
 		if e.Skipped != SkippedName {
 			return errors.New("an escaped name on an entry that is not skipped for its name")
 		}
 		if _, err := strconv.Unquote(e.Path); err != nil || len(e.Path) > 4*MaxPathBytes+2 {
 			return errors.New("an escaped name that is not a quoted string of bounded length")
 		}
-	} else if err := CheckPath(e.Path); err != nil {
-		if e.Skipped != SkippedName || !utf8.ValidString(e.Path) || len(e.Path) > MaxPathBytes || strings.ContainsRune(e.Path, 0) {
-			return err
+	default:
+		if err := CheckPath(e.Path); err != nil {
+			if e.Skipped != SkippedName || !utf8.ValidString(e.Path) || len(e.Path) > MaxPathBytes || strings.ContainsRune(e.Path, 0) {
+				return err
+			}
 		}
 	}
 	if e.Mode > 0o777 {
 		return errors.New("mode bits above 0777")
 	}
 	switch e.Skipped {
-	case "", SkippedSpecial, SkippedUnhashed, SkippedName, SkippedBudget:
+	case "", SkippedSpecial, SkippedUnhashed, SkippedName, SkippedPathTooLong, SkippedBudget:
+	case SkippedTarget:
+		if e.Type != TypeSymlink || e.Target != "" {
+			return errors.New("an entry skipped for its link target that is not a symbolic link, or that carries a target")
+		}
 	default:
 		return fmt.Errorf("unknown skip reason %s", strconv.Quote(e.Skipped))
 	}
@@ -473,6 +656,9 @@ func (m Export) Canonical() ([]byte, error) {
 	}
 	if m.Entries == nil {
 		m.Entries = []ExportEntry{}
+	}
+	if m.Reasons == nil {
+		m.Reasons = []string{}
 	}
 	return marshalBounded(m)
 }

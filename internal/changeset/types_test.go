@@ -2,14 +2,20 @@ package changeset
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/camilbenameur/sandmeter/internal/ids"
+	"github.com/camilbenameur/sandmeter/receipt"
 )
 
 const (
@@ -150,7 +156,7 @@ func TestImportValidateRefuses(t *testing.T) {
 }
 
 func goodExport() Export {
-	return Export{Format: ExportFormat, Session: sess, WorkspaceManifestSHA256: hashA, Entries: []ExportEntry{
+	return Export{Format: ExportFormat, Session: sess, WorkspaceManifestSHA256: hashA, Status: StatusComplete, Entries: []ExportEntry{
 		{Path: "README.md", Op: OpModify, Type: TypeFile, Mode: 0o644, Size: 20, SHA256: hashB, BaseSHA256: hashA},
 		{Path: "bin/old", Op: OpDelete, Type: TypeFile, BaseSHA256: hashB},
 		{Path: "dev", Op: OpAdd, Type: TypeOther, Skipped: SkippedSpecial},
@@ -167,8 +173,8 @@ func TestExportCanonicalHashAndTotals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasPrefix(b, []byte(`{"format":"sandmeter.export/1","session":"`+sess+`","workspace_manifest_sha256":"`+hashA+`","entries":[{"path":"README.md","path_escaped":false,"op":"modify",`)) {
-		t.Errorf("canonical bytes start with %s", b[:200])
+	if !bytes.HasPrefix(b, []byte(`{"format":"sandmeter.export/1","session":"`+sess+`","workspace_manifest_sha256":"`+hashA+`","status":"complete","reasons":[],"omitted":0,"entries":[{"path":"README.md","path_escaped":false,"path_bytes":0,"path_sha256":"","op":"modify",`)) {
+		t.Errorf("canonical bytes start with %s", b[:300])
 	}
 	h, err := m.Hash()
 	if err != nil || h != HashBytes(b) {
@@ -177,6 +183,7 @@ func TestExportCanonicalHashAndTotals(t *testing.T) {
 	var back Export
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
+	m.Reasons = []string{} // the canonical form spells the empty list out
 	if err := dec.Decode(&back); err != nil || !reflect.DeepEqual(back, m) {
 		t.Errorf("read back %+v, %v", back, err)
 	}
@@ -194,17 +201,263 @@ func TestExportCanonicalHashAndTotals(t *testing.T) {
 	if strings.Join(bodies, " ") != "README.md new/tool.sh" {
 		t.Errorf("entries with a body: %v", bodies)
 	}
-	empty, _ := Export{Format: ExportFormat, Session: sess, WorkspaceManifestSHA256: hashA}.Canonical()
-	if !bytes.HasSuffix(empty, []byte(`"entries":[]}`)) {
-		t.Errorf("an export with no change: %s", empty)
+	empty, err := Export{Format: ExportFormat, Session: sess, WorkspaceManifestSHA256: hashA, Status: StatusComplete}.Canonical()
+	if err != nil || !bytes.HasSuffix(empty, []byte(`"status":"complete","reasons":[],"omitted":0,"entries":[]}`)) {
+		t.Errorf("an export with no change: %s, %v", empty, err)
+	}
+}
+
+// TestExportSaysWhetherItIsComplete: a manifest is never complete by
+// default. A program in a sandbox can always change more paths than a
+// manifest holds; what is left out is then said, in the signed bytes.
+func TestExportSaysWhetherItIsComplete(t *testing.T) {
+	// The zero status is not "complete".
+	m := goodExport()
+	m.Status = ""
+	if err := m.Validate(); !errors.Is(err, ErrManifest) || !strings.Contains(err.Error(), "status") {
+		t.Errorf("a manifest without a status: %v", err)
+	}
+
+	m = goodExport()
+	m.Status, m.Reasons, m.Omitted = StatusTruncated, []string{receipt.DiffReasonEntries, receipt.DiffReasonDepth}, 41
+	b, err := m.Canonical()
+	if err != nil {
+		t.Fatalf("a truncated manifest: %v", err)
+	}
+	if !bytes.Contains(b, []byte(`"status":"truncated","reasons":["entries","depth"],"omitted":41,`)) {
+		t.Errorf("the canonical bytes do not say what was left out: %s", b[:300])
+	}
+	whole := goodExport()
+	if h1, _ := m.Hash(); h1 == "" {
+		t.Error("a truncated manifest has no hash")
+	} else if h2, _ := whole.Hash(); h1 == h2 {
+		t.Error("a truncated manifest and a complete one with the same entries have the same hash")
+	}
+	// A lower bound of zero is legal: a directory that was not entered was
+	// not counted either.
+	m.Omitted = 0
+	if err := m.Validate(); err != nil {
+		t.Errorf("a truncated manifest with nothing counted: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*Export){
+		"complete with a reason":      func(m *Export) { m.Reasons = []string{receipt.DiffReasonEntries} },
+		"complete with omitted paths": func(m *Export) { m.Omitted = 1 },
+		"truncated without a reason":  func(m *Export) { m.Status = StatusTruncated },
+		"an unknown reason":           func(m *Export) { m.Status, m.Reasons = StatusTruncated, []string{"because"} },
+		"a reason that omits nothing": func(m *Export) { m.Status, m.Reasons = StatusTruncated, []string{receipt.DiffReasonHashBudget} },
+		"a reason twice": func(m *Export) {
+			m.Status, m.Reasons = StatusTruncated, []string{receipt.DiffReasonPath, receipt.DiffReasonPath}
+		},
+		"reasons out of order": func(m *Export) {
+			m.Status, m.Reasons = StatusTruncated, []string{receipt.DiffReasonDepth, receipt.DiffReasonEntries}
+		},
+		"a negative count": func(m *Export) {
+			m.Status, m.Reasons, m.Omitted = StatusTruncated, []string{receipt.DiffReasonScan}, -1
+		},
+		"an unknown status": func(m *Export) { m.Status = "partial" },
+		"the diff's error":  func(m *Export) { m.Status = receipt.DiffError },
+	} {
+		m := goodExport()
+		mutate(&m)
+		if err := m.Validate(); !errors.Is(err, ErrManifest) {
+			t.Errorf("%s: Validate = %v, want ErrManifest", name, err)
+		}
+	}
+	// Every reason, in order, is accepted, and the list is the record's.
+	m = goodExport()
+	m.Status, m.Reasons = StatusTruncated, append([]string(nil), Reasons...)
+	if err := m.Validate(); err != nil {
+		t.Errorf("all reasons at once: %v", err)
+	}
+	if StatusComplete != receipt.ExportComplete || StatusTruncated != receipt.ExportTruncated || len(Reasons) != 6 {
+		t.Error("the words of a manifest are not those of the export record")
+	}
+}
+
+// TestExportOfMoreChangesThanAManifestHolds is the case of a session that
+// creates more paths than MaxEntries: the manifest lists what fits and says
+// that the rest is left out. Without that the export of such a session
+// could only fail, or lie by omission.
+func TestExportOfMoreChangesThanAManifestHolds(t *testing.T) {
+	m := Export{Format: ExportFormat, Session: sess, WorkspaceManifestSHA256: hashA, Status: StatusTruncated,
+		Reasons: []string{receipt.DiffReasonEntries}, Omitted: 1, Entries: make([]ExportEntry, MaxEntries)}
+	for i := range m.Entries {
+		m.Entries[i] = ExportEntry{Path: fmt.Sprintf("f%06d", i), Op: OpAdd, Type: TypeFile, Skipped: SkippedBudget}
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("a full manifest that says one path is left out: %v", err)
+	}
+	if entries, skipped, size := m.Totals(); entries != MaxEntries || skipped != MaxEntries || size != 0 {
+		t.Errorf("Totals = %d, %d, %d", entries, skipped, size)
+	}
+	// The bound itself stands.
+	m.Entries = append(m.Entries, ExportEntry{Path: "g", Op: OpAdd, Type: TypeFile, Skipped: SkippedBudget})
+	if err := m.Validate(); !errors.Is(err, ErrManifest) {
+		t.Errorf("one entry more than the bound: %v", err)
+	}
+}
+
+// TestExportOfANameTooLongToCarry: twenty nested directories with names of
+// 255 bytes make a path of more than MaxPathBytes, with one "mkdir -p". The
+// manifest lists it by length and hash, and stays bounded.
+func TestExportOfANameTooLongToCarry(t *testing.T) {
+	long := strings.TrimSuffix(strings.Repeat(strings.Repeat("d", MaxNameBytes)+"/", 20), "/")
+	if len(long) <= MaxPathBytes {
+		t.Fatalf("the path is %d bytes long", len(long))
+	}
+	length, sum := LongName(long)
+	want := sha256.Sum256([]byte(long))
+	if length != int64(len(long)) || sum != hex.EncodeToString(want[:]) {
+		t.Fatalf("LongName = %d, %s", length, sum)
+	}
+
+	m := goodExport()
+	m.Entries = append(m.Entries, ExportEntry{PathBytes: length, PathSHA256: sum, Op: OpAdd, Type: TypeDir, Mode: 0o755, Skipped: SkippedPathTooLong})
+	b, err := m.Canonical()
+	if err != nil {
+		t.Fatalf("a manifest with a name too long to carry: %v", err)
+	}
+	if len(b) > 4096 || !bytes.Contains(b, []byte(`"path":"","path_escaped":false,"path_bytes":`+strconv.Itoa(len(long))+`,"path_sha256":"`+sum+`"`)) {
+		t.Errorf("the entry is carried as %s", b[len(b)-400:])
+	}
+	if _, skipped, _ := m.Totals(); skipped != 3 {
+		t.Errorf("the entry is not counted as skipped: %d", skipped)
+	}
+	if m.Entries[len(m.Entries)-1].HasBody() {
+		t.Error("an entry without a name has a body")
+	}
+
+	// Carried in full, the same name is refused, whatever the entry says.
+	for name, e := range map[string]ExportEntry{
+		"as a path":          {Path: long, Op: OpAdd, Type: TypeDir},
+		"skipped for name":   {Path: long, Op: OpAdd, Type: TypeDir, Skipped: SkippedName},
+		"skipped for length": {Path: long, Op: OpAdd, Type: TypeDir, Skipped: SkippedPathTooLong},
+		"with both":          {Path: "short", PathBytes: length, PathSHA256: sum, Op: OpAdd, Type: TypeDir, Skipped: SkippedPathTooLong},
+		"not skipped":        {PathBytes: length, PathSHA256: sum, Op: OpAdd, Type: TypeDir},
+		"another reason":     {PathBytes: length, PathSHA256: sum, Op: OpAdd, Type: TypeDir, Skipped: SkippedName},
+		"without a hash":     {PathBytes: length, Op: OpAdd, Type: TypeDir, Skipped: SkippedPathTooLong},
+		"without a length":   {PathSHA256: sum, Op: OpAdd, Type: TypeDir, Skipped: SkippedPathTooLong},
+		"a length that fits": {PathBytes: MaxPathBytes, PathSHA256: sum, Op: OpAdd, Type: TypeDir, Skipped: SkippedPathTooLong},
+		"escaped as well":    {PathEscaped: true, PathBytes: length, PathSHA256: sum, Op: OpAdd, Type: TypeDir, Skipped: SkippedPathTooLong},
+		"a short name":       {Path: "ok", PathBytes: 2, Op: OpAdd, Type: TypeDir},
+	} {
+		m := goodExport()
+		m.Entries = append(m.Entries, e)
+		if err := m.Validate(); !errors.Is(err, ErrManifest) {
+			t.Errorf("%s: Validate = %v, want ErrManifest", name, err)
+		}
+	}
+
+	// Two such names are two entries, in the order of their hashes; the
+	// same one twice is refused.
+	_, other := LongName(long + "/x")
+	pair := []ExportEntry{
+		{PathBytes: length, PathSHA256: sum, Op: OpAdd, Type: TypeDir, Skipped: SkippedPathTooLong},
+		{PathBytes: length + 2, PathSHA256: other, Op: OpAdd, Type: TypeFile, Skipped: SkippedPathTooLong},
+	}
+	sort.Slice(pair, func(i, j int) bool { return ExportLess(pair[i], pair[j]) })
+	m = goodExport()
+	m.Entries = append(m.Entries, pair...)
+	if err := m.Validate(); err != nil {
+		t.Errorf("two names too long to carry: %v", err)
+	}
+	m.Entries = append(m.Entries, pair[1])
+	if err := m.Validate(); !errors.Is(err, ErrManifest) {
+		t.Errorf("the same name twice: %v", err)
+	}
+}
+
+// TestALinkTargetIsCarriedExactlyOrNotAtAll: the canonical bytes are JSON,
+// which replaces a byte that is not UTF-8. A target with such a byte would
+// be signed as another target, and two different targets would hash alike.
+func TestALinkTargetIsCarriedExactlyOrNotAtAll(t *testing.T) {
+	for name, target := range map[string]string{"not UTF-8": "x\xffy", "a NUL byte": "x\x00y", "both": "x\xffy\x00z"} {
+		im := goodImport()
+		im.Entries[3].Target = target
+		if err := im.Validate(); !errors.Is(err, ErrManifest) {
+			t.Errorf("import, %s: Validate = %v, want ErrManifest", name, err)
+		}
+		if _, err := im.Hash(); err == nil {
+			t.Errorf("import, %s: a manifest with a target it cannot carry was hashed", name)
+		}
+		ex := goodExport()
+		ex.Entries[5].Target = target
+		if err := ex.Validate(); !errors.Is(err, ErrManifest) {
+			t.Errorf("export, %s: Validate = %v, want ErrManifest", name, err)
+		}
+		// Marking the entry as skipped does not make the target acceptable.
+		ex.Entries[5].Skipped = SkippedTarget
+		if err := ex.Validate(); !errors.Is(err, ErrManifest) {
+			t.Errorf("export, %s, skipped: Validate = %v, want ErrManifest", name, err)
+		}
+	}
+
+	// How such a link is listed: without its target, and never exported.
+	ex := goodExport()
+	ex.Entries[5] = ExportEntry{Path: "new/link", Op: OpAdd, Type: TypeSymlink, Mode: 0o777, Skipped: SkippedTarget}
+	if err := ex.Validate(); err != nil {
+		t.Errorf("a link listed without its target: %v", err)
+	}
+	if _, skipped, _ := ex.Totals(); skipped != 3 {
+		t.Errorf("the link is not counted as skipped: %d", skipped)
+	}
+	ex.Entries[5].Type = TypeFile
+	if err := ex.Validate(); !errors.Is(err, ErrManifest) {
+		t.Errorf("a regular file skipped for its link target: %v", err)
+	}
+}
+
+// TestAPlainNameAndAQuotedNameWithTheSameText: a program in a sandbox can
+// name one file with bytes that are not UTF-8 and another with the quoted
+// spelling of the first. Both are listed; the manifest must not become
+// impossible to build.
+func TestAPlainNameAndAQuotedNameWithTheSameText(t *testing.T) {
+	raw := "abc\xff"
+	quoted := strconv.Quote(raw)
+	if err := CheckPath(quoted); err != nil {
+		t.Fatalf("the quoted spelling is itself a valid name: %v", err)
+	}
+	entries := []ExportEntry{
+		{Path: quoted, PathEscaped: true, Op: OpAdd, Type: TypeFile, Size: 1, Skipped: SkippedName},
+		{Path: quoted, Op: OpAdd, Type: TypeFile, Mode: 0o644, Size: 1, SHA256: hashA},
+		{Path: "zzz", Op: OpAdd, Type: TypeDir},
+		{Path: "abc", Op: OpAdd, Type: TypeDir},
+	}
+	sort.Slice(entries, func(i, j int) bool { return ExportLess(entries[i], entries[j]) })
+	var order []string
+	for _, e := range entries {
+		order = append(order, fmt.Sprintf("%s/%v", e.Path, e.PathEscaped))
+	}
+	if got, want := strings.Join(order, " "), quoted+"/false abc/false zzz/false "+quoted+"/true"; got != want {
+		t.Errorf("order %s, want %s", got, want)
+	}
+	m := goodExport()
+	m.Entries = entries
+	if err := m.Validate(); err != nil {
+		t.Errorf("a plain name and a quoted one with the same text: %v", err)
+	}
+	// The same name twice is still refused, in each group.
+	for _, dup := range []int{1, 3} {
+		twice := goodExport()
+		twice.Entries = append(append([]ExportEntry(nil), entries[:dup+1]...), entries[dup:]...)
+		if err := twice.Validate(); !errors.Is(err, ErrManifest) {
+			t.Errorf("entry %d twice: %v", dup, err)
+		}
+	}
+	// An escaped name before a plain one is out of order.
+	m.Entries = []ExportEntry{entries[3], entries[1]}
+	if err := m.Validate(); !errors.Is(err, ErrManifest) {
+		t.Errorf("an escaped name listed first: %v", err)
 	}
 }
 
 func TestExportAcceptsAnEscapedName(t *testing.T) {
 	m := goodExport()
+	// Escaped names are listed after the plain ones.
 	m.Entries = []ExportEntry{
-		{Path: `"bad\xffname"`, PathEscaped: true, Op: OpAdd, Type: TypeFile, Size: 3, Skipped: SkippedName},
 		{Path: "ok", Op: OpAdd, Type: TypeDir},
+		{Path: `"bad\xffname"`, PathEscaped: true, Op: OpAdd, Type: TypeFile, Size: 3, Skipped: SkippedName},
 	}
 	if err := m.Validate(); err != nil {
 		t.Errorf("an escaped, skipped name: %v", err)
@@ -238,6 +491,7 @@ func TestExportValidateRefuses(t *testing.T) {
 			m.Entries[4] = ExportEntry{Path: `not quoted`, PathEscaped: true, Op: OpAdd, Type: TypeDir, Skipped: SkippedName}
 		}),
 		"link without target": mutate(func(m *Export) { m.Entries[5].Target = "" }),
+		"long link target":    mutate(func(m *Export) { m.Entries[5].Target = strings.Repeat("x", MaxPathBytes+1) }),
 	} {
 		if err := m.Validate(); !errors.Is(err, ErrManifest) {
 			t.Errorf("%s: Validate = %v, want ErrManifest", name, err)
