@@ -31,6 +31,12 @@
 //     the same answer.
 //   - No descriptor crosses. Neither end reads ancillary data.
 //
+// A fourth rule is for the root side's own log. Text that a client chose and
+// that the worker writes down (the build identity of a hello, the reason of
+// an abort) is bounded here, far below the size of a message, and is logged
+// as a quoted string (strconv.Quote), cut at its bound: never pasted into a
+// sentence, never able to start a line of its own.
+//
 // # Frames
 //
 // The connection carries frames. A frame is one byte of type, four bytes of
@@ -43,7 +49,10 @@
 // The length is checked against the bound of the frame's type before a byte
 // of payload is read or a byte of memory is allocated for it. A frame of an
 // unknown type, a frame over its bound and a message frame with an empty
-// payload end the conversation.
+// payload end the conversation. Until an end has read the hello of the
+// other, the bound of a message frame is MaxHello: a peer that has not yet
+// shown that it speaks this protocol gets a few kilobytes of attention, not
+// sixteen megabytes.
 //
 // A message frame holds one JSON object with exactly two members, "kind" and
 // "body" (see Envelope); the body is decoded into the Go type of that kind
@@ -95,8 +104,12 @@ const (
 const (
 	// FrameHeaderLen is the length of the type and the length field.
 	FrameHeaderLen = 5
-	// MaxMessage is the largest payload of a message frame.
+	// MaxMessage is the largest payload of a message frame, once the hello
+	// of the sender has been read.
 	MaxMessage = 16 << 20
+	// MaxHello is the largest payload of the first message frame an end
+	// receives, which must be the hello of the other.
+	MaxHello = 4 << 10
 	// MaxChunk is the largest payload of an output or data frame. A sender
 	// cuts its stream in pieces of at most this size; the pieces mean
 	// nothing.
@@ -104,8 +117,17 @@ const (
 )
 
 // MaxPayload returns the largest payload a frame of the given type may
-// carry. ok is false for a type that is not in the list.
-func MaxPayload(t FrameType) (max int, ok bool) {
+// carry. helloRead says whether the reader has already read the hello of
+// the other end: before that, only a message frame is legal, and a small
+// one. ok is false for a type that is not in the list and for a frame that
+// may not come before the hello.
+func MaxPayload(t FrameType, helloRead bool) (max int, ok bool) {
+	if !helloRead {
+		if t == FrameMessage {
+			return MaxHello, true
+		}
+		return 0, false
+	}
 	switch t {
 	case FrameMessage:
 		return MaxMessage, true
@@ -129,7 +151,8 @@ const (
 	MaxArgs      = 4096
 	MaxArgvBytes = 1 << 20
 	// MaxEnvVars and MaxEnvBytes bound the variables sent with a message and
-	// the sum of the lengths of their names and values.
+	// the sum of the lengths of their names and values. A name is also
+	// bounded on its own, by the grammar of names (policy.ValidEnvName).
 	MaxEnvVars  = 1024
 	MaxEnvBytes = 256 << 10
 	// MaxRefBytes bounds an image reference and a backend name.
@@ -140,6 +163,12 @@ const (
 	// and the text of each one.
 	MaxReasons     = 1024
 	MaxReasonBytes = 2048
+	// MaxBuildBytes bounds each of the two strings of a build identity. The
+	// root side logs them.
+	MaxBuildBytes = 128
+	// MaxAbortReasonBytes bounds the reason a client gives for an abort. The
+	// root side logs it.
+	MaxAbortReasonBytes = 1024
 )
 
 // Deadlines both ends hold.

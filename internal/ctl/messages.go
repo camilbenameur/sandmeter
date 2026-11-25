@@ -260,7 +260,9 @@ func Legal(s State, k Kind) bool {
 }
 
 // Build identifies the build of one end. It is informational: it is shown
-// when the protocol numbers differ and written to the logs.
+// when the protocol numbers differ and written to the logs. Each string is
+// MaxBuildBytes at most; a hello with a longer one is refused. The worker
+// logs a client's as quoted strings.
 type Build struct {
 	// Version is the release version, such as "0.1.0", or "dev".
 	Version string `json:"version"`
@@ -268,7 +270,8 @@ type Build struct {
 	Commit string `json:"commit"`
 }
 
-// Hello is the first message of each end.
+// Hello is the first message of each end. Its frame is MaxHello bytes at
+// most: an end holds that bound until it has read the other's hello.
 type Hello struct {
 	// Protocol is the Protocol constant of the sender's build.
 	Protocol int   `json:"protocol"`
@@ -488,7 +491,14 @@ type RecordReply struct {
 
 // EnvVar is one environment variable.
 type EnvVar struct {
-	Name  string `json:"name"`
+	// Name is the name of the variable: a letter or an underscore followed
+	// by letters, digits and underscores, as policy.ValidEnvName says. A
+	// request with any other name, "A=B" and the empty name included, is
+	// refused with CodeInvalid: the names of the variables a command was
+	// given are part of its signed record.
+	Name string `json:"name"`
+	// Value is the value: valid UTF-8 without a NUL byte, like every string
+	// of a message. It is never recorded and never logged.
 	Value string `json:"value"`
 }
 
@@ -529,7 +539,9 @@ type Accept struct {
 // code CodeAborted; a start then leaves no session, a refresh leaves the
 // session as it was before.
 type Abort struct {
-	// Reason says why, for the service's log.
+	// Reason says why, for the service's log: MaxAbortReasonBytes at most. A
+	// longer one refuses nothing (the abort stands) and is cut. The worker
+	// logs it as a quoted string.
 	Reason string `json:"reason"`
 }
 

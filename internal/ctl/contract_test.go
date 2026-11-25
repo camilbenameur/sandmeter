@@ -27,14 +27,35 @@ func TestFrameBounds(t *testing.T) {
 			t.Errorf("frame type %q is used twice", typ)
 		}
 		seen[typ] = true
-		if got, ok := MaxPayload(typ); !ok || got != want {
+		if got, ok := MaxPayload(typ, true); !ok || got != want {
 			t.Errorf("MaxPayload(%q) = %d, %v, want %d", typ, got, ok, want)
+		}
+		// Before the hello of the other end was read, the only frame is a
+		// message, and a small one.
+		got, ok := MaxPayload(typ, false)
+		if typ == FrameMessage && (!ok || got != MaxHello) {
+			t.Errorf("before the hello a message frame may carry %d, %v; want %d", got, ok, MaxHello)
+		}
+		if typ != FrameMessage && ok {
+			t.Errorf("before the hello a frame of type %q is legal", typ)
 		}
 	}
 	for _, unknown := range []FrameType{0, 'I', 'm', 0xff} {
-		if _, ok := MaxPayload(unknown); ok {
-			t.Errorf("MaxPayload knows the frame type %q", unknown)
+		for _, helloRead := range []bool{false, true} {
+			if _, ok := MaxPayload(unknown, helloRead); ok {
+				t.Errorf("MaxPayload knows the frame type %q", unknown)
+			}
 		}
+	}
+	// A hello at its bounds fits in the frame it is allowed, even when JSON
+	// spends six bytes on each byte of the build identity; and that frame is
+	// far smaller than a message's.
+	hello, err := json.Marshal(Envelope{Kind: KindHello, Body: json.RawMessage(`{"protocol":2147483647,"build":{"version":"","commit":""}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worst := len(hello) + 6*2*MaxBuildBytes; worst > MaxHello || MaxHello*1024 > MaxMessage {
+		t.Errorf("a hello can take %d bytes; its frame holds %d and a message %d", worst, MaxHello, MaxMessage)
 	}
 	// A message at every bound at once fits in a message frame even when
 	// JSON spends six bytes on each of its bytes, with room for the rest.
@@ -187,26 +208,39 @@ func TestALateCancelDoesNotEndTheConversation(t *testing.T) {
 	}
 }
 
+// reviewed is what the list below says of one string a client can send.
+type reviewed struct {
+	// what the string is.
+	what string
+	// bound is the largest size the root side takes for it, in bytes: for a
+	// list, of all its elements together. No string of a request is bounded
+	// by the size of a message alone.
+	bound int
+	// logged is true for text the root side writes to its log.
+	logged bool
+}
+
 // stringFieldsOfRequests is the reviewed list of every string a client can
-// put in a message, with what it is. None is a path on the host and none
-// names a host object. A new string field in a request fails the test below
-// until it is added here, which is the moment to ask what it can name.
-var stringFieldsOfRequests = map[string]string{
-	"Hello.Build.Version": "build identity, shown and logged",
-	"Hello.Build.Commit":  "build identity, shown and logged",
-	"Check.Policy":        "text of a policy file",
-	"Check.Backend":       "backend name, compared with the enabled ones",
-	"Check.Image":         "image reference, checked against the operator's list",
-	"Start.Policy":        "text of a policy file",
-	"Start.Image":         "image reference, checked against the operator's list",
-	"Start.Backend":       "backend name, compared with the enabled ones",
-	"Start.Env.Name":      "environment variable name",
-	"Start.Env.Value":     "environment variable value",
-	"Abort.Reason":        "free text for the log",
-	"Run.Argv":            "the command, executed inside the sandbox",
-	"Run.Workdir":         "a path inside the sandbox",
-	"Run.Env.Name":        "environment variable name",
-	"Run.Env.Value":       "environment variable value",
+// put in a message, with what it is and its bound. None is a path on the
+// host and none names a host object. A new string field in a request fails
+// the test below until it is added here, which is the moment to ask what it
+// can name and how long it may be.
+var stringFieldsOfRequests = map[string]reviewed{
+	"Hello.Build.Version": {"build identity, shown and logged", MaxBuildBytes, true},
+	"Hello.Build.Commit":  {"build identity, shown and logged", MaxBuildBytes, true},
+	"Check.Policy":        {"text of a policy file", MaxPolicyBytes, false},
+	"Check.Backend":       {"backend name, compared with the enabled ones", MaxRefBytes, false},
+	"Check.Image":         {"image reference, checked against the operator's list", MaxRefBytes, false},
+	"Start.Policy":        {"text of a policy file", MaxPolicyBytes, false},
+	"Start.Image":         {"image reference, checked against the operator's list", MaxRefBytes, false},
+	"Start.Backend":       {"backend name, compared with the enabled ones", MaxRefBytes, false},
+	"Start.Env.Name":      {"environment variable name, in the grammar of names", policy.MaxEnvNameBytes, false},
+	"Start.Env.Value":     {"environment variable value", MaxEnvBytes, false},
+	"Abort.Reason":        {"free text for the log", MaxAbortReasonBytes, true},
+	"Run.Argv":            {"the command, executed inside the sandbox", MaxArgvBytes, false},
+	"Run.Workdir":         {"a path inside the sandbox", MaxWorkdirBytes, false},
+	"Run.Env.Name":        {"environment variable name, in the grammar of names", policy.MaxEnvNameBytes, false},
+	"Run.Env.Value":       {"environment variable value", MaxEnvBytes, false},
 }
 
 // walk visits the leaf fields of a message type.
@@ -261,10 +295,37 @@ func TestNoRequestNamesAHostPathOrCarriesADescriptor(t *testing.T) {
 			}
 		})
 	}
-	for path := range stringFieldsOfRequests {
+	for path, r := range stringFieldsOfRequests {
 		if !seen[path] {
 			t.Errorf("the reviewed list holds %s, which no request has", path)
 		}
+		if r.bound <= 0 || r.bound > MaxArgvBytes {
+			t.Errorf("%s has the bound %d: every string of a request has a bound of its own, far under the size of a message", path, r.bound)
+		}
+		// What the root side logs is a line or two, not a megabyte: a member
+		// of the group must not be able to fill the journal at will.
+		if r.logged && r.bound > 4096 {
+			t.Errorf("%s is logged and may be %d bytes long", path, r.bound)
+		}
+	}
+}
+
+// TestEnvironmentNamesHaveOneGrammar: the names a client sends are those a
+// policy may hold, and the examples the protocol must refuse are refused by
+// that one function.
+func TestEnvironmentNamesHaveOneGrammar(t *testing.T) {
+	for _, good := range []string{"TOKEN", "npm_config_cache", "_", "CI"} {
+		if !policy.ValidEnvName(good) {
+			t.Errorf("%q is refused", good)
+		}
+	}
+	for _, bad := range []string{"", "A=B", "=", "1A", "A B", "A\x00", "A\n"} {
+		if policy.ValidEnvName(bad) {
+			t.Errorf("%q is accepted: it would end up among the signed names of a record", bad)
+		}
+	}
+	if policy.MaxEnvNameBytes > MaxEnvBytes {
+		t.Error("one name can be longer than all variables together")
 	}
 }
 
