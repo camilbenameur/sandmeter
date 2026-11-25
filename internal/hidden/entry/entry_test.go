@@ -276,8 +276,11 @@ func TestEnviron(t *testing.T) {
 	if again := Environ(got); strings.Join(again, "\n") != strings.Join(got, "\n") {
 		t.Errorf("Environ of its own result = %q", again)
 	}
+	// Only the directories of the system's own programs: nothing a user
+	// owns, and nothing under /usr/local, which a group other than root can
+	// write to on some distributions.
 	for _, dir := range strings.Split(SearchPath, ":") {
-		if !filepath.IsAbs(dir) || strings.HasPrefix(dir, "/home") || strings.HasPrefix(dir, "/tmp") || dir == "." {
+		if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || strings.HasPrefix(dir, "/home") || strings.HasPrefix(dir, "/tmp") || strings.HasPrefix(dir, "/usr/local") {
 			t.Errorf("the search path holds %q", dir)
 		}
 	}

@@ -101,11 +101,13 @@ func greeting(name string) []byte { return []byte(protocol + " " + name + "\n") 
 var ErrRefused = errors.New("refused to run")
 
 // SearchPath is the PATH of every entry point and of every process one
-// starts: the system directories, in a fixed order, and nothing a user can
-// write to. No entry point finds a program through it (each is started by an
-// absolute path); it is there so that code which consults PATH anyway finds
-// nothing surprising.
-const SearchPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+// starts: the directories of the system's own programs, in a fixed order.
+// The directories under /usr/local are left out on purpose: on some
+// distributions a group other than root can write to them. No entry point
+// finds a program through PATH (each is started by an absolute path); the
+// variable is there so that code which consults it anyway finds nothing
+// surprising.
+const SearchPath = "/usr/sbin:/usr/bin:/sbin:/bin"
 
 // The variables an entry point may hold.
 const (
