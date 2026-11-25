@@ -34,7 +34,10 @@ base = 1879048192
 [backends]
 # Backends that may run sessions, the default first. "native" shares the
 # kernel of this host. "gvisor" is a preview: no network, and its limit on
-# the number of tasks is not enforced, so a policy that sets one is refused.
+# the number of tasks is not enforced. A policy that sets limits.pids is
+# refused there; one that leaves it out runs without a task limit, whatever
+# the ceiling below says, and its receipts record that the limit was not
+# in force.
 enabled = ["native"]
 
 [backends.gvisor]
@@ -97,6 +100,12 @@ deny_extra = []
 # values below a member can make a sandbox smaller, put its writable layer
 # in memory under a quota, and ask for a writable root filesystem; nothing
 # that reaches outside the sandbox.
+#
+# A ceiling bounds what a policy may ask for. It cannot make a host enforce
+# what it cannot: where a backend does not enforce one of the limits below
+# ("sandmeter doctor" says which, and why), a policy that sets that limit is
+# refused, and a policy that leaves it out runs without it. The receipts of
+# such a session say that the limit was not in force.
 
 [ceiling.limits]
 # Cores, memory, tasks, and the longest one command may run.
