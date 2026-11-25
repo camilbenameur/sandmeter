@@ -254,12 +254,23 @@ func Uncovered(allow, ceiling []Dest) []int {
 	// The two lists cut the requests into finitely many classes on which
 	// both decisions are constant: each host an entry names, and for each
 	// wildcard the names under its suffix that no longer suffix and no named
-	// host of either list claims. One request per class is judged.
+	// host of either list claims. One request per class is judged, and each
+	// class once: the lists come from a client, and a suffix repeated many
+	// times over many named hosts must not be searched as many times.
+	judged := map[hostPort]bool{}
 	for _, list := range [][]Dest{allow, ceiling} {
 		for _, d := range list {
 			if d.Host == "" {
 				continue
 			}
+			class := hostPort{d.Host, d.Port}
+			if d.Wildcard {
+				class.host = "*." + d.Host
+			}
+			if judged[class] {
+				continue
+			}
+			judged[class] = true
 			if !d.Wildcard {
 				judge(Dest{Host: d.Host, Port: d.Port})
 				continue

@@ -488,6 +488,49 @@ func TestUncoveredOnLongLists(t *testing.T) {
 	if d := time.Since(began); d > 5*time.Second {
 		t.Errorf("checking %d entries against %d took %v", len(allow), len(ceiling), d)
 	}
+
+	// The shape that would cost the most if every entry were searched on its
+	// own: one wildcard written thousands of times, over thousands of hosts
+	// named directly under its suffix, so that the search for an unnamed one
+	// is as long as it can be.
+	// The named hosts are the first ones the search tries, in its order:
+	// every label of one byte, every label of two, then labels of three.
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	var labels []string
+	for length := 1; length <= 3; length++ {
+		digits := make([]int, length)
+		for done := false; !done && len(labels) < 12000; {
+			label := make([]byte, length)
+			for i, d := range digits {
+				label[i] = alphabet[d]
+			}
+			labels = append(labels, string(label))
+			i := length - 1
+			for ; i >= 0; i-- {
+				if digits[i]++; digits[i] < len(alphabet) {
+					break
+				}
+				digits[i] = 0
+			}
+			done = i < 0
+		}
+	}
+	var hostile []Dest
+	for _, label := range labels {
+		hostile = append(hostile, Dest{Host: label + ".example.com", Port: 443}, Dest{Host: "example.com", Wildcard: true, Port: 443})
+	}
+	index := indexDests(hostile)
+	if name, ok := unclaimedUnder("example.com", 443, index); !ok || len(name) != len("aaa.example.com") || len(labels) != 12000 {
+		t.Fatalf("the list is not the slow case it is meant to be: %d labels, first unnamed host %q, %v", len(labels), name, ok)
+	}
+	began = time.Now()
+	got := Uncovered(hostile, []Dest{{Host: "example.com", Wildcard: true, Port: 443}})
+	if len(got) != 0 {
+		t.Errorf("%d entries under one wildcard of the ceiling are not covered", len(got))
+	}
+	if d := time.Since(began); d > 5*time.Second {
+		t.Errorf("a list of %d entries built to be slow took %v", len(hostile), d)
+	}
 }
 
 // TestUnclaimedUnder covers the search for a name that stands for "any other
