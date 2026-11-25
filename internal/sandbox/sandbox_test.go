@@ -35,7 +35,7 @@ func TestVocabularyIsTheReceipts(t *testing.T) {
 		"init-lost":       {string(KillInitLost), receipt.KillInitLost},
 		"workload":        {string(ScopeWorkload), receipt.ScopeWorkload},
 		"init+workload":   {string(ScopeInitAndWorkload), receipt.ScopeInitAndWorkload},
-		"runtime":         {string(ScopeRuntimeAndWorkload), receipt.ScopeRuntimeAndLoad},
+		"runtime":         {string(ScopeRuntimeAndWorkload), receipt.ScopeRuntimeAndWorkload},
 		"allowed":         {string(VerdictAllowed), receipt.VerdictAllowed},
 		"denied":          {string(VerdictDenied), receipt.VerdictDenied},
 		"not-allowed":     {string(FlowNotAllowed), receipt.FlowNotAllowed},

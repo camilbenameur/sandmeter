@@ -131,6 +131,8 @@ WorkspaceV2
 	Entries int64 `json:"entries"`
 	Bytes int64 `json:"bytes"`
 	Superseded []receipt.SupersededV2 `json:"superseded"`
+	SupersededTotal int64 `json:"superseded_total"`
+	SupersededTruncated bool `json:"superseded_truncated"`
 SupersededV2
 	Path string `json:"path"`
 	PathEscaped bool `json:"path_escaped"`
@@ -170,6 +172,7 @@ DiffEntryV2
 	Nlink uint32 `json:"nlink"`
 	Xattrs []string `json:"xattrs"`
 	XattrsTruncated bool `json:"xattrs_truncated"`
+	XattrsEscaped bool `json:"xattrs_escaped"`
 	Size int64 `json:"size"`
 	SHA256 string `json:"sha256"`
 	Target string `json:"target"`
@@ -183,9 +186,12 @@ RestoreV2
 ExportV2
 	ManifestSHA256 string `json:"manifest_sha256"`
 	WorkspaceManifestSHA256 string `json:"workspace_manifest_sha256"`
+	Status string `json:"status"`
+	Reasons []string `json:"reasons"`
 	Entries int64 `json:"entries"`
 	Bytes int64 `json:"bytes"`
 	Skipped int64 `json:"skipped"`
+	Omitted int64 `json:"omitted"`
 StopV2
 	Reason string `json:"reason"`
 	Error string `json:"error"`

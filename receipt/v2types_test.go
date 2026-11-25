@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // shapeOf writes one line per field of t and of every struct it reaches:
@@ -133,8 +134,10 @@ func TestV2CommandRecordReadsBack(t *testing.T) {
 					Runtime:   []RuntimeProcessV2{},
 				},
 			},
-			Storage:   StorageV2{Upper: "disk"},
-			Workspace: &WorkspaceV2{ManifestSHA256: strings.Repeat("5", 64), Entries: 2, Bytes: 10, Superseded: []SupersededV2{}},
+			Storage: StorageV2{Upper: "disk"},
+			Workspace: &WorkspaceV2{ManifestSHA256: strings.Repeat("5", 64), Entries: 2, Bytes: 10,
+				Superseded:      []SupersededV2{{Path: "src/x.go", Type: TypeFile, SHA256: strings.Repeat("8", 64), Layer: "upper"}},
+				SupersededTotal: 12000, SupersededTruncated: true},
 			Diff: DiffV2{
 				Base:    DiffBaseV2{Kind: BaseImage},
 				Status:  DiffTruncated,
@@ -143,7 +146,7 @@ func TestV2CommandRecordReadsBack(t *testing.T) {
 				Budget:  DiffBudgetV2{Entries: 100000, Bytes: 16 << 20, Depth: 128},
 				Entries: []DiffEntryV2{
 					{Path: "workspace/big.bin", Op: OpAdd, Type: TypeFile, Mode: 0o644, Nlink: 1, Xattrs: []string{}, Size: 1 << 40, SinceSeq: 3, Skipped: SkipHashBudget},
-					{Path: "workspace/out.txt", Op: OpAdd, Type: TypeFile, Mode: 0o644, Nlink: 2, Xattrs: []string{"security.capability"}, Size: 3, SHA256: strings.Repeat("6", 64), SinceSeq: 3},
+					{Path: "workspace/out.txt", Op: OpAdd, Type: TypeFile, Mode: 0o644, Nlink: 2, Xattrs: []string{`"user.\xff"`, "security.capability"}, XattrsEscaped: true, Size: 3, SHA256: strings.Repeat("6", 64), SinceSeq: 3},
 				},
 			},
 			Errors: []string{},
@@ -168,6 +171,10 @@ func TestV2CommandRecordReadsBack(t *testing.T) {
 		`"status":"truncated","reasons":["hash-budget"],"error":""`,
 		`"quota_bytes":null`,
 		`"policy":{"version":2}`,
+		// A list that was cut says so, and says how long it really is.
+		`"superseded_total":12000,"superseded_truncated":true`,
+		// An attribute name that is not valid UTF-8 keeps its bytes.
+		`"xattrs":["\"user.\\xff\"","security.capability"],"xattrs_truncated":false,"xattrs_escaped":true`,
 	} {
 		if !bytes.Contains(b, []byte(want)) {
 			t.Errorf("the record lacks %s:\n%s", want, b)
@@ -203,7 +210,8 @@ func TestV2ConstantsAreDistinct(t *testing.T) {
 		"kinds":    {KindCommand, KindSnapshot, KindRestore, KindExport, KindStop, KindInterrupted},
 		"statuses": {StatusExited, StatusSignalled, StatusKilled, StatusExecFailed, StatusSetupFailed},
 		"kills":    {KillWallTimeout, KillOOM, KillCancelled, KillStopped, KillDiskFloor, KillSupervisorLost, KillInitLost},
-		"scopes":   {ScopeWorkload, ScopeInitAndWorkload, ScopeRuntimeAndLoad},
+		"scopes":   {ScopeWorkload, ScopeInitAndWorkload, ScopeRuntimeAndWorkload},
+		"exports":  {ExportComplete, ExportTruncated},
 		"reasons":  {FlowNotAllowed, FlowSpecialAddress, FlowSNIMismatch, FlowNotTLS, FlowBadRequest, FlowResolveFailed, FlowDialFailed, FlowLimit},
 		"stops":    {StopRequested, StopClientGone, StopShutdown, StopServiceLost, StopError},
 		"types":    {TypeFile, TypeDir, TypeSymlink, TypeOther, TypeWhiteout, TypeOpaque},
@@ -220,5 +228,115 @@ func TestV2ConstantsAreDistinct(t *testing.T) {
 	}
 	if len(KindCommand) == 0 || SchemaV2 == SchemaV1 {
 		t.Error("schema v2 is not told apart from v1")
+	}
+}
+
+// TestV2ExportRecordSaysWhatItLeftOut: an export record is never complete by
+// omission. The status is always there, and a manifest that was cut short
+// carries the reasons and a count.
+func TestV2ExportRecordSaysWhatItLeftOut(t *testing.T) {
+	rec := RecordV2{Schema: SchemaV2, Kind: KindExport, Export: &ExportV2{
+		ManifestSHA256: strings.Repeat("a", 64), WorkspaceManifestSHA256: strings.Repeat("b", 64),
+		Status: ExportTruncated, Reasons: []string{DiffReasonEntries, DiffReasonPath}, Entries: 200000, Bytes: 4096, Skipped: 3, Omitted: 17,
+	}}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"status":"truncated","reasons":["entries","path"],"entries":200000,"bytes":4096,"skipped":3,"omitted":17}`; !bytes.Contains(b, []byte(want)) {
+		t.Errorf("the export block lacks %s:\n%s", want, b)
+	}
+	var back RecordV2
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&back); err != nil || !reflect.DeepEqual(back, rec) {
+		t.Errorf("read back %+v, %v", back.Export, err)
+	}
+	if MaxSupersededEntries <= 0 || MaxSupersededBytes <= 0 || MaxXattrNames != 64 {
+		t.Error("the lists of a record have no bound")
+	}
+}
+
+// TestNamesChosenInASandbox covers the rules for names that JSON cannot
+// carry and for the order of a list of names.
+func TestNamesChosenInASandbox(t *testing.T) {
+	// A name that is not valid UTF-8 is quoted, byte for byte, and reads
+	// back to the same bytes.
+	for _, raw := range []string{"abc", "", "dir/été.txt", "a\xffb", "\xfe", "tab\there", `"quoted"`, "a\x00b", "\xed\xa0\x80"} {
+		text, escaped := EscapeName(raw)
+		if escaped == utf8.ValidString(raw) {
+			t.Errorf("EscapeName(%q) escaped = %v", raw, escaped)
+		}
+		if !utf8.ValidString(text) {
+			t.Errorf("EscapeName(%q) = %q, which JSON would rewrite", raw, text)
+		}
+		back, err := UnescapeName(text, escaped)
+		if err != nil || back != raw {
+			t.Errorf("EscapeName(%q) = %q, %v, which reads back as %q, %v", raw, text, escaped, back, err)
+		}
+		b, err := json.Marshal(text)
+		var viaJSON string
+		if err != nil || json.Unmarshal(b, &viaJSON) != nil || viaJSON != text {
+			t.Errorf("the recorded text %q does not survive JSON: %s, %v", text, b, err)
+		}
+	}
+
+	// The case the flag exists for: a valid name spelled like the quoted
+	// form of another name. Their texts are equal and they are two names.
+	other := "abc\xff"
+	quoted, escaped := EscapeName(other)
+	lookalike, plain := EscapeName(quoted)
+	if !escaped || plain || quoted != lookalike {
+		t.Fatalf("EscapeName gives (%q, %v) and (%q, %v)", quoted, escaped, lookalike, plain)
+	}
+	if !NameLess(lookalike, false, quoted, true) || NameLess(quoted, true, lookalike, false) {
+		t.Error("two names with the same text are not ordered by their flag")
+	}
+
+	// The order: plain names first, by bytes; then escaped ones, by bytes.
+	type name struct {
+		text    string
+		escaped bool
+	}
+	sorted := []name{{"", false}, {`"a"`, false}, {"a", false}, {"a/b", false}, {"b", false}, {"é", false}, {`"\xff"`, true}, {`"a\xff"`, true}, {`"b\xfe"`, true}}
+	for i, a := range sorted {
+		for j, b := range sorted {
+			if got, want := NameLess(a.text, a.escaped, b.text, b.escaped), i < j; got != want {
+				t.Errorf("NameLess(%v, %v) = %v, want %v", a, b, got, want)
+			}
+		}
+	}
+
+	// Attribute names: one flag for the list, so the text itself says
+	// whether it is quoted.
+	for raw, want := range map[string]string{
+		"user.comment":   "user.comment",
+		"security.ima":   "security.ima",
+		"user.\xff":      `"user.\xff"`,
+		`"user.x"`:       `"\"user.x\""`,
+		`"`:              `"\""`,
+		"user.caf\u00e9": "user.caf\u00e9",
+		"":               "",
+	} {
+		text, escaped := EscapeXattr(raw)
+		if text != want || escaped != strings.HasPrefix(text, `"`) {
+			t.Errorf("EscapeXattr(%q) = %q, %v; want %q", raw, text, escaped, want)
+		}
+		back, err := UnescapeXattr(text)
+		if err != nil || back != raw {
+			t.Errorf("the recorded attribute name %q reads back as %q, %v; want %q", text, back, err, raw)
+		}
+	}
+	// Two different attribute names never have the same recorded text.
+	seen := map[string]string{}
+	for _, raw := range []string{"user.a", `"user.a"`, "user.\xff", `"user.\xff"`, `user."`, `\"user.a\"`, `"\"user.a\""`} {
+		text, _ := EscapeXattr(raw)
+		if prev, dup := seen[text]; dup {
+			t.Errorf("the attribute names %q and %q are both recorded as %q", prev, raw, text)
+		}
+		seen[text] = raw
+	}
+	if _, err := UnescapeXattr(`"cut short`); err == nil {
+		t.Error("a quoted attribute name that is not closed was read back")
 	}
 }

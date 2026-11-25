@@ -2,11 +2,16 @@ package receipt
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-// This file declares schema "sandmeter.receipt/v2": the wire structs, and
-// nothing that decides how they are produced or checked.
+// This file declares schema "sandmeter.receipt/v2": the wire structs, the
+// bounds of the lists they hold and, at the end, the rules for writing down a
+// name that a program in a sandbox chose. Nothing here decides how a record
+// is produced, signed or verified.
 //
 // Every struct here is owned by this package. None is an alias of a type the
 // engine or a backend works with, so that a change over there cannot change a
@@ -112,9 +117,9 @@ const (
 // Scopes of the counters, the values of CountersV2.Scope: which processes the
 // numbers cover besides the command itself.
 const (
-	ScopeWorkload        = "workload"
-	ScopeInitAndWorkload = "init+workload"
-	ScopeRuntimeAndLoad  = "runtime+workload"
+	ScopeWorkload           = "workload"
+	ScopeInitAndWorkload    = "init+workload"
+	ScopeRuntimeAndWorkload = "runtime+workload"
 )
 
 // Verdicts of a flow, the values of FlowV2.Verdict.
@@ -177,6 +182,13 @@ const (
 	// DiffError: the diff could not be computed. Error says why.
 	DiffError = "error"
 
+	// ExportComplete: the manifest of the change set lists every path the
+	// session changed under the project directory.
+	ExportComplete = "complete"
+	// ExportTruncated: it does not. Reasons names what cut it short and
+	// Omitted counts what is known to be missing from it.
+	ExportTruncated = "truncated"
+
 	// BaseImage: the diff is relative to the image and the imported
 	// workspace.
 	BaseImage = "image"
@@ -221,6 +233,19 @@ const (
 	// it was not entered.
 	SkipPathTooLong = "path_too_long"
 )
+
+// Bounds of the list of superseded paths that one record carries
+// (WorkspaceV2.Superseded). A list beyond either is cut and says so.
+const (
+	// MaxSupersededEntries is the largest number of entries listed.
+	MaxSupersededEntries = 10_000
+	// MaxSupersededBytes is the largest size of the list once encoded.
+	MaxSupersededBytes = 4 << 20
+)
+
+// MaxXattrNames is the largest number of attribute names one diff entry
+// lists (DiffEntryV2.Xattrs).
+const MaxXattrNames = 64
 
 // Reasons a session ended, the values of StopV2.Reason.
 const (
@@ -320,7 +345,9 @@ type CommandV2 struct {
 	// WallLimitMS is the longest this command was allowed to run, in
 	// milliseconds: the limit of the policy, or a shorter one the client
 	// asked for with the command. Null when the policy sets no limit and the
-	// client asked for none.
+	// client asked for none. A limit that is not a whole number of
+	// milliseconds is rounded up: a limit that was in force is never
+	// recorded as 0.
 	WallLimitMS *int64 `json:"wall_limit_ms"`
 	// StartedAt and FinishedAt are host clock readings in UTC, taken around
 	// the command. DurationMS is measured separately, on a monotonic clock.
@@ -453,8 +480,17 @@ type FlowV2 struct {
 
 // EnforcementV2 says what was in force around the command.
 type EnforcementV2 struct {
-	// Controls lists every control the policy required, with what the host
-	// probe found for it before the session started.
+	// Controls lists every control the policy in force required, with what
+	// the host probe found for it before the session started. A session
+	// starts only when each of them is enforced.
+	//
+	// After them it lists, as not enforced and with the reason, the control
+	// behind every built-in default limit that was not applied because the
+	// backend cannot enforce it on this host. The policy shows such a limit
+	// as null and names its key under "defaults_not_applied"; this line is
+	// what a reader who checks for a control finds. A limit that is null
+	// because the policy asked for "unlimited" has no line here: nothing was
+	// required and nothing was withheld.
 	Controls []ControlV2 `json:"controls"`
 	// SyscallProfile is the profile of the policy. SeccompSHA256 is the
 	// lower-case hexadecimal SHA-256 of the filter program that was
@@ -584,15 +620,29 @@ type WorkspaceV2 struct {
 	// Superseded lists what the session had written at a path that then
 	// changed on the host, and that was dropped before this command so that
 	// the host's version is the one it saw. It is empty, never null, when
-	// nothing was.
+	// nothing was. It is sorted as the entries of a diff are (see DiffV2).
+	//
+	// The list is bounded: at most MaxSupersededEntries entries, and at most
+	// MaxSupersededBytes once encoded. A program in the sandbox can rewrite
+	// every file of a large project and so make this list as long as the
+	// project; it cannot make a record grow with it.
 	Superseded []SupersededV2 `json:"superseded"`
+	// SupersededTotal is the number of entries that were dropped, whatever
+	// the list holds: it is exact.
+	SupersededTotal int64 `json:"superseded_total"`
+	// SupersededTruncated is true when the list was cut at one of its
+	// bounds and so holds fewer entries than SupersededTotal. Every entry
+	// was dropped all the same: the bound is on the account, not on the
+	// rule that the host's version wins.
+	SupersededTruncated bool `json:"superseded_truncated"`
 }
 
 // SupersededV2 is one path of the writable layer that was dropped in favour
 // of the host's newer version.
 type SupersededV2 struct {
 	// Path is relative to the workspace. PathEscaped is set when the name is
-	// not valid UTF-8; Path then holds its quoted form.
+	// not valid UTF-8; Path then holds its quoted form. As in a diff, the
+	// pair of the two identifies the name.
 	Path        string `json:"path"`
 	PathEscaped bool   `json:"path_escaped"`
 	// Type is one of the Type constants, TypeWhiteout and TypeOpaque
@@ -622,7 +672,12 @@ type DiffV2 struct {
 	// Counts include the entries a budget kept out of the list.
 	Counts DiffCountsV2 `json:"counts"`
 	Budget DiffBudgetV2 `json:"budget"`
-	// Entries is sorted by Path, compared as bytes. It is empty, never null,
+	// Entries holds each changed name once, sorted: first the names that are
+	// valid UTF-8 (PathEscaped false), in the order of the bytes of Path,
+	// then the names that are not (PathEscaped true), in the order of the
+	// bytes of their quoted form. A name is the pair of Path and
+	// PathEscaped: the same text can be one name plain and another name
+	// quoted, and the two are different entries. It is empty, never null,
 	// when there is nothing to list.
 	Entries []DiffEntryV2 `json:"entries"`
 }
@@ -664,8 +719,15 @@ type DiffEntryV2 struct {
 	Path string `json:"path"`
 	// PathEscaped and TargetEscaped are set when the name or the link target
 	// is not valid UTF-8. The field then holds the strconv.Quote form of the
-	// raw bytes, quotes included, so that two different names never collide
-	// in a signed record.
+	// raw bytes, quotes included: bytes that JSON cannot carry are spelled
+	// out instead of being replaced, so two different names never become the
+	// same text by being encoded.
+	//
+	// The text alone does not identify a name, though. A name that is valid
+	// UTF-8 can itself be spelled with quotes and backslashes, and then be,
+	// character for character, the quoted form of another name. The flag
+	// tells them apart: a name is the pair of Path and PathEscaped, and
+	// nothing compares, sorts or looks up entries by Path alone.
 	PathEscaped   bool `json:"path_escaped"`
 	TargetEscaped bool `json:"target_escaped"`
 	// Op is one of the Op constants and Type one of the Type constants.
@@ -681,12 +743,23 @@ type DiffEntryV2 struct {
 	// Nlink is the link count of an entry that is not a directory: above 1,
 	// the same content has other names. 0 for a directory and for a delete.
 	Nlink uint32 `json:"nlink"`
-	// Xattrs lists the names of the extended attributes of the entry, sorted,
-	// without their values and without the overlay's own marks. At most 64
-	// are listed; XattrsTruncated says that there were more. Empty, never
-	// null, when there is none.
+	// Xattrs lists the names of the extended attributes of the entry,
+	// without their values and without the overlay's own marks. At most
+	// MaxXattrNames are listed; XattrsTruncated says that there were more.
+	// Empty, never null, when there is none.
+	//
+	// The names were chosen in the sandbox. One that is not valid UTF-8, or
+	// that begins with a double quote, is recorded in its strconv.Quote
+	// form, quotes included. A recorded name that begins with a double quote
+	// is therefore always a quoted one, and is read back with
+	// strconv.Unquote; any other is the name itself. Two different names
+	// never have the same recorded text. The list is sorted by that text,
+	// compared as bytes.
 	Xattrs          []string `json:"xattrs"`
 	XattrsTruncated bool     `json:"xattrs_truncated"`
+	// XattrsEscaped is true when at least one name of Xattrs is recorded in
+	// its quoted form.
+	XattrsEscaped bool `json:"xattrs_escaped"`
 	// Size is the apparent size of a regular file.
 	Size int64 `json:"size"`
 	// SHA256 is the lower-case hexadecimal SHA-256 of a regular file's
@@ -727,13 +800,30 @@ type ExportV2 struct {
 	// WorkspaceManifestSHA256 is the import manifest the changes are
 	// relative to.
 	WorkspaceManifestSHA256 string `json:"workspace_manifest_sha256"`
+	// Status is ExportComplete when the manifest lists every path the
+	// session changed under the project directory, and ExportTruncated when
+	// it does not. A change set is never complete by default: a program in
+	// the sandbox can create more paths, deeper or with longer names, than
+	// a manifest holds, and what the manifest leaves out must not look as if
+	// it had not happened.
+	Status string `json:"status"`
+	// Reasons lists what cut the manifest short, with ExportTruncated: the
+	// DiffReason constants that apply, each at most once, in the order they
+	// are declared. Empty, never null, with ExportComplete.
+	Reasons []string `json:"reasons"`
 	// Entries is the number of entries of the manifest and Bytes the sum of
 	// the sizes of the bodies that were sent.
 	Entries int64 `json:"entries"`
 	Bytes   int64 `json:"bytes"`
 	// Skipped is the number of entries listed without a body: special files,
-	// entries over a budget.
+	// entries over a budget, names that cannot be carried.
 	Skipped int64 `json:"skipped"`
+	// Omitted is the number of changed paths that are known to exist and
+	// that the manifest does not list at all. It is a lower bound when the
+	// walk of the writable layer itself stopped early (DiffReasonDepth,
+	// DiffReasonPath, DiffReasonScan, DiffReasonCancelled), and 0 with
+	// ExportComplete.
+	Omitted int64 `json:"omitted"`
 }
 
 // StopV2 is the block of a "stop" record.
@@ -775,4 +865,65 @@ type IntentV2 struct {
 	EnvNames     []string  `json:"env_names"`
 	Workdir      string    `json:"workdir"`
 	PolicySHA256 string    `json:"policy_sha256"`
+}
+
+// The functions below are the rules, stated once, for the names in a record
+// that a program in a sandbox chose: how a name that JSON cannot carry is
+// written, and in what order names are listed. Whoever produces a list of
+// such names and whoever reads one back uses them, so that the two cannot
+// disagree on a signed byte.
+
+// EscapeName returns how the name of a file is recorded in a field that has
+// an "escaped" flag beside it (DiffEntryV2.Path and Target,
+// SupersededV2.Path): the name itself and false when it is valid UTF-8, its
+// strconv.Quote form, quotes included, and true when it is not.
+func EscapeName(raw string) (text string, escaped bool) {
+	if utf8.ValidString(raw) {
+		return raw, false
+	}
+	return strconv.Quote(raw), true
+}
+
+// UnescapeName is the inverse of EscapeName: it returns the bytes of the
+// name that was recorded as text with the given flag.
+func UnescapeName(text string, escaped bool) (raw string, err error) {
+	if !escaped {
+		return text, nil
+	}
+	return strconv.Unquote(text)
+}
+
+// NameLess reports whether the name recorded as (a, aEscaped) is listed
+// before the one recorded as (b, bEscaped): names that are not escaped come
+// first, and within each group the texts are compared as bytes. It is the
+// order of DiffV2.Entries and of WorkspaceV2.Superseded.
+//
+// Two recorded names are the same name only when both the text and the flag
+// are equal: neither NameLess(x, y) nor NameLess(y, x) holds then.
+func NameLess(a string, aEscaped bool, b string, bEscaped bool) bool {
+	if aEscaped != bEscaped {
+		return !aEscaped
+	}
+	return a < b
+}
+
+// EscapeXattr returns how the name of an extended attribute is recorded in
+// DiffEntryV2.Xattrs, a list that has one flag for all its names: the name
+// itself and false when it is valid UTF-8 and does not begin with a double
+// quote, its strconv.Quote form and true otherwise. Quoting the names that
+// begin with a double quote is what makes the first character of a recorded
+// name say, without a flag of its own, whether it is quoted.
+func EscapeXattr(raw string) (text string, escaped bool) {
+	if utf8.ValidString(raw) && !strings.HasPrefix(raw, `"`) {
+		return raw, false
+	}
+	return strconv.Quote(raw), true
+}
+
+// UnescapeXattr is the inverse of EscapeXattr.
+func UnescapeXattr(text string) (raw string, err error) {
+	if !strings.HasPrefix(text, `"`) {
+		return text, nil
+	}
+	return strconv.Unquote(text)
 }
