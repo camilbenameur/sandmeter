@@ -25,7 +25,9 @@
 // same for all of them and is implemented once, in Ensure: a directory
 // written by a newer sandmeter is refused; one written by an older sandmeter
 // is migrated or discarded by the package that owns the store, with a message
-// that says which; a build never reads a layout it does not know.
+// that says which; a build never reads a layout it does not know, and never
+// takes for a store a directory that is not one: a link, a directory of
+// another user, or one that holds something sandmeter did not write.
 //
 // # The client
 //
@@ -38,10 +40,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/camilbenameur/sandmeter/internal/ids"
 )
@@ -290,8 +295,8 @@ func CurrentFormat(s Store) int {
 	panic("layout: no store " + string(s))
 }
 
-// Errors of the format rule. Both are wrapped with the directory, the two
-// versions and what to do.
+// Errors of the format rule. Each is wrapped with the directory, what was
+// found and what to do.
 var (
 	// ErrNewerFormat: the directory was written by a newer sandmeter. It is
 	// refused, untouched.
@@ -299,29 +304,86 @@ var (
 	// ErrOlderFormat: the directory was written by an older sandmeter and
 	// nothing migrated or discarded it. It is refused, untouched.
 	ErrOlderFormat = errors.New("written by an older sandmeter")
+	// ErrUnknownContent: the directory has no format file and holds
+	// something that no sandmeter wrote there. It is not an older store: it
+	// is not a store. It is refused, untouched, and never handed to an
+	// upgrade that could discard it.
+	ErrUnknownContent = errors.New("holds files that sandmeter did not write")
+	// ErrUnsafeDir: the path is not a directory of its own (it is a symbolic
+	// link, or another kind of file), or it belongs to another user. It is
+	// refused, untouched.
+	ErrUnsafeDir = errors.New("not a directory that belongs to sandmeter")
 )
 
-// ReadFormat returns the format version of the store in dir: the number in
-// its format file, 0 when there is no such file and the directory holds
-// something (the layout of builds that wrote no format file), and -1 with a
-// nil error when the directory does not exist or is empty, which is a store
-// nobody wrote yet.
+// firstLayout says, for each store, how to recognise what the first release
+// of sandmeter wrote there, when stores had no format file yet: the names,
+// in the syntax of path.Match, of which one at least is at the top of such a
+// directory. That layout is format 0. A store that the first release did not
+// keep under this name has no entry: for it, content without a format file
+// is never "older".
+var firstLayout = map[Store][]string{
+	// refs.json and the directories of image configurations and layers.
+	StoreImages: {"refs.json", "images", "layers"},
+	// One file per receipt, "<session>-<n>.json".
+	StoreReceipts: {"*-*.json"},
+}
+
+// formatTemp is the pattern of the temporary name under which WriteFormat
+// writes the format file before it renames it. A file of that name is what a
+// crash in the middle leaves behind.
+const formatTemp = ".format-*"
+
+// ReadFormat returns the format version of the store in dir:
+//
+//   - the number in its format file;
+//   - -1 when the directory does not exist or holds nothing, which is a
+//     store nobody wrote yet. Two things count as nothing, because they are
+//     there on a store that was never used: the lost+found directory of a
+//     filesystem made for the store, and the temporary file of a WriteFormat
+//     that did not finish;
+//   - 0 when there is no format file and the directory holds what the first
+//     release of sandmeter wrote, before stores had one;
+//   - ErrUnknownContent when there is no format file and the directory holds
+//     anything else.
 //
 // A format file that is not exactly one line "<store> <number>" for this
-// store is an error: a build never guesses what a directory holds.
+// store is an error: a build never guesses what a directory holds. ReadFormat
+// changes nothing.
 func ReadFormat(dir string, s Store) (int, error) {
 	// O_NOFOLLOW: the file is ours to write and is never a link. A link here
 	// would mean that someone else shaped the directory.
 	f, err := os.OpenFile(filepath.Join(dir, FormatFile), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		entries, derr := os.ReadDir(dir)
-		if errors.Is(derr, os.ErrNotExist) || (derr == nil && len(entries) == 0) {
+		if errors.Is(derr, os.ErrNotExist) {
 			return -1, nil
 		}
 		if derr != nil {
 			return 0, derr
 		}
-		return 0, nil
+		content, first := 0, false
+		for _, e := range entries {
+			if e.Name() == "lost+found" && e.IsDir() {
+				continue
+			}
+			if stale, _ := path.Match(formatTemp, e.Name()); stale && e.Type().IsRegular() {
+				continue
+			}
+			content++
+			for _, pattern := range firstLayout[s] {
+				if ok, _ := path.Match(pattern, e.Name()); ok {
+					first = true
+				}
+			}
+		}
+		switch {
+		case content == 0:
+			return -1, nil
+		case first:
+			return 0, nil
+		}
+		return 0, fmt.Errorf("%s has no format file and %w (%s): it is not taken for the %s store. Move the directory away, or give sandmeter an empty one",
+			strconv.Quote(dir), ErrUnknownContent, plural(content, "entry", "entries"), s)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("format file of %s: %w", strconv.Quote(dir), err)
@@ -338,11 +400,18 @@ func ReadFormat(dir string, s Store) (int, error) {
 	return v, nil
 }
 
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return strconv.Itoa(n) + " " + many
+}
+
 // WriteFormat marks dir as holding the current format of the store. The file
 // is written under a temporary name, synced and renamed, so that a crash
 // leaves either the old file or the new one.
 func WriteFormat(dir string, s Store) error {
-	tmp, err := os.CreateTemp(dir, ".format-*")
+	tmp, err := os.CreateTemp(dir, formatTemp)
 	if err != nil {
 		return err
 	}
@@ -374,10 +443,22 @@ func WriteFormat(dir string, s Store) error {
 }
 
 // Ensure applies the format rule to the store in dir and returns nil only
-// when dir exists and holds the current format.
+// when dir is a directory of sandmeter's own, closed to everybody else, that
+// holds the current format.
 //
-//   - A directory that does not exist is created (mode DirMode) and marked;
-//     an empty one is marked.
+// First the directory itself. One that does not exist is created with mode
+// DirMode. One that exists must be a real directory, not a symbolic link,
+// and belong to the user sandmeter runs as: anything else is ErrUnsafeDir
+// and nothing is touched. If its mode gives anything to the group or to
+// others, it is narrowed to DirMode, on the descriptor the checks were made
+// on: a store kept from a release that created it wider, or a directory an
+// operator made for it, is closed before it is used and not merely
+// reported. The directories above it are not Ensure's: the host probe
+// checks them.
+//
+// Then its content:
+//
+//   - Nothing in it: it is marked.
 //   - The current format: nothing to do.
 //   - A newer format: ErrNewerFormat. The directory is not touched; the
 //     message says to upgrade sandmeter or to move the directory away.
@@ -388,11 +469,17 @@ func WriteFormat(dir string, s Store) error {
 //     directory is marked as current. When upgrade is nil, or returns an
 //     error, nothing is marked and the error is ErrOlderFormat or the
 //     owner's own.
+//   - No format file and content that is not a store's: ErrUnknownContent.
+//     upgrade is not called: an owner must never be handed, as its own old
+//     store, a directory it did not write.
 //
 // Whether old content may be discarded is the owner's decision and differs
 // by store: images can be pulled again, receipts and keys are never
 // discarded.
 func Ensure(dir string, s Store, upgrade func(found int) error) error {
+	if err := closeDir(dir); err != nil {
+		return err
+	}
 	found, err := ReadFormat(dir, s)
 	if err != nil {
 		return err
@@ -400,11 +487,8 @@ func Ensure(dir string, s Store, upgrade func(found int) error) error {
 	current := CurrentFormat(s)
 	switch {
 	case found == -1:
-		if err := os.MkdirAll(dir, DirMode); err != nil {
-			return err
-		}
 	case found == current:
-		return nil
+		return removeStaleTemps(dir)
 	case found > current:
 		return fmt.Errorf("%s holds format %d of the %s store and this sandmeter reads up to %d: %w; upgrade sandmeter, or move the directory away to start from an empty one",
 			strconv.Quote(dir), found, s, current, ErrNewerFormat)
@@ -417,7 +501,69 @@ func Ensure(dir string, s Store, upgrade func(found int) error) error {
 			return fmt.Errorf("%s holds format %d of the %s store, older than %d: %w", strconv.Quote(dir), found, s, current, err)
 		}
 	}
+	if err := removeStaleTemps(dir); err != nil {
+		return err
+	}
 	return WriteFormat(dir, s)
+}
+
+// closeDir makes sure that dir is a directory of this user that nobody else
+// can enter, creating it when it does not exist.
+//
+// Invariant: a store is a real directory, owned by the user sandmeter runs
+// as, with no permission for the group or for others. The checks and the
+// change of mode are made on one descriptor opened without following a
+// link, so that what was checked is what was narrowed.
+func closeDir(dir string) error {
+	open := func() (int, error) {
+		return unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	}
+	fd, err := open()
+	if errors.Is(err, unix.ENOENT) {
+		if err := os.MkdirAll(dir, DirMode); err != nil {
+			return err
+		}
+		fd, err = open()
+	}
+	if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
+		return fmt.Errorf("%s is a symbolic link or is not a directory: %w; a store is a directory of its own. Remove it, or give sandmeter another path",
+			strconv.Quote(dir), ErrUnsafeDir)
+	}
+	if err != nil {
+		return fmt.Errorf("open the store %s: %w", strconv.Quote(dir), err)
+	}
+	defer unix.Close(fd)
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return fmt.Errorf("stat the store %s: %w", strconv.Quote(dir), err)
+	}
+	if euid := uint32(os.Geteuid()); st.Uid != euid {
+		return fmt.Errorf("%s belongs to uid %d and sandmeter runs as uid %d: %w; give it to that user with chown, or give sandmeter another path",
+			strconv.Quote(dir), st.Uid, euid, ErrUnsafeDir)
+	}
+	if st.Mode&0o077 != 0 {
+		if err := unix.Fchmod(fd, uint32(DirMode)); err != nil {
+			return fmt.Errorf("close the store %s, which has mode %04o, to other users: %w", strconv.Quote(dir), st.Mode&0o7777, err)
+		}
+	}
+	return nil
+}
+
+// removeStaleTemps removes what a WriteFormat that did not finish left in
+// dir: regular files under its temporary name, and nothing else.
+func removeStaleTemps(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if stale, _ := path.Match(formatTemp, e.Name()); stale && e.Type().IsRegular() {
+			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // User is the set of directories of the unprivileged client, in the user's
