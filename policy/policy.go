@@ -15,6 +15,11 @@ func notBuilt() Violations {
 	return Violations{{Key: "policy", Reason: ErrNotBuilt.Error()}}
 }
 
+// KeyBackend is the key of a violation that is not about a key of the policy
+// file but about the backend chosen to run it: the backend cannot run on this
+// host at all (see Resolve).
+const KeyBackend = "backend"
+
 // Default returns the built-in default policy, written out: what a session
 // gets for every key its policy file leaves out, before the ceiling clamps
 // it. It is small enough that a fork bomb or a memory hog does not hurt the
@@ -80,43 +85,90 @@ func Load(path string) (Policy, error) {
 }
 
 // Within reports every key of p that asks for more than c grants, and every
-// value of p that is malformed (a size that does not parse, a destination
-// that ParseDest refuses, a negative limit). It is a pure function. An empty
-// result means that the policy may run under the ceiling; it says nothing yet
-// about the host (see Check).
+// value of p that is malformed: a size that does not parse, a destination
+// that ParseDest refuses, an environment name that ValidEnvName refuses, and
+// any limit that is not a positive amount. A limit written as zero or as a
+// negative number, and one so small that it would be zero in the unit the
+// policy in force holds it in (a cpu value under one thousandth of a core:
+// see NormalLimits), is a violation whose reason says to write "unlimited"
+// or to leave the key out. A limit that is set never becomes "no limit" on
+// its way to the kernel.
 //
-// A key that p leaves out is never a violation: it takes the built-in
-// default, clamped to the ceiling, in Effective.
+// The allow list is checked against the ceiling's with Uncovered, list
+// against list. Within is a pure function. An empty result means that the
+// policy may run under the ceiling; it says nothing about the host (see
+// Resolve).
+//
+// A key that p leaves out is never a violation here: it takes the built-in
+// default, lowered to the ceiling, in Resolve.
 //
 // Not built yet: it refuses every policy.
 func Within(p Policy, c Ceiling) Violations {
 	return notBuilt()
 }
 
-// Effective resolves p under c into the policy in force: every key that p
-// leaves out takes its value from Default, lowered to the ceiling where the
-// default is above it; sizes become bytes, durations nanoseconds, and the
-// allow list is parsed, de-duplicated and sorted. The result is only
-// meaningful when the Violations are empty, and they are empty exactly when
-// Within(p, c) is.
+// Resolve resolves p under the ceiling c, for the backend that caps
+// describes on this host, into the policy in force. It is the one function
+// that decides whether a session may run and under what: the root side calls
+// it for every start and for every check, with the Capabilities the backend
+// built from the host probe.
 //
-// Property to hold: when the Violations are empty, every field of the Normal
-// is at or under the corresponding field of c.
+// It tells apart what the file sets from what it leaves out, which only a
+// Policy can show. That difference decides what happens when the backend
+// does not enforce a control on this host.
+//
+// A key the file sets is a demand:
+//
+//   - malformed, or above what c grants: a violation, the same one Within
+//     reports. The violations of Resolve include those of Within(p, c);
+//   - in need of a control that caps does not report as enforced: a
+//     violation that carries the backend's reason. A setting somebody wrote
+//     is never weakened in silence, and never applied in part;
+//   - a limit under the backend's minimum (Capabilities.MinMemoryBytes,
+//     MinPIDs): a violation of that key.
+//
+// A key the file leaves out takes the value of Default, lowered to the
+// ceiling where the default is above it. Then:
+//
+//   - a default limit (limits.cpu, limits.memory, limits.pids, limits.wall)
+//     that needs a control caps does not report as enforced is not applied.
+//     The session runs without that limit: the limit is nil in the Normal,
+//     the key is listed in Normal.DefaultsNotApplied, and the second result
+//     holds one Unapplied for it with the control and the backend's reason.
+//     Nothing was asked for, so nothing is refused; nothing is hidden
+//     either, since the policy in force and every record say that the limit
+//     is not there;
+//   - any other default the backend cannot enforce (the closed network, the
+//     read-only root, the syscall profile) is a violation, as if the file
+//     had set it. Such a protection has no weaker form to fall back on that
+//     a ceiling would grant without being asked;
+//   - a default limit that, once lowered to the ceiling, is under the
+//     backend's minimum is a violation of that key: the ceiling leaves no
+//     value the backend can run under.
+//
+// The controls every session needs (AlwaysRequired) are checked as demands.
+// A backend that cannot run at all (caps.Usable is false) refuses every
+// policy: each of its problems is a violation with the key KeyBackend. A
+// caller that wants to answer "this host cannot run the backend" apart from
+// "this policy is refused" asks caps.Usable first.
+//
+// In the Normal, sizes are bytes, durations nanoseconds, and the allow list
+// is parsed, de-duplicated and sorted. It is meaningful only when the
+// Violations are empty.
+//
+// Properties to hold when the Violations are empty:
+//
+//   - every field of the Normal is at or under the corresponding field of
+//     c, except the limits listed in DefaultsNotApplied, which are nil;
+//   - caps reports as enforced every control of the Normal's Requires, and
+//     reports as not enforced the control of every Unapplied;
+//   - the Unapplied list and DefaultsNotApplied name the same keys, in the
+//     same order;
+//   - a limit that is not nil is at least 1.
 //
 // Not built yet: it refuses every policy.
-func Effective(p Policy, c Ceiling) (Normal, Violations) {
-	return Normal{}, notBuilt()
-}
-
-// Check reports why n cannot run on the backend that caps describes: every
-// control of n.Requires that the backend does not enforce on this host, with
-// the backend's reason; every limit under the backend's minimum; and, when
-// the backend cannot run at all, each of its problems. An empty result means
-// that everything the policy asks for will be enforced.
-//
-// Not built yet: it refuses every policy.
-func Check(n Normal, caps Capabilities) Violations {
-	return notBuilt()
+func Resolve(p Policy, c Ceiling, caps Capabilities) (Normal, []Unapplied, Violations) {
+	return Normal{}, nil, notBuilt()
 }
 
 // Hash returns the hash of the ceiling that a receipt records: the lower-case

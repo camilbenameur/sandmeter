@@ -310,7 +310,7 @@ func sampleNormal() Normal {
 // are embedded in signed receipts: if this test fails, the change under test
 // altered a published format.
 func TestCanonicalBytesArePinned(t *testing.T) {
-	const want = `{"version":2,"limits":{"cpu_millis":1000,"memory_bytes":536870912,"pids":256,"wall_ns":60000000000,"disk_bytes":null},"storage":{"upper":"disk"},"network":{"mode":"none","allow":[]},"filesystem":{"read_only_root":true},"syscalls":{"profile":"default"},"process":{"env":{},"env_pass":[],"workdir":""},"workspace":{"exclude":[]}}`
+	const want = `{"version":2,"limits":{"cpu_millis":1000,"memory_bytes":536870912,"pids":256,"wall_ns":60000000000,"disk_bytes":null},"storage":{"upper":"disk"},"network":{"mode":"none","allow":[]},"filesystem":{"read_only_root":true},"syscalls":{"profile":"default"},"process":{"env":{},"env_pass":[],"workdir":""},"workspace":{"exclude":[]},"defaults_not_applied":[]}`
 	n := sampleNormal()
 	got, err := n.Canonical()
 	if err != nil {
@@ -334,6 +334,7 @@ func TestCanonicalBytesArePinned(t *testing.T) {
 	n.Network.Allow = []Dest{}
 	n.Process = NormalProcess{Env: map[string]string{}, EnvPass: []string{}}
 	n.Workspace.Exclude = []string{}
+	n.DefaultsNotApplied = []string{}
 	again, err := n.Canonical()
 	if err != nil || string(again) != want {
 		t.Errorf("empty lists changed the bytes: %s, %v", again, err)
@@ -342,7 +343,10 @@ func TestCanonicalBytesArePinned(t *testing.T) {
 
 func TestCanonicalIsDeterministicAndReadsBack(t *testing.T) {
 	n := sampleNormal()
+	// No task limit, and not because one was asked for: the default could
+	// not be enforced.
 	n.Limits.PIDs = nil
+	n.DefaultsNotApplied = []string{KeyLimitPIDs}
 	n.Limits.DiskBytes = int64p(64 << 20)
 	n.Storage.Upper = UpperTmpfs
 	n.Network = NormalNetwork{Mode: NetworkProxy, Allow: []Dest{
@@ -366,7 +370,7 @@ func TestCanonicalIsDeterministicAndReadsBack(t *testing.T) {
 			t.Fatalf("two encodings differ:\n %s\n %s", first, again)
 		}
 	}
-	for _, want := range []string{`"pids":null`, `"allow":["*.pythonhosted.org:443","pypi.org:443","192.0.2.7:8443/tls"]`, `"env":{"A":"first","M":"middle","Z":"last"}`} {
+	for _, want := range []string{`"pids":null`, `"defaults_not_applied":["limits.pids"]`, `"allow":["*.pythonhosted.org:443","pypi.org:443","192.0.2.7:8443/tls"]`, `"env":{"A":"first","M":"middle","Z":"last"}`} {
 		if !bytes.Contains(first, []byte(want)) {
 			t.Errorf("canonical bytes lack %s:\n %s", want, first)
 		}
@@ -451,6 +455,112 @@ func TestControlsListIsClosedAndComplete(t *testing.T) {
 					t.Errorf("%s requires %q, which is not in Controls", r.Key, r.Control)
 				}
 			}
+		}
+	}
+}
+
+// TestStatesListsWhatWasNotApplied is how a limit that is absent because it
+// could not be enforced differs, in a record, from one that is absent
+// because "unlimited" was granted.
+func TestStatesListsWhatWasNotApplied(t *testing.T) {
+	const why = "the host limit counts the runtime's threads, not the sandbox's tasks"
+	controls := map[ControlID]Control{}
+	for _, id := range Controls {
+		controls[id] = Control{Enforced: true}
+	}
+	controls[ControlPIDs] = Control{Reason: why}
+	caps := Capabilities{Backend: BackendGVisor, Controls: controls}
+
+	// The default task limit was not applied.
+	n := sampleNormal()
+	n.Limits.PIDs = nil
+	n.DefaultsNotApplied = []string{KeyLimitPIDs}
+	unapplied := []Unapplied{{Key: KeyLimitPIDs, Control: ControlPIDs, Reason: why}}
+	states := n.States(caps, unapplied)
+	var pids *ControlState
+	seen := map[ControlID]bool{}
+	for i, s := range states {
+		if seen[s.ID] {
+			t.Errorf("control %s is listed twice", s.ID)
+		}
+		seen[s.ID] = true
+		if s.ID == ControlPIDs {
+			pids = &states[i]
+		} else if !s.Enforced || s.Reason != "" {
+			t.Errorf("control %s: %+v, want enforced", s.ID, s)
+		}
+	}
+	if pids == nil || pids.Enforced || pids.Reason != why {
+		t.Fatalf("the task limit that was not applied is listed as %+v in %+v", pids, states)
+	}
+	for _, id := range []ControlID{ControlCPU, ControlMemory, ControlWall, ControlNetworkNone, ControlReadOnlyRoot, ControlSyscallDefault, ControlDiskFloor, ControlNoNestedUserns} {
+		if !seen[id] {
+			t.Errorf("control %s, which the policy requires, is not listed", id)
+		}
+	}
+	if last := states[len(states)-1]; last.ID != ControlPIDs {
+		t.Errorf("what was not applied comes after what is required: last is %s", last.ID)
+	}
+
+	// "unlimited", asked and granted: no line for the control at all.
+	for _, s := range n.States(caps, nil) {
+		if s.ID == ControlPIDs {
+			t.Errorf("a limit nobody required is listed: %+v", s)
+		}
+	}
+
+	// A line for a default that was not applied never reads as enforced,
+	// whatever the capabilities say and even without a reason.
+	all := Capabilities{Backend: BackendNative, Controls: map[ControlID]Control{ControlPIDs: {Enforced: true}}}
+	for _, s := range n.States(all, []Unapplied{{Key: KeyLimitPIDs, Control: ControlPIDs}}) {
+		if s.ID == ControlPIDs && (s.Enforced || s.Reason == "") {
+			t.Errorf("an unapplied default reads as %+v", s)
+		}
+	}
+
+	// A control two keys require is listed once.
+	n = sampleNormal()
+	n.Storage.Upper = UpperTmpfs
+	n.Limits.DiskBytes = int64p(1 << 20)
+	count := 0
+	for _, s := range n.States(caps, nil) {
+		if s.ID == ControlTmpfsUpper {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("the tmpfs control is listed %d times", count)
+	}
+}
+
+func TestUnappliedJSON(t *testing.T) {
+	b, err := json.Marshal(Unapplied{Key: KeyLimitPIDs, Control: ControlPIDs, Reason: "no task limit"})
+	if err != nil || string(b) != `{"key":"limits.pids","control":"limits.pids","reason":"no task limit"}` {
+		t.Errorf("Unapplied encodes as %s, %v", b, err)
+	}
+	// The keys of the limits are the keys Requires uses.
+	n := sampleNormal()
+	n.Limits.DiskBytes = int64p(1)
+	got := requirements(n)
+	for _, key := range []string{KeyLimitCPU, KeyLimitMemory, KeyLimitPIDs, KeyLimitWall, KeyLimitDisk} {
+		if !strings.Contains(got, key+"=") {
+			t.Errorf("no requirement is keyed %s in %q", key, got)
+		}
+	}
+}
+
+func TestValidEnvName(t *testing.T) {
+	for _, name := range []string{"A", "a", "_", "PATH", "npm_config_cache", "_1", "X9", "CI", strings.Repeat("A", MaxEnvNameBytes)} {
+		if !ValidEnvName(name) {
+			t.Errorf("%q was refused", name)
+		}
+	}
+	for _, name := range []string{
+		"", "1A", "9", "A=B", "=", "A B", " A", "A ", "A-B", "A.B", "A\x00", "A\n", "É", "A\xff", "a/b", "$A", "A[0]",
+		strings.Repeat("A", MaxEnvNameBytes+1),
+	} {
+		if ValidEnvName(name) {
+			t.Errorf("%q was accepted", name)
 		}
 	}
 }
@@ -551,11 +661,8 @@ func TestUnbuiltFunctionsFailClosed(t *testing.T) {
 	if vs := Within(Default(), BuiltinCeiling()); vs.Err() == nil {
 		t.Error("Within accepted a policy")
 	}
-	if _, vs := Effective(Default(), BuiltinCeiling()); vs.Err() == nil {
-		t.Error("Effective accepted a policy")
-	}
-	if vs := Check(sampleNormal(), Capabilities{}); vs.Err() == nil {
-		t.Error("Check accepted a policy")
+	if n, unapplied, vs := Resolve(Default(), BuiltinCeiling(), Capabilities{}); vs.Err() == nil || unapplied != nil || !reflect.DeepEqual(n, Normal{}) {
+		t.Errorf("Resolve accepted a policy: %+v, %v, %v", n, unapplied, vs)
 	}
 	if _, err := BuiltinCeiling().Hash(); err == nil {
 		t.Error("Ceiling.Hash returned a hash")

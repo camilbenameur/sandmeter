@@ -110,10 +110,10 @@ type Problem struct {
 	Fix string `json:"fix,omitempty"`
 }
 
-// Capabilities is what one backend can enforce on this host: the input of the
-// policy check. A backend builds it from the report of the host probe; no
-// value in it may come from a constant in the backend's code, because the
-// promise to refuse an unenforceable policy is only as true as this struct.
+// Capabilities is what one backend can enforce on this host: the input of
+// Resolve. A backend builds it from the report of the host probe; no value
+// in it may come from a constant in the backend's code, because the promise
+// to refuse an unenforceable policy is only as true as this struct.
 //
 // The policy check, the doctor command, the start of a session and the MCP
 // server all read the same Capabilities for a given backend and host.
@@ -161,6 +161,55 @@ func (c Capabilities) backendName() string {
 	return c.Backend
 }
 
+// ControlState is the state of one control for one session: one line of the
+// enforcement block of a record.
+type ControlState struct {
+	ID ControlID
+	// Enforced and Reason are those of Control.
+	Enforced bool
+	Reason   string
+}
+
+// States returns what a record lists as the enforcement around a session
+// that runs under n: first every control n requires, once each, in the order
+// of Requires, with the state caps reports for it; then the control of each
+// default that was not applied, not enforced, with the reason it carries.
+//
+// The second part is what makes a limit that is absent because it could not
+// be enforced visible to whoever reads a record: the control is named and
+// marked as not enforced, where a limit that is absent because "unlimited"
+// was asked and granted leaves no line at all.
+func (n Normal) States(caps Capabilities, unapplied []Unapplied) []ControlState {
+	var out []ControlState
+	seen := map[ControlID]bool{}
+	for _, r := range n.Requires() {
+		if seen[r.Control] {
+			continue
+		}
+		seen[r.Control] = true
+		c := caps.Control(r.Control)
+		out = append(out, ControlState{ID: r.Control, Enforced: c.Enforced, Reason: c.Reason})
+	}
+	for _, u := range unapplied {
+		if seen[u.Control] {
+			continue
+		}
+		seen[u.Control] = true
+		reason := u.Reason
+		if reason == "" {
+			reason = caps.Control(u.Control).Reason
+		}
+		if reason == "" {
+			// caps says the control is enforced and the list says the default
+			// was dropped for want of it: the line still must not read as
+			// enforced.
+			reason = "the built-in default of " + u.Key + " was not applied"
+		}
+		out = append(out, ControlState{ID: u.Control, Reason: reason})
+	}
+	return out
+}
+
 // Requirement is one control a policy needs, with the key that asks for it.
 type Requirement struct {
 	// Key is the policy key, in dotted form, that makes the control needed.
@@ -172,29 +221,32 @@ type Requirement struct {
 // Requires lists the controls n needs from a backend, in the order of the
 // keys in the schema, followed by the controls every session needs. A policy
 // runs only on a backend that enforces every one of them: this list is what
-// "refused before anything runs" is checked against.
+// "refused before anything runs" is checked against, and what a record lists
+// as in force.
 //
-// A limit that is "unlimited" needs no control. syscalls.profile = "off"
-// needs none either.
+// A limit that is nil needs no control, whether "unlimited" was asked and
+// granted or a default was not applied; the controls behind the second case
+// are in the Unapplied list that Resolve returned with n, not here.
+// syscalls.profile = "off" needs none either.
 func (n Normal) Requires() []Requirement {
 	var reqs []Requirement
 	need := func(key string, id ControlID) {
 		reqs = append(reqs, Requirement{Key: key, Control: id})
 	}
 	if n.Limits.CPUMillis != nil {
-		need("limits.cpu", ControlCPU)
+		need(KeyLimitCPU, ControlCPU)
 	}
 	if n.Limits.MemoryBytes != nil {
-		need("limits.memory", ControlMemory)
+		need(KeyLimitMemory, ControlMemory)
 	}
 	if n.Limits.PIDs != nil {
-		need("limits.pids", ControlPIDs)
+		need(KeyLimitPIDs, ControlPIDs)
 	}
 	if n.Limits.WallNanos != nil {
-		need("limits.wall", ControlWall)
+		need(KeyLimitWall, ControlWall)
 	}
 	if n.Limits.DiskBytes != nil {
-		need("limits.disk", ControlTmpfsUpper)
+		need(KeyLimitDisk, ControlTmpfsUpper)
 	}
 	if n.Storage.Upper == UpperTmpfs {
 		need("storage.upper", ControlTmpfsUpper)

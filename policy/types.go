@@ -4,8 +4,8 @@
 // A policy is a TOML file. Three forms of it exist in this package:
 //
 //   - Policy is the file as written, schema v2. A field that the file leaves
-//     out is zero here and means "the built-in default, clamped to the
-//     operator's ceiling"; it never means "no limit".
+//     out is zero here and means "the built-in default, lowered to the
+//     operator's ceiling"; it never asks for "no limit".
 //   - Ceiling is the operator's maximum: a policy read as upper bounds. It
 //     lives in the operator file, which only root can write. A client policy
 //     is accepted only if Within finds nothing above it.
@@ -23,13 +23,34 @@
 //
 //  1. Parse: an unknown key, a wrong type, a value that is not a finite
 //     number.
-//  2. Within: a field above the ceiling. Every such field is listed.
-//  3. Check: a control the policy needs that the chosen backend does not
-//     enforce on this host, or a value under the backend's minimum. The input
-//     is a Capabilities value, which a host probe produced.
+//  2. Within: a field above the ceiling, or a value that is not well formed.
+//     Every such field is listed.
+//  3. Resolve: a setting of the file that needs a control the chosen backend
+//     does not enforce on this host, or a value under the backend's minimum.
+//     The input is a Capabilities value, which a host probe produced.
 //
 // "Unlimited" is never a default. It has to be written, as the word
-// "unlimited", in the policy and in the ceiling above it.
+// "unlimited", in the policy and in the ceiling above it. A limit that is
+// written is a positive amount: zero and negative values are refused, and
+// nothing a file can say turns a limit into "no limit" except that word.
+//
+// # What the file sets and what it leaves out
+//
+// What a policy file sets is a demand. When the backend cannot enforce it on
+// this host the policy is refused, with the reason, before anything runs.
+//
+// What the file leaves out is not a demand, and one case follows from that.
+// A built-in default limit that the backend cannot enforce here is not
+// applied: the session runs without that limit, and says so. The policy in
+// force lists the key (Normal.DefaultsNotApplied), Resolve returns the
+// control that was missing with the backend's reason (Unapplied), and every
+// record of the session lists that control as not enforced. This is what
+// lets a policy that says nothing about limits.pids run on a backend that
+// has no task limit, while a policy that writes limits.pids is refused
+// there. It applies to limits only: the other defaults (the closed network,
+// the read-only root, the syscall profile) are refused like demands when
+// they cannot be enforced, because a protection has no weaker form that
+// could be taken without being asked for.
 //
 // # Schema versions
 //
@@ -194,13 +215,16 @@ type Syscalls struct {
 type Process struct {
 	// Env sets environment variables to literal values. The values are part
 	// of the policy: they are hashed, embedded in receipts and readable by
-	// whoever reads those. A secret does not belong here; see EnvPass.
+	// whoever reads those. A secret does not belong here; see EnvPass. Each
+	// name must pass ValidEnvName, and a value is valid UTF-8 without a NUL
+	// byte.
 	Env map[string]string `toml:"env,omitempty" json:"env,omitempty"`
 	// EnvPass names variables whose values are taken from the environment of
 	// the client that starts the session. A receipt records the names, never
-	// the values. Each name must be granted by the ceiling. An agent that
-	// reaches sandmeter through MCP cannot add a name: the list comes from
-	// the policy file a human chose when registering the server.
+	// the values. Each name must pass ValidEnvName and be granted by the
+	// ceiling. An agent that reaches sandmeter through MCP cannot add a
+	// name: the list comes from the policy file a human chose when
+	// registering the server.
 	EnvPass []string `toml:"env_pass,omitempty" json:"env_pass,omitempty"`
 	// Workdir is the working directory of commands, an absolute path inside
 	// the sandbox. Empty means the image's own, or /workspace when a project
@@ -304,16 +328,20 @@ func (vs Violations) Keys() []string {
 }
 
 // Normal is a policy in normalised form: the policy in force for a session,
-// with nothing left to resolve. Effective produces it from a Policy and a
-// Ceiling.
+// with nothing left to resolve. Resolve produces it from a Policy, a Ceiling
+// and the Capabilities of the backend that will run the session.
 //
 // Its canonical encoding (Canonical) is what a receipt embeds, and Hash is
 // taken over those bytes. A verifier checks the hash against the embedded
 // bytes as they stand in the signed payload and never encodes a decoded
 // policy again: the bytes are the policy.
 //
-// In a limit, nil means "unlimited": the policy asked for it and the ceiling
-// granted it. No field of a Normal means "not set".
+// In a limit, nil means that no limit is in force. There are two ways to get
+// there, and a Normal tells them apart. Either the policy file asked for
+// "unlimited" and the ceiling granted it; or the file left the key out and
+// the built-in default could not be enforced by the backend on this host, in
+// which case the key is listed in DefaultsNotApplied. No field of a Normal
+// means "not set".
 type Normal struct {
 	// Version is 2.
 	Version    int              `json:"version"`
@@ -324,13 +352,26 @@ type Normal struct {
 	Syscalls   Syscalls         `json:"syscalls"`
 	Process    NormalProcess    `json:"process"`
 	Workspace  NormalWorkspace  `json:"workspace"`
+	// DefaultsNotApplied lists, sorted, the keys of the limits that the
+	// policy file left out and whose built-in default is not in force,
+	// because the backend cannot enforce it on this host: "limits.pids" on a
+	// backend without a task limit. Each of those limits is nil above, and
+	// nobody asked for that: the list is what keeps "no limit, because none
+	// could be enforced" from being read as "unlimited, as asked and
+	// granted". It is empty, never nil, when every default was applied.
+	DefaultsNotApplied []string `json:"defaults_not_applied"`
 }
 
-// NormalLimits are resolved limits. Nil is unlimited.
+// NormalLimits are resolved limits. Nil means that no limit is in force (see
+// Normal for the two reasons). A limit that is not nil is at least 1: zero,
+// which some kernel interfaces read as "none" and others as "nothing at
+// all", never stands for a limit somebody set.
 type NormalLimits struct {
 	// CPUMillis is the CPU limit in thousandths of a core: 1500 is one core
 	// and a half. Whole numbers keep the canonical bytes free of floating
-	// point spellings.
+	// point spellings. A value between two thousandths is rounded down, so
+	// that the limit in force is never above the one written; a value under
+	// one thousandth is refused, never rounded to zero.
 	CPUMillis *int64 `json:"cpu_millis"`
 	// MemoryBytes is the memory limit in bytes.
 	MemoryBytes *int64 `json:"memory_bytes"`
@@ -341,6 +382,37 @@ type NormalLimits struct {
 	// DiskBytes is the quota of the writable layer in bytes. Nil means no
 	// quota, which is the only possible value with Storage.Upper = UpperDisk.
 	DiskBytes *int64 `json:"disk_bytes"`
+}
+
+// Limit keys, as Normal.DefaultsNotApplied, Unapplied.Key and Violation.Key
+// spell them.
+const (
+	KeyLimitCPU    = "limits.cpu"
+	KeyLimitMemory = "limits.memory"
+	KeyLimitPIDs   = "limits.pids"
+	KeyLimitWall   = "limits.wall"
+	KeyLimitDisk   = "limits.disk"
+)
+
+// Unapplied is one built-in default limit that Resolve did not apply: the
+// policy file left the key out, and the backend cannot enforce the default
+// on this host. It is the detail behind one entry of
+// Normal.DefaultsNotApplied.
+//
+// The root side returns the list with its answer to a start and to a check,
+// so that a client can show it, and records each entry in the enforcement
+// block of every record of the session, as a control that is not enforced
+// with this reason. A gate that requires the control then fails on the
+// record, whatever else the policy bytes say.
+type Unapplied struct {
+	// Key is the policy key in dotted form: one of the KeyLimit constants.
+	Key string `json:"key"`
+	// Control is the control the default needs and the backend does not
+	// enforce here.
+	Control ControlID `json:"control"`
+	// Reason is the backend's reason, as its Capabilities give it for the
+	// control. It is a sentence of the root side, never text from a policy.
+	Reason string `json:"reason"`
 }
 
 // NormalNetwork is the resolved network part.
@@ -396,6 +468,9 @@ func (n Normal) Canonical() ([]byte, error) {
 	if n.Workspace.Exclude == nil {
 		n.Workspace.Exclude = []string{}
 	}
+	if n.DefaultsNotApplied == nil {
+		n.DefaultsNotApplied = []string{}
+	}
 	return json.Marshal(n)
 }
 
@@ -415,4 +490,32 @@ func (n Normal) Hash() (string, error) {
 func HashBytes(canonical []byte) string {
 	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:])
+}
+
+// MaxEnvNameBytes is the longest name of an environment variable.
+const MaxEnvNameBytes = 256
+
+// ValidEnvName reports whether name can name an environment variable of a
+// sandbox: a letter of the ASCII alphabet or an underscore, followed by
+// letters, digits and underscores, MaxEnvNameBytes at most. It is the one
+// grammar for the keys of process.env, the names of process.env_pass in a
+// policy and in a ceiling, and the names a client sends with a request.
+//
+// The names of the variables a command was given are part of its signed
+// record. A name with "=" in it would be read back as another name with a
+// value, and an empty one is no variable at all: neither may get that far.
+func ValidEnvName(name string) bool {
+	if name == "" || len(name) > MaxEnvNameBytes {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c == '_':
+		case c >= '0' && c <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
