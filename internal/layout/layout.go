@@ -299,15 +299,16 @@ func CurrentFormat(s Store) int {
 // found and what to do.
 var (
 	// ErrNewerFormat: the directory was written by a newer sandmeter. It is
-	// refused, untouched.
+	// refused, and nothing in it is touched.
 	ErrNewerFormat = errors.New("written by a newer sandmeter")
 	// ErrOlderFormat: the directory was written by an older sandmeter and
-	// nothing migrated or discarded it. It is refused, untouched.
+	// nothing migrated or discarded it. It is refused, and nothing in it is
+	// touched.
 	ErrOlderFormat = errors.New("written by an older sandmeter")
 	// ErrUnknownContent: the directory has no format file and holds
 	// something that no sandmeter wrote there. It is not an older store: it
-	// is not a store. It is refused, untouched, and never handed to an
-	// upgrade that could discard it.
+	// is not a store. It is refused, nothing in it is touched, and it is
+	// never handed to an upgrade that could discard it.
 	ErrUnknownContent = errors.New("holds files that sandmeter did not write")
 	// ErrUnsafeDir: the path is not a directory of its own (it is a symbolic
 	// link, or another kind of file), or it belongs to another user. It is
@@ -459,9 +460,10 @@ func WriteFormat(dir string, s Store) error {
 // Then its content:
 //
 //   - Nothing in it: it is marked.
-//   - The current format: nothing to do.
-//   - A newer format: ErrNewerFormat. The directory is not touched; the
-//     message says to upgrade sandmeter or to move the directory away.
+//   - The current format: nothing to do. (In both cases, a temporary file
+//     that an unfinished write of the format file left behind is removed.)
+//   - A newer format: ErrNewerFormat. Nothing in the directory is touched;
+//     the message says to upgrade sandmeter or to move the directory away.
 //   - An older format, version 0 included: upgrade is called with the
 //     version found. It is the store's owner speaking: it migrates the
 //     directory in place, or discards what the directory holds, and in both
